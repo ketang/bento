@@ -1,6 +1,6 @@
 ---
 name: bento repo design
-description: Design decisions for setting up bento as a personal Claude Code plugin marketplace
+description: Design decisions for setting up bento as a plugin marketplace for coding agents
 type: project
 ---
 
@@ -10,8 +10,10 @@ type: project
 
 ## What this is
 
-`bento` is a personal Claude Code plugin marketplace hosted at `ketang/bento` on GitHub. It stores:
-- **Superpowers skills** — packaged as Claude Code plugins, installable via the plugin system
+`bento` is a repository for packaging and distributing reusable capabilities for
+coding agents. Its current concrete implementation is a Claude Code-compatible
+plugin marketplace hosted at `ketang/bento` on GitHub. It stores:
+- **Agent skills** — packaged today as Claude Code plugins, installable via the plugin system
 - **Hook scripts** — shell scripts that run on Claude Code events, stored for manual wiring into `~/.claude/settings.json`
 
 ## Why this approach
