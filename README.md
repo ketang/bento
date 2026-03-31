@@ -70,6 +70,17 @@ catalog/skills/<skill-name>/
 └── SKILL.md
 ```
 
+Skills may also include companion files such as:
+
+```text
+catalog/skills/<skill-name>/
+├── SKILL.md
+├── scripts/
+└── references/
+```
+
+These companion files are copied into generated plugins along with `SKILL.md`.
+
 `SKILL.md` format:
 
 ```markdown
