@@ -1,0 +1,8 @@
+{
+  "name": "trackers",
+  "description": "Tracker skills for Beads and GitHub Issues workflows",
+  "version": "1.0.0",
+  "author": {
+    "name": "Ketan Gangatirkar"
+  }
+}

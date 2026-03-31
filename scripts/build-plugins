@@ -1,0 +1,154 @@
+#!/usr/bin/env bash
+
+set -euo pipefail
+
+ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+CATALOG_DIR="$ROOT_DIR/catalog/skills"
+PLUGINS_DIR="$ROOT_DIR/plugins"
+MARKETPLACE_FILE="$ROOT_DIR/.claude-plugin/marketplace.json"
+OWNER_NAME="Ketan Gangatirkar"
+VERSION="1.0.0"
+
+plugin_names=(
+  "bento-all"
+  "trackers"
+  "stacks"
+)
+
+plugin_description() {
+  case "$1" in
+    bento-all)
+      printf '%s\n' "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills"
+      ;;
+    trackers)
+      printf '%s\n' "Tracker skills for Beads and GitHub Issues workflows"
+      ;;
+    stacks)
+      printf '%s\n' "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL"
+      ;;
+    *)
+      printf 'Unknown plugin: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+plugin_skills() {
+  case "$1" in
+    bento-all)
+      printf '%s\n' \
+        "closure" \
+        "launch-work" \
+        "land-work" \
+        "build-vs-buy" \
+        "project-memory" \
+        "beads-issue-flow" \
+        "github-issue-flow" \
+        "go-pgx-goose" \
+        "react-vite-mantine" \
+        "graphql-gqlgen-gql-tada"
+      ;;
+    trackers)
+      printf '%s\n' \
+        "beads-issue-flow" \
+        "github-issue-flow"
+      ;;
+    stacks)
+      printf '%s\n' \
+        "go-pgx-goose" \
+        "react-vite-mantine" \
+        "graphql-gqlgen-gql-tada"
+      ;;
+    *)
+      printf 'Unknown plugin: %s\n' "$1" >&2
+      exit 1
+      ;;
+  esac
+}
+
+assert_skill_exists() {
+  local skill="$1"
+  local skill_dir="$CATALOG_DIR/$skill"
+  if [[ ! -f "$skill_dir/SKILL.md" ]]; then
+    printf 'Missing canonical skill source: %s\n' "$skill_dir/SKILL.md" >&2
+    exit 1
+  fi
+}
+
+write_plugin_json() {
+  local plugin="$1"
+  local plugin_dir="$PLUGINS_DIR/$plugin"
+  cat >"$plugin_dir/.claude-plugin/plugin.json" <<EOF
+{
+  "name": "$plugin",
+  "description": "$(plugin_description "$plugin")",
+  "version": "$VERSION",
+  "author": {
+    "name": "$OWNER_NAME"
+  }
+}
+EOF
+}
+
+build_plugin() {
+  local plugin="$1"
+  local plugin_dir="$PLUGINS_DIR/$plugin"
+  local skill
+
+  rm -rf "$plugin_dir"
+  mkdir -p "$plugin_dir/.claude-plugin" "$plugin_dir/skills"
+  write_plugin_json "$plugin"
+
+  while IFS= read -r skill; do
+    [[ -n "$skill" ]] || continue
+    assert_skill_exists "$skill"
+    cp -R "$CATALOG_DIR/$skill" "$plugin_dir/skills/$skill"
+  done < <(plugin_skills "$plugin")
+}
+
+write_marketplace_manifest() {
+  local plugin
+
+  {
+    printf '{\n'
+    printf '  "name": "bento",\n'
+    printf '  "description": "Ketan'\''s personal Claude Code plugins",\n'
+    printf '  "owner": {\n'
+    printf '    "name": "%s"\n' "$OWNER_NAME"
+    printf '  },\n'
+    printf '  "plugins": [\n'
+
+    for i in "${!plugin_names[@]}"; do
+      plugin="${plugin_names[$i]}"
+      printf '    {\n'
+      printf '      "name": "%s",\n' "$plugin"
+      printf '      "description": "%s",\n' "$(plugin_description "$plugin")"
+      printf '      "version": "%s",\n' "$VERSION"
+      printf '      "source": "./plugins/%s",\n' "$plugin"
+      printf '      "author": {\n'
+      printf '        "name": "%s"\n' "$OWNER_NAME"
+      printf '      }\n'
+      if [[ "$i" -eq $((${#plugin_names[@]} - 1)) ]]; then
+        printf '    }\n'
+      else
+        printf '    },\n'
+      fi
+    done
+
+    printf '  ]\n'
+    printf '}\n'
+  } >"$MARKETPLACE_FILE"
+}
+
+main() {
+  local plugin
+
+  mkdir -p "$PLUGINS_DIR"
+  rm -rf "$PLUGINS_DIR/bento-all" "$PLUGINS_DIR/core-workflow" "$PLUGINS_DIR/trackers" "$PLUGINS_DIR/stacks"
+  for plugin in "${plugin_names[@]}"; do
+    build_plugin "$plugin"
+  done
+  write_marketplace_manifest
+}
+
+main "$@"

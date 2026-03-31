@@ -26,6 +26,8 @@ The Claude Code plugin system has native support for skills (via marketplace reg
 | Hook management | Scripts in `hooks/` + manual `settings.json` wiring | Plugin system doesn't support hooks natively; a setup script would be fragile |
 | Hook organization | Subdirs per event, one file per concern | Supports multiple hooks per event cleanly; easy to add/remove individual hooks |
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
+| Skill source model | Canonical skills in `catalog/skills/`; generated installable plugins in `plugins/` | Supports both broad and narrow install options without maintaining duplicate skill content |
+| Initial plugin set | `bento-all`, `trackers`, `stacks` | Keeps installation overhead low while still allowing narrower opt-in installs |
 
 ## Registration
 
@@ -45,11 +47,19 @@ The Claude Code plugin system has native support for skills (via marketplace reg
 
 ## Plugin format
 
-Each plugin lives at `plugins/<name>/` with:
-- `.claude-plugin/plugin.json` — metadata (name, description, version, author)
-- `skills/<skill-name>/SKILL.md` — skill content with YAML frontmatter
+Canonical skills live under `catalog/skills/<skill-name>/`.
 
-Each plugin must also be listed in `.claude-plugin/marketplace.json` under `plugins[]`.
+Generated plugins live at `plugins/<name>/` with:
+- `.claude-plugin/plugin.json` — metadata (name, description, version, author)
+- `skills/<skill-name>/SKILL.md` — copied from the canonical catalog
+
+The root script `scripts/build-plugins` regenerates:
+- the plugin directories under `plugins/`
+- each plugin's `plugin.json`
+- `.claude-plugin/marketplace.json`
+
+Do not hand-edit generated plugin directories or the generated marketplace
+manifest.
 
 ## Hook format
 
