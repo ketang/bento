@@ -40,6 +40,7 @@ plugin_skills() {
         "closure" \
         "launch-work" \
         "land-work" \
+        "swarm" \
         "build-vs-buy" \
         "project-memory" \
         "beads-issue-flow" \
