@@ -25,11 +25,6 @@ def normalize_paths(values: list[str] | None) -> set[str]:
     return {value for value in (values or []) if value}
 
 
-def dependencies_satisfied(task: dict, landed: set[str]) -> bool:
-    deps = set(task.get("dependencies") or [])
-    return deps.issubset(landed)
-
-
 def conflicts(task: dict, occupied_paths: set[str], hotspots: set[str]) -> bool:
     paths = normalize_paths(task.get("paths"))
     return bool(paths & occupied_paths) or bool(paths & hotspots)
@@ -43,6 +38,7 @@ def main() -> int:
     data = load_input(Path(args.input))
     max_parallel = int(data.get("max_parallel", 8))
     batch_limit = int(data.get("batch_limit", 20))
+    landed_task_ids = set(data.get("landed_task_ids") or [])
     active_paths = normalize_paths(data.get("active_paths"))
     hotspots = normalize_paths(data.get("hotspots"))
 
@@ -62,8 +58,9 @@ def main() -> int:
         if task.get("ambiguous"):
             skipped.append({"id": task_id, "reason": "ambiguous"})
             continue
-        if set(task.get("dependencies") or []):
-            dependency_deferred.append(task)
+        unresolved_dependencies = sorted(set(task.get("dependencies") or []) - landed_task_ids)
+        if unresolved_dependencies:
+            dependency_deferred.append({"id": task_id, "dependencies": unresolved_dependencies})
             continue
         if conflicts(task, active_paths, hotspots):
             active_overlap_deferred.append(task)
@@ -79,9 +76,12 @@ def main() -> int:
 
     for task in candidate_batch:
         task_paths = normalize_paths(task.get("paths"))
-        record = {"id": task.get("id"), "reason": "path_overlap_with_batch"}
-        if len(parallel_batch) >= max_parallel or task_paths & occupied_paths:
+        if task_paths & occupied_paths:
+            record = {"id": task.get("id"), "reason": "path_overlap_with_batch"}
             wait_queue.append(record)
+            continue
+        if len(parallel_batch) >= max_parallel:
+            wait_queue.append({"id": task.get("id"), "reason": "max_parallel_limit"})
             continue
         parallel_batch.append(task.get("id"))
         occupied_paths |= task_paths
@@ -95,10 +95,7 @@ def main() -> int:
             {"id": task.get("id"), "reason": "path_overlap_with_active_or_hotspot"}
             for task in active_overlap_deferred
         ],
-        "deferred_due_to_dependencies": [
-            {"id": task.get("id"), "dependencies": task.get("dependencies", [])}
-            for task in dependency_deferred
-        ],
+        "deferred_due_to_dependencies": dependency_deferred,
     }
     json.dump(output, sys.stdout, indent=2)
     sys.stdout.write("\n")

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 
 import json
-import subprocess
 import sys
 from pathlib import Path
+
+from git_state import detect_checkout_root, detect_primary_branch, is_linked_worktree, primary_checkout_root
 
 
 CONFIG_CANDIDATES = [
@@ -11,42 +12,6 @@ CONFIG_CANDIDATES = [
     Path(".codex/swarm-config.json"),
     Path("swarm-config.json"),
 ]
-
-
-def git(*args: str) -> str:
-    result = subprocess.run(
-        ["git", *args],
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    return result.stdout.strip()
-
-
-def try_git(*args: str) -> str | None:
-    try:
-        return git(*args)
-    except subprocess.CalledProcessError:
-        return None
-
-
-def detect_repo_root() -> Path:
-    return Path(git("rev-parse", "--show-toplevel"))
-
-
-def detect_integration_branch() -> str | None:
-    origin_head = try_git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
-    if origin_head:
-        return origin_head.removeprefix("origin/")
-
-    for candidate in ("main", "master"):
-        if try_git("show-ref", "--verify", f"refs/heads/{candidate}") or try_git(
-            "show-ref", "--verify", f"refs/remotes/origin/{candidate}"
-        ):
-            return candidate
-
-    current = try_git("branch", "--show-current")
-    return current or None
 
 
 def load_config(repo_root: Path) -> tuple[Path | None, dict]:
@@ -59,11 +24,14 @@ def load_config(repo_root: Path) -> tuple[Path | None, dict]:
 
 
 def main() -> int:
-    repo_root = detect_repo_root()
+    repo_root = detect_checkout_root(Path.cwd().resolve())
+    integration_branch, warnings = detect_primary_branch(repo_root)
     config_path, config = load_config(repo_root)
     output = {
         "repo_root": str(repo_root),
-        "integration_branch": config.get("integration_branch") or detect_integration_branch(),
+        "primary_checkout_root": str(primary_checkout_root(repo_root)),
+        "linked_worktree": is_linked_worktree(repo_root),
+        "integration_branch": config.get("integration_branch") or integration_branch,
         "tracker": config.get("tracker"),
         "branch_naming": config.get("branch_naming"),
         "quality_gates": config.get("quality_gates"),
@@ -73,6 +41,7 @@ def main() -> int:
         "landing": config.get("landing"),
         "config_path": str(config_path) if config_path else None,
         "config_found": bool(config_path),
+        "warnings": warnings,
     }
     json.dump(output, sys.stdout, indent=2)
     sys.stdout.write("\n")
