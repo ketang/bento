@@ -1,58 +1,85 @@
 ---
 name: launch-work
 description: |
-  Use when starting implementation for an issue or approved change. Claims the
-  issue through the project's tracker workflow, creates a dedicated feature
-  branch and worktree, verifies the working location, and bootstraps the
-  environment before coding.
+  Use when approved work is moving into implementation and the repo's claim and
+  checkout model are known. Claims tracker-backed work when required, creates a
+  dedicated branch and linked worktree, verifies the working location
+  deterministically, and bootstraps the environment before coding.
 ---
 
 # Launch Work
 
-Use this skill when the task is moving from planning or issue triage into
-implementation.
+Use this skill when a task has been approved for implementation and the repo's
+branch, worktree, and claim rules are documented clearly enough to start work
+safely.
 
 ## Inputs
 
-- The active issue or approved task scope
-- The project's documented tracker choice
-- The project's documented branch/worktree conventions, if any
+- The active issue or approved change scope
+- The repo's documented claim model, if any
+- The repo's documented branch and worktree conventions, if any
+
+## Deterministic Helpers
+
+This skill includes helper scripts under `scripts/` for the parts of launching
+work that benefit from repeatable checks:
+
+- `python3 scripts/launch-work-bootstrap.py --branch <name> --worktree <path>`
+  to preview or apply branch and linked-worktree creation
+- `python3 scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
+  to verify the current checkout is the intended linked worktree on the intended
+  branch
+
+Use the bootstrap helper in dry-run mode first. Add `--apply` only after the
+target branch and worktree path are confirmed correct.
 
 ## Workflow
 
-1. Read the project's local instructions and confirm the issue is the active
-   scope.
-2. Determine the issue tracker from project docs.
-   - If the project uses Beads, use the `beads-issue-flow` skill.
-   - If the project uses GitHub Issues, use the `github-issue-flow` skill.
-3. Inspect the issue and claim it before implementation begins.
-4. Create exactly one feature branch for that issue.
-5. Create exactly one dedicated worktree for that branch.
-6. Enter the worktree and verify both location and branch:
+1. Read the repo's local instructions and confirm the approved task scope.
+2. Determine whether the work is tracker-backed or just an approved change.
+   - If the repo uses Beads, use the `beads-issue-flow` skill.
+   - If the repo uses GitHub Issues, use the `github-issue-flow` skill.
+   - If the work is not tracker-backed, record that explicitly and continue.
+3. If the repo requires claiming active work, inspect and claim it before
+   implementation begins.
+4. Determine the target branch name and linked-worktree path from repo docs.
+5. Preview the setup with:
 
 ```bash
-pwd
-git branch --show-current
+python3 scripts/launch-work-bootstrap.py --branch <name> --worktree <path>
 ```
 
-7. Confirm implementation will happen in the worktree, not in the primary repo
-   checkout.
-8. If the project is Node/TypeScript based and the fresh worktree cannot resolve
-   dependencies, run the documented package install step before debugging build
-   failures.
+6. If the preview is correct, create the linked worktree with:
+
+```bash
+python3 scripts/launch-work-bootstrap.py --branch <name> --worktree <path> --apply
+```
+
+7. Enter the linked worktree and verify both location and branch:
+
+```bash
+python3 scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree
+```
+
+8. Confirm implementation will happen in that linked worktree, not in the
+   primary checkout.
+9. If the fresh worktree cannot resolve dependencies, run the repo's documented
+   install/bootstrap step before debugging build failures.
 
 ## Non-Negotiable Rules
 
-- One issue or approved task gets one branch and one worktree.
-- Do not repurpose an old branch or worktree for a different issue.
-- Do not implement directly on `main`.
-- Do not implement in the primary repo checkout if the project expects worktree
+- One approved task gets one branch and one linked worktree.
+- Do not repurpose an old branch or worktree for a different task.
+- Do not implement directly on the detected primary branch.
+- Do not implement from the primary checkout when the repo expects worktree
   isolation.
+- Do not skip claim steps when the repo uses a tracker-backed active-work model.
 
 ## Stop Conditions
 
 Stop and ask or re-plan if:
 
-- The issue scope is ambiguous or contradictory.
-- The project does not document which tracker it uses.
-- The project requires a branch/worktree convention that you cannot verify.
+- The approved scope is ambiguous or contradictory.
+- The repo requires a claim model you cannot identify.
+- The repo requires branch or worktree conventions that you cannot verify.
+- The helper preview says the target branch or worktree is unsafe to create.
