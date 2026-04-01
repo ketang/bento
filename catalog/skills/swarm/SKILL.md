@@ -26,9 +26,9 @@ workflow that benefit from stable, repeatable checks:
 - `python3 scripts/swarm-discover.py` to emit git-derived defaults plus any
   structured swarm config the repo exposes
 - `python3 scripts/swarm-triage.py --input <json>` to batch normalized task
-  data into parallel work, wait queues, and skips
+  data into the currently unblocked frontier, wait queues, and skips
 - `python3 scripts/swarm-worktree-verify.py` to verify the current checkout is
-  the expected worktree on the expected branch
+  the expected linked worktree on the expected branch
 
 These helpers require `python3`. If `python3` is unavailable on the machine,
 fall back to the prose workflow in this skill and perform the checks manually.
@@ -112,6 +112,7 @@ Expected input shape:
       "ambiguous": false
     }
   ],
+  "landed_task_ids": ["task-100"],
   "active_paths": ["shared/schema.graphql"],
   "hotspots": ["shared/schema.graphql"],
   "max_parallel": 4,
@@ -137,7 +138,7 @@ The teammate must verify both working directory and branch before doing any
 implementation:
 
 ```bash
-python3 scripts/swarm-worktree-verify.py --require-worktree
+python3 scripts/swarm-worktree-verify.py --require-linked-worktree
 ```
 
 Reject any teammate setup that cannot show they are inside the intended
