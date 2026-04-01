@@ -1,45 +1,77 @@
 ---
 name: land-work
 description: |
-  Use when a feature branch is ready to merge. Runs the branch landing flow:
-  verify preconditions, rebase onto the latest main, perform a lease-protected
-  merge, close the issue only after merge, and clean up branch/worktree state.
+  Use when approved implementation work is ready to land and the repo permits a
+  command-line landing flow. Verifies feature-branch preconditions, checks the
+  landing lease deterministically, guides compare-and-set merges, then closes
+  tracker work only after the landing succeeds.
 ---
 
 # Land Work
 
-Use this skill when implementation is complete and the branch is ready to land.
+Use this skill when implementation is complete, the branch is ready to land,
+and the repo's merge policy is documented clearly enough to execute safely.
 
 ## Preconditions
 
 - The work is committed on the feature branch.
 - Required tests, lint, and build checks have passed.
-- The project allows command-line merges to `main`.
+- The repo allows command-line merges to its primary branch or exposes a
+  documented helper for that flow.
+
+## Deterministic Helpers
+
+This skill includes helper scripts under `scripts/` for the risky state checks
+that should not rely on ad hoc prose reconstruction:
+
+- `python3 scripts/land-work-prepare.py` to verify the current checkout is a
+  clean feature-branch worktree with something to land
+- `python3 scripts/land-work-verify-lease.py --expected-sha <sha>` to verify the
+  landing lease still matches the intended primary-branch ref
+
+Run the prepare helper from the feature-branch worktree first. Use the lease
+helper whenever you capture or re-check the compare-and-set merge lease.
 
 ## Workflow
 
-1. Confirm the branch is the intended landing branch.
-2. Re-run or verify the required quality gates for the project.
-3. Rebase the branch onto the latest `origin/main`.
-4. Push the branch with `--force-with-lease` if rebasing changed history.
-5. Prefer the project's documented merge helper if one exists.
-6. Otherwise, perform a compare-and-set merge flow:
-   - refresh `origin/main`
-   - capture the leased `origin/main` SHA
-   - create a `--no-commit --no-ff` merge preview
+1. Run the prepare helper from the feature-branch worktree:
+
+```bash
+python3 scripts/land-work-prepare.py
+```
+
+2. Confirm the current branch is the intended landing branch and that the helper
+   reports a clean feature-branch checkout.
+3. Re-run or verify the required quality gates for the repo.
+4. Rebase onto the preferred primary-branch base reported by the helper, usually
+   `origin/<primary-branch>` when available.
+5. Push the feature branch with `--force-with-lease` if rebasing changed
+   history.
+6. Prefer the repo's documented merge helper if one exists.
+7. Otherwise, perform a compare-and-set merge flow:
+   - refresh the primary-branch ref you intend to lease
+   - capture its SHA
+   - create the merge preview the repo expects
    - run the required verification gate against that exact preview
-   - refresh `origin/main` again
+   - re-check the lease with:
+
+```bash
+python3 scripts/land-work-verify-lease.py --expected-sha <sha>
+```
+
    - abort if the lease changed
    - commit and push only if the lease still matches
-7. After the merge succeeds, close the issue through the project's tracker
-   workflow.
-8. Clean up local branch/worktree state using the project's documented process.
+8. After the landing succeeds, close or update the tracker item through the
+   repo's tracker workflow.
+9. Clean up local branch and worktree state using the repo's documented process.
 
 ## Non-Negotiable Rules
 
 - Do not close the issue before the verified merge succeeds.
-- Do not fast-forward feature branches into `main`.
-- Do not merge if `origin/main` moved after verification.
+- Do not fast-forward feature branches into the primary branch unless the repo
+  explicitly requires it.
+- Do not merge if the leased primary-branch ref moved after verification.
+- Do not land from a dirty feature-branch checkout.
 - Do not change the repository's configured Git transport just because auth
   fails.
 
