@@ -14,6 +14,29 @@ Use this skill to create a repo-specific audit plan, or to draft a local
 This is a meta-skill. It does not run the full audit by default. It generates
 the audit procedure that a repo should use.
 
+## Deterministic Helper
+
+This skill includes `scripts/audit-discover.py` to collect a deterministic base
+layer of repo facts before the model starts shaping the audit.
+
+Run it first:
+
+```bash
+python3 scripts/audit-discover.py
+```
+
+Use the JSON output as the starting point for:
+
+- project shape and detected languages
+- build, test, lint, and typecheck command candidates
+- source-of-truth docs and workflow docs
+- interface and drift surfaces
+- workflow surfaces such as CI, task runners, tracker hints, and memory files
+- path-based risk hotspots worth deeper review
+
+Then fill in only the gaps that the helper cannot infer from file structure
+alone.
+
 ## Output Modes
 
 Choose one of these outputs based on the user's request:
@@ -24,28 +47,29 @@ Choose one of these outputs based on the user's request:
 
 ## Discovery Workflow
 
-1. Identify the project shape:
+1. Run the helper and use its output as the deterministic base layer.
+2. Identify the project shape:
    - primary languages and frameworks
    - package/workspace layout
    - build, test, lint, and typecheck commands
    - CI scripts, Make targets, or task runners
-2. Identify the project's source-of-truth docs:
+3. Identify the project's source-of-truth docs:
    - README
    - contributor instructions
    - architecture or product docs
    - API, protocol, schema, or migration docs
-3. Identify interface and drift surfaces:
+4. Identify interface and drift surfaces:
    - API schemas
    - protocol types
    - generated code
    - config and env var contracts
    - CLI commands and flags
-4. Identify workflow surfaces:
+5. Identify workflow surfaces:
    - issue tracker or task system
    - branch and merge conventions
    - release or closeout scripts
    - memory or knowledge files if the repo uses them
-5. Identify risk-heavy areas:
+6. Identify risk-heavy areas:
    - auth and permissions
    - routers and input validation
    - persistence and migrations
