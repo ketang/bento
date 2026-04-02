@@ -4,9 +4,18 @@ description: |
   Use when multiple ready tasks can be worked in parallel. Triages tasks,
   batches non-overlapping work, launches isolated worktrees, reviews teammate
   plans, lands branches safely, and runs final quality checks.
+recommended_model: high
 ---
 
 # Swarm
+
+## Model Guidance
+
+Recommended model: high.
+
+Use a high-capability model for autonomous execution. This skill requires task
+triage, overlap prediction, teammate coordination, and safe landing across
+multiple branches or worktrees.
 
 Use this skill when a project has multiple ready tasks that can be worked in
 parallel with good isolation.

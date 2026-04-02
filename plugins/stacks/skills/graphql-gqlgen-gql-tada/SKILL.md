@@ -5,9 +5,17 @@ description: |
   the frontend. Starts by discovering the repo's actual schema locations,
   gqlgen and schema-sync commands, generated artifact policy, and verification
   workflow before applying stack conventions.
+recommended_model: mid
 ---
 
 # GraphQL Stack
+
+## Model Guidance
+
+Recommended model: mid.
+
+Use a higher-capability model when schema changes cascade across multiple
+services or generated artifacts with unclear ownership.
 
 Use this skill when the project uses `gqlgen` for backend GraphQL and
 `gql.tada` for frontend typed queries.

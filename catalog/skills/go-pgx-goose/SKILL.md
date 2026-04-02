@@ -5,9 +5,17 @@ description: |
   discovering the repo's actual Go quality gates, migration commands, DSN or
   env conventions, and any query or codegen workflow before applying stack
   conventions.
+recommended_model: mid
 ---
 
 # Go + pgx + Goose
+
+## Model Guidance
+
+Recommended model: mid.
+
+Use a higher-capability model when schema changes, fixture coupling, or
+database integration risk make the task hard to bound safely.
 
 Use this skill when the project uses Go with PostgreSQL, `pgx`, and Goose
 migrations.

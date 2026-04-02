@@ -4,9 +4,17 @@ description: |
   Use when a repo uses GitHub Issues as its canonical tracker. Covers listing
   and inspecting issues, following the repo's documented active-claim
   mechanism, and closing or updating issues only after verified landing.
+recommended_model: low
 ---
 
 # GitHub Issue Flow
+
+## Model Guidance
+
+Recommended model: low.
+
+Use a higher-capability model only when the repo's issue workflow is unclear or
+this skill is being combined with higher-risk landing work.
 
 Use this skill only when the project documents GitHub Issues as the canonical
 tracker.

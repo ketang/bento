@@ -5,9 +5,17 @@ description: |
   Captures factual and procedural knowledge, logs deterministic and
   infrastructure errors appropriately, and keeps the repo's documented memory
   structure clean over time.
+recommended_model: low
 ---
 
 # Project Memory
+
+## Model Guidance
+
+Recommended model: low.
+
+Use a higher-capability model only when the repo's memory structure is unclear
+or the requested edits require substantial synthesis across many files.
 
 Use this skill when a repo stores durable knowledge in markdown or similar text
 files and expects that knowledge to persist across sessions.
