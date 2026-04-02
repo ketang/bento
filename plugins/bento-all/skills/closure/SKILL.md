@@ -82,6 +82,16 @@ Everything else remains review-driven.
    - stashes
    - working-tree changes
    - stale tracker items whose work appears landed
+   - when the evidence is ambiguous, summarize the situation with a compact
+     recommendation taxonomy:
+     - `duplicate`: another branch or item clearly covers the same work
+     - `superseded`: a newer branch or change makes this obsolete
+     - `incomplete but valuable`: worth finishing or handing off to `land-work`
+     - `conflicted`: likely valuable, but currently blocked by merge or state
+       conflicts
+     - `unknown`: evidence is insufficient for a stronger recommendation
+   - treat those labels as review guidance only; the helper output still
+     determines what is safe to delete
 5. If a branch appears valuable, complete, and likely ready to land, present
    the evidence and recommend invoking `land-work` from that feature-branch
    worktree rather than describing a separate landing procedure here.

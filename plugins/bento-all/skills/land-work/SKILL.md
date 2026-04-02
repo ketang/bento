@@ -88,3 +88,10 @@ python3 scripts/land-work-verify-lease.py --expected-sha <sha>
 - If the project uses Beads, use the `beads-issue-flow` skill to close or update
   the issue after merge.
 - If the project uses GitHub Issues, use the `github-issue-flow` skill.
+
+## Direct Integration Branch Overlay
+
+If the repo intentionally merges directly into its real integration branch,
+read `references/direct-primary-branch.md` before landing. That overlay only
+clarifies how to identify and target the actual integration branch; it does not
+replace the safety rules or merge flow above.
