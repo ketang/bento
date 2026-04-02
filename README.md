@@ -106,6 +106,7 @@ That script:
 - materializes generated plugin directories under `plugins/`
 - writes each plugin's `.claude-plugin/plugin.json`
 - rebuilds the root `.claude-plugin/marketplace.json`
+- runs the repository test suite with `python3 -m unittest discover -s tests -t .`
 - removes generated plugin directories that are no longer part of the current
   plugin set
 
