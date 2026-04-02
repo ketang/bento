@@ -45,6 +45,21 @@ fall back to the prose workflow in this skill and perform the checks manually.
 Keep tracker fetching outside these helpers. Use the project's tracker workflow
 to gather tasks, then normalize them into the triage input format.
 
+## Continuation State
+
+When a batch overflows the current run, persist the remaining task IDs in
+`.claude/swarm-continue.txt` so a later invocation can resume the same task
+set without re-querying the tracker.
+
+Keep the continuation file minimal and tracker-agnostic:
+
+- one task ID per non-empty line
+- ignore blank lines and lines beginning with `#`
+- do not store tracker metadata, priorities, or prose
+- if explicit task IDs are supplied on a later invocation, they supersede the
+  continuation file
+- once the continuation file has been fully consumed, delete it
+
 ## Companion Skills
 
 - If the project uses Beads, use `beads-issue-flow` for claiming and closing.
@@ -129,6 +144,20 @@ Expected input shape:
 }
 ```
 
+The normalized triage contract should separate tasks into these categories:
+
+- `parallel_batch`: tasks that are ready to launch now, subject to the
+  concurrency cap
+- `wait_queue`: tasks that are eligible but not launched yet because the batch
+  is full or they overlap with tasks already selected for the current batch
+- `overflow`: tasks that are still eligible but were cut off by the batch limit
+- `skipped`: tasks that are not launchable because they are already in
+  progress, too large, or too ambiguous for one teammate
+- `deferred_due_to_dependencies`: tasks that are blocked until their declared
+  dependencies have landed
+- `deferred_due_to_active_overlap`: tasks that are blocked because their
+  predicted paths overlap active work or hotspot paths
+
 The script stays tracker-agnostic. Tracker-specific skills are responsible for
 collecting tasks and converting them into this format.
 
@@ -152,6 +181,22 @@ python3 scripts/swarm-worktree-verify.py --require-linked-worktree
 
 Reject any teammate setup that cannot show they are inside the intended
 worktree on the intended branch.
+
+## Backfill On Completion
+
+When a teammate finishes and a slot opens, recompute the remaining candidate
+set against the current active paths, hotspot paths, landed task IDs, and any
+newly completed dependencies.
+
+Backfill should be conservative and deterministic:
+
+1. Prefer the highest-priority task that is still eligible and does not
+   conflict with the active paths already in flight.
+2. Recheck dependencies and overlap before launching the replacement task.
+3. Do not refill the slot if every remaining task is still blocked, ambiguous,
+   too large, or path-conflicting.
+4. Treat overflow tasks as candidates only after they are re-triaged against
+   the current state.
 
 ## Phase 3: Plan Review
 
