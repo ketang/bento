@@ -82,12 +82,30 @@ Everything else remains review-driven.
    - stashes
    - working-tree changes
    - stale tracker items whose work appears landed
-5. Present evidence before any destructive step that falls outside the helper's
+5. If a branch appears valuable, complete, and likely ready to land, present
+   the evidence and recommend invoking `land-work` from that feature-branch
+   worktree rather than describing a separate landing procedure here.
+6. Present evidence before any destructive step that falls outside the helper's
    explicit apply mode.
-6. If the user wants safe local branch cleanup, run the helper's apply mode and
+7. If the user wants safe local branch cleanup, run the helper's apply mode and
    report the deleted branches.
-7. Summarize the remaining artifacts and recommend a recovery or closeout plan
+8. Summarize the remaining artifacts and recommend a recovery or closeout plan
    biased toward finishing or landing incomplete work rather than discarding it.
+
+## Handoff To Land Work
+
+When `closure` finds a branch whose work appears valuable and complete, hand off
+explicitly to `land-work` for the landing flow.
+
+Include in the handoff:
+
+- the branch name and worktree location
+- the evidence that the work appears landing-ready
+- any remaining checks or open questions
+- a direct instruction to invoke `land-work` from that feature-branch worktree
+
+Do not restate `land-work`'s rebase, lease-verification, or merge procedure
+inside `closure`.
 
 ## Output Style
 
@@ -100,6 +118,8 @@ intuition.
 - Always start with dry-run output from the helper.
 - Do not assume syncing and pushing the primary branch is always required.
 - Do not force-push or rebase the primary branch without explicit approval.
+- Do not improvise a separate branch-landing procedure inside `closure` when
+  `land-work` applies.
 - Do not auto-delete worktrees, stashes, or patch-equivalent branches.
 - Do not delete unmerged work or close tracker items without presenting
   evidence and the proposed action first.
