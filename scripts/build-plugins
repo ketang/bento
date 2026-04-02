@@ -9,6 +9,7 @@ MARKETPLACE_FILE="$ROOT_DIR/.claude-plugin/marketplace.json"
 OWNER_NAME="Ketan Gangatirkar"
 VERSION="1.0.0"
 TEST_CMD=(python3 -m unittest discover -s tests -t .)
+VALIDATE_CMD=(claude plugin validate .)
 
 plugin_names=(
   "bento-all"
@@ -115,9 +116,11 @@ write_marketplace_manifest() {
   {
     printf '{\n'
     printf '  "name": "bento",\n'
-    printf '  "description": "Reusable coding-agent plugins packaged for Claude Code",\n'
     printf '  "owner": {\n'
     printf '    "name": "%s"\n' "$OWNER_NAME"
+    printf '  },\n'
+    printf '  "metadata": {\n'
+    printf '    "description": "Reusable coding-agent plugins packaged for Claude Code"\n'
     printf '  },\n'
     printf '  "plugins": [\n'
 
@@ -155,6 +158,7 @@ main() {
   (
     cd "$ROOT_DIR"
     "${TEST_CMD[@]}"
+    "${VALIDATE_CMD[@]}"
   )
 }
 
