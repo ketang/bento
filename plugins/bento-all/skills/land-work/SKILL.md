@@ -5,9 +5,17 @@ description: |
   command-line landing flow. Verifies feature-branch preconditions, checks the
   landing lease deterministically, guides compare-and-set merges, then closes
   tracker work only after the landing succeeds.
+recommended_model: high
 ---
 
 # Land Work
+
+## Model Guidance
+
+Recommended model: high.
+
+Use a high-capability model for autonomous execution. This skill has high
+failure cost because it coordinates verification, lease checks, and landing.
 
 Use this skill when implementation is complete, the branch is ready to land,
 and the repo's merge policy is documented clearly enough to execute safely.

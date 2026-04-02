@@ -4,9 +4,17 @@ description: |
   Use before building substantial new functionality. Runs a deterministic repo
   scan to surface incumbent tools and constraints, then researches libraries or
   services and compares them against a build baseline before implementation.
+recommended_model: high
 ---
 
 # Build vs Buy
+
+## Model Guidance
+
+Recommended model: high.
+
+Use a high-capability model for autonomous execution. This skill requires
+constraint discovery, external comparison, and tradeoff judgment.
 
 Use this skill before building a substantial feature, component, integration,
 or subsystem. The default is to research build vs buy first, not to assume a

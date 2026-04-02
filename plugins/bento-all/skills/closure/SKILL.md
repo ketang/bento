@@ -5,9 +5,18 @@ description: |
   Scans branches, worktrees, stashes, and working-tree changes, produces
   structured evidence, and only applies clearly safe cleanup in explicit apply
   mode.
+recommended_model: high
 ---
 
 # Closure
+
+## Model Guidance
+
+Recommended model: high.
+
+Use a high-capability model when cleanup decisions could discard useful state.
+A mid-tier model is acceptable only for dry-run scanning or tightly supervised
+safe cleanup.
 
 Use this skill when a repo needs a closeout pass over leftover git state from
 prior agent or human work.

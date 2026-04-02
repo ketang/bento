@@ -5,9 +5,17 @@ description: |
   by discovering the repo's actual frontend verification commands, component
   organization, theme conventions, and test helpers before applying stack
   conventions.
+recommended_model: mid
 ---
 
 # React + Vite + Mantine
+
+## Model Guidance
+
+Recommended model: mid.
+
+Use a higher-capability model when the task crosses design-system boundaries,
+theme architecture, or provider-heavy component behavior.
 
 Use this skill when the project uses React, TypeScript, Vite, and Mantine.
 

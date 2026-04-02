@@ -88,10 +88,22 @@ These companion files are copied into generated plugins along with `SKILL.md`.
 name: skill-name
 description: |
   When the agent should invoke this skill...
+recommended_model: low|mid|high
 ---
 
 # Skill content here
 ```
+
+`recommended_model` is a repo-local Bento convention, not an external
+interoperability standard. Keep it short so discovery layers can surface it
+without paying for a large token budget.
+
+Add a short `## Model Guidance` section near the top of the body as well. The
+frontmatter field is for tooling and discovery; the body section is for runtime
+guidance when the skill is actually opened.
+
+Keep longer rationale in repo documentation rather than in the skill directory
+when you do not want it copied into generated plugins.
 
 ## Building plugins
 

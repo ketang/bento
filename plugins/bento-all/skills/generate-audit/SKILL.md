@@ -4,9 +4,17 @@ description: |
   Use when a repo needs a project-specific audit playbook or local `audit`
   skill. Discovers the repo's stack, gates, docs, interfaces, and risk
   surfaces, then generates a concise audit procedure tailored to that repo.
+recommended_model: high
 ---
 
 # Generate Audit
+
+## Model Guidance
+
+Recommended model: high.
+
+Use a high-capability model for autonomous execution. This skill is a
+meta-skill that requires broad repo inference and tailored output shaping.
 
 Use this skill to create a repo-specific audit plan, or to draft a local
 `audit` skill for the current project.

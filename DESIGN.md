@@ -63,6 +63,39 @@ The root script `scripts/build-plugins` regenerates:
 Do not hand-edit generated plugin directories or the generated marketplace
 manifest.
 
+## Model Guidance Convention
+
+Each canonical `SKILL.md` may include a short `recommended_model` scalar in
+frontmatter with one of `low`, `mid`, or `high`.
+
+This is a Bento-local convention for skill discovery and runtime guidance. It
+is not intended as an external standard and should be treated as advisory model
+selection metadata.
+
+Each skill should also include a brief `## Model Guidance` section near the top
+of the body so the recommendation is visible when the skill content is opened.
+
+Longer rationale should stay in source-side repo documentation rather than in
+skill directories when that rationale should not be copied into generated
+plugins.
+
+Current rationale summary:
+
+| Skill | Recommended model | Rationale summary |
+|---|---|---|
+| `beads-issue-flow` | low | Narrow procedural tracker workflow with explicit commands |
+| `build-vs-buy` | high | Constraint discovery, external comparison, and tradeoff judgment |
+| `closure` | high | Cleanup can discard useful git state despite helper support |
+| `generate-audit` | high | Broad repo inference and tailored audit generation |
+| `github-issue-flow` | low | Narrow procedural issue workflow with explicit commands |
+| `go-pgx-goose` | mid | Stack-specific implementation with migration and fixture risk |
+| `graphql-gqlgen-gql-tada` | mid | Schema and generated-artifact workflow with cross-layer effects |
+| `land-work` | high | High-cost landing and lease validation workflow |
+| `launch-work` | mid | Tracker, branch, and worktree setup with moderate coordination risk |
+| `project-memory` | low | Mostly bounded classification and maintenance work |
+| `react-vite-mantine` | mid | Repo discovery plus frontend behavior and test judgment |
+| `swarm` | high | Parallel triage, overlap prediction, and coordinated landing |
+
 ## Hook format
 
 Scripts in `hooks/<event-name>/<concern>.sh`. Wire into `settings.json` with the tool matcher format. Multiple hooks for the same event are listed as an array within the matcher entry.

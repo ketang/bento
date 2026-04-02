@@ -4,9 +4,17 @@ description: |
   Use when a repo uses Beads as its canonical tracker. Covers reading issues,
   finding ready work, following the repo's documented active-work status model,
   and closing or updating issues at the correct stage of the landing lifecycle.
+recommended_model: low
 ---
 
 # Beads Issue Flow
+
+## Model Guidance
+
+Recommended model: low.
+
+Use a higher-capability model only when the repo's tracker policy is unclear or
+this skill is being combined with higher-risk landing work.
 
 Use this skill only when the project documents Beads as the issue tracker.
 

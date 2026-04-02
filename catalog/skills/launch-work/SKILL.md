@@ -5,9 +5,17 @@ description: |
   checkout model are known. Claims tracker-backed work when required, creates a
   dedicated branch and linked worktree, verifies the working location
   deterministically, and bootstraps the environment before coding.
+recommended_model: mid
 ---
 
 # Launch Work
+
+## Model Guidance
+
+Recommended model: mid.
+
+Use a higher-capability model when the repo's claim, branch, or worktree policy
+is only partially documented or spans multiple tools.
 
 Use this skill when a task has been approved for implementation and the repo's
 branch, worktree, and claim rules are documented clearly enough to start work
