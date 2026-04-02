@@ -14,6 +14,10 @@ idea: versioned, composable capabilities for agentic coding workflows.
 - hook scripts for agent-tooling events
 - marketplace metadata for discovery and installation
 
+## Project tracking
+
+This repository uses GitHub Issues as its issue tracker.
+
 ## Repository model
 
 `bento` keeps canonical skill sources under `catalog/skills/` and generates

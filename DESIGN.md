@@ -28,6 +28,7 @@ The Claude Code plugin system has native support for skills (via marketplace reg
 | Hook management | Scripts in `hooks/` + manual `settings.json` wiring | Plugin system doesn't support hooks natively; a setup script would be fragile |
 | Hook organization | Subdirs per event, one file per concern | Supports multiple hooks per event cleanly; easy to add/remove individual hooks |
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
+| Issue tracking | GitHub Issues | Matches the repository host and the included tracker workflow skills |
 | Skill source model | Canonical skills in `catalog/skills/`; generated installable plugins in `plugins/` | Supports both broad and narrow install options without maintaining duplicate skill content |
 | Initial plugin set | `bento-all`, `trackers`, `stacks` | Keeps installation overhead low while still allowing narrower opt-in installs |
 
