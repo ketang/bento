@@ -1,14 +1,15 @@
 # Installing Bento Plugins
 
-`bento` publishes reusable plugins for coding agents. Today, the install flow in
-this repository targets Claude Code's marketplace format.
+`bento` publishes reusable plugins for coding agents. This repository generates
+plugin packaging for Claude Code and OpenAI Codex.
 
 This guide covers the end-user workflow:
 
 1. Add the `bento` marketplace in Claude Code
 2. Install one or more plugins from that marketplace
-3. Update or remove plugins later
-4. Optionally wire in hook scripts from this repo
+3. Find the generated Codex plugin artifacts in this repo
+4. Update or remove plugins later
+5. Optionally wire in hook scripts from this repo
 
 ## Before you start
 
@@ -63,6 +64,26 @@ If Claude Code cannot find the marketplace or plugin:
 - confirm you ran `/plugin marketplace add ketang/bento`
 - confirm you used the `<plugin-name>@bento` form with `/plugin install`
 - confirm Claude Code can reach GitHub
+
+## Codex packaging artifacts
+
+For Codex, this repository generates local plugin packaging instead of the
+Claude marketplace format.
+
+After running `scripts/build-plugins`, each plugin includes:
+
+- `plugins/<plugin-name>/.codex-plugin/plugin.json`
+- `plugins/<plugin-name>/assets/icon.png`
+- `plugins/<plugin-name>/assets/logo.png`
+- `plugins/<plugin-name>/assets/screenshot-1.png`
+- `plugins/<plugin-name>/assets/screenshot-2.png`
+- `plugins/<plugin-name>/assets/screenshot-3.png`
+
+The repository also generates a Codex marketplace manifest at:
+
+- `.agents/plugins/marketplace.json`
+
+That manifest points Codex at the local plugin paths under `./plugins/`.
 
 ## Updating a plugin
 

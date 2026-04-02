@@ -1,0 +1,47 @@
+{
+  "name": "bento-all",
+  "version": "1.0.0",
+  "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
+  "author": {
+    "name": "Ketan Gangatirkar",
+    "email": "ketan@gangatirkar.com",
+    "url": "https://github.com/ketang"
+  },
+  "homepage": "https://github.com/ketang/bento",
+  "repository": "https://github.com/ketang/bento",
+  "keywords": [
+    "codex",
+    "agents",
+    "skills",
+    "workflow",
+    "engineering"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Bento All",
+    "shortDescription": "Complete coding-agent workflow pack",
+    "longDescription": "Bento All bundles the full Bento marketplace into one Codex-ready plugin: workflow launch and landing guidance, repo cleanup, research support, tracker flows, and stack-specific implementation skills.",
+    "developerName": "Ketan Gangatirkar",
+    "category": "Developer Tools",
+    "capabilities": [
+      "Read",
+      "Write",
+      "Plan",
+      "Automation"
+    ],
+    "websiteURL": "https://github.com/ketang/bento",
+    "defaultPrompt": [
+      "Launch a new implementation task with issue flow, branch setup, and a safe worktree plan.",
+      "Review this repository and recommend build-vs-buy options using the existing stack.",
+      "Clean up stale branches, worktrees, and partial work without losing useful context."
+    ],
+    "brandColor": "#1F6FEB",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot-1.png",
+      "./assets/screenshot-2.png",
+      "./assets/screenshot-3.png"
+    ]
+  }
+}

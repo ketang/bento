@@ -11,7 +11,8 @@ installable plugin bundles from them.
 
 - `catalog/skills/` contains the canonical source material
 - `plugins/` contains generated installable artifacts
-- `.claude-plugin/marketplace.json` contains generated marketplace metadata
+- `.claude-plugin/marketplace.json` contains generated Claude marketplace metadata
+- `.agents/plugins/marketplace.json` contains generated Codex marketplace metadata
 - `hooks/` contains related automation scripts, but hook wiring is external
 
 ## Rules for agents
@@ -50,6 +51,7 @@ Be careful in:
 
 - `plugins/` because contents are generated
 - `.claude-plugin/marketplace.json` because it is generated
+- `.agents/plugins/marketplace.json` because it is generated
 
 ## Typical maintenance workflow
 

@@ -11,9 +11,10 @@ type: project
 ## What this is
 
 `bento` is a repository for packaging and distributing reusable capabilities for
-coding agents. Its current concrete implementation is a Claude Code-compatible
-plugin marketplace hosted at `ketang/bento` on GitHub. It stores:
-- **Agent skills** — packaged today as Claude Code plugins, installable via the plugin system
+coding agents. Its current concrete implementation emits generated plugin
+artifacts for Claude Code and OpenAI Codex from the same canonical sources. It
+stores:
+- **Agent skills** — packaged today as Claude Code plugins and Codex plugins
 - **Hook scripts** — shell scripts that run on Claude Code events, stored for manual wiring into `~/.claude/settings.json`
 
 ## Why this approach
@@ -53,13 +54,17 @@ The Claude Code plugin system has native support for skills (via marketplace reg
 Canonical skills live under `catalog/skills/<skill-name>/`.
 
 Generated plugins live at `plugins/<name>/` with:
-- `.claude-plugin/plugin.json` — metadata (name, description, version, author)
+- `.claude-plugin/plugin.json` — Claude metadata (name, description, version, author)
+- `.codex-plugin/plugin.json` — Codex metadata and interface presentation fields
+- `assets/` — generated Codex-facing icon, logo, and screenshot assets
 - `skills/<skill-name>/SKILL.md` — copied from the canonical catalog
 
 The root script `scripts/build-plugins` regenerates:
 - the plugin directories under `plugins/`
-- each plugin's `plugin.json`
+- each plugin's Claude and Codex manifests
+- generated Codex-facing plugin assets
 - `.claude-plugin/marketplace.json`
+- `.agents/plugins/marketplace.json`
 - then runs the repository's `unittest` suite as required verification
 
 Do not hand-edit generated plugin directories or the generated marketplace
