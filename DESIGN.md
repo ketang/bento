@@ -59,6 +59,7 @@ The root script `scripts/build-plugins` regenerates:
 - the plugin directories under `plugins/`
 - each plugin's `plugin.json`
 - `.claude-plugin/marketplace.json`
+- then runs the repository's `unittest` suite as required verification
 
 Do not hand-edit generated plugin directories or the generated marketplace
 manifest.
