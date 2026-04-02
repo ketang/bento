@@ -1,165 +1,466 @@
-#!/usr/bin/env bash
+#!/usr/bin/env python3
 
-set -euo pipefail
+import json
+import os
+import shutil
+import struct
+import subprocess
+import zlib
+from pathlib import Path
 
-ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-CATALOG_DIR="$ROOT_DIR/catalog/skills"
-PLUGINS_DIR="$ROOT_DIR/plugins"
-MARKETPLACE_FILE="$ROOT_DIR/.claude-plugin/marketplace.json"
-OWNER_NAME="Ketan Gangatirkar"
-VERSION="1.0.0"
-TEST_CMD=(python3 -m unittest discover -s tests -t .)
-VALIDATE_CMD=(claude plugin validate .)
 
-plugin_names=(
-  "bento-all"
-  "trackers"
-  "stacks"
-)
+ROOT_DIR = Path(__file__).resolve().parents[1]
+CATALOG_DIR = ROOT_DIR / "catalog" / "skills"
+PLUGINS_DIR = ROOT_DIR / "plugins"
+CLAUDE_MARKETPLACE_FILE = ROOT_DIR / ".claude-plugin" / "marketplace.json"
+CODEX_MARKETPLACE_FILE = ROOT_DIR / ".agents" / "plugins" / "marketplace.json"
+OWNER_NAME = "Ketan Gangatirkar"
+OWNER_EMAIL = "ketan@gangatirkar.com"
+OWNER_URL = "https://github.com/ketang"
+REPOSITORY_URL = "https://github.com/ketang/bento"
+VERSION = "1.0.0"
+TEST_CMD = ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."]
+CLAUDE_VALIDATE_CMD = ["claude", "plugin", "validate", "."]
 
-plugin_description() {
-  case "$1" in
-    bento-all)
-      printf '%s\n' "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills"
-      ;;
-    trackers)
-      printf '%s\n' "Tracker skills for Beads and GitHub Issues workflows"
-      ;;
-    stacks)
-      printf '%s\n' "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL"
-      ;;
-    *)
-      printf 'Unknown plugin: %s\n' "$1" >&2
-      exit 1
-      ;;
-  esac
+
+PLUGIN_ORDER = [
+    "bento-all",
+    "trackers",
+    "stacks",
+]
+
+
+PLUGIN_DEFS = {
+    "bento-all": {
+        "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
+        "display_name": "Bento All",
+        "short_description": "Complete coding-agent workflow pack",
+        "long_description": (
+            "Bento All bundles the full Bento marketplace into one Codex-ready plugin: "
+            "workflow launch and landing guidance, repo cleanup, research support, tracker "
+            "flows, and stack-specific implementation skills."
+        ),
+        "category": "Developer Tools",
+        "capabilities": ["Read", "Write", "Plan", "Automation"],
+        "keywords": ["codex", "agents", "skills", "workflow", "engineering"],
+        "default_prompts": [
+            "Launch a new implementation task with issue flow, branch setup, and a safe worktree plan.",
+            "Review this repository and recommend build-vs-buy options using the existing stack.",
+            "Clean up stale branches, worktrees, and partial work without losing useful context.",
+        ],
+        "brand_color": "#1F6FEB",
+        "palette": {
+            "primary": (31, 111, 235),
+            "secondary": (30, 196, 176),
+            "accent": (248, 196, 72),
+            "background": (8, 16, 29),
+            "surface": (18, 34, 58),
+        },
+        "skills": [
+            "closure",
+            "launch-work",
+            "land-work",
+            "swarm",
+            "build-vs-buy",
+            "generate-audit",
+            "project-memory",
+            "beads-issue-flow",
+            "github-issue-flow",
+            "go-pgx-goose",
+            "react-vite-mantine",
+            "graphql-gqlgen-gql-tada",
+        ],
+    },
+    "trackers": {
+        "description": "Tracker skills for Beads and GitHub Issues workflows",
+        "display_name": "Bento Trackers",
+        "short_description": "Tracker-driven delivery flows",
+        "long_description": (
+            "Bento Trackers packages lightweight issue-management skills for Beads and GitHub "
+            "Issues so Codex can move from triage to branch creation and follow-up with a consistent workflow."
+        ),
+        "category": "Project Management",
+        "capabilities": ["Read", "Plan", "Automation"],
+        "keywords": ["issues", "trackers", "workflow", "github", "planning"],
+        "default_prompts": [
+            "Turn this GitHub issue into an execution plan with clear next actions and branch setup.",
+            "Run the Beads issue flow for the current task and summarize the decisions to keep.",
+            "Compare tracker state to the repo and point out missing follow-through or stale tasks.",
+        ],
+        "brand_color": "#0E8F5B",
+        "palette": {
+            "primary": (14, 143, 91),
+            "secondary": (57, 208, 146),
+            "accent": (234, 255, 124),
+            "background": (7, 22, 17),
+            "surface": (15, 41, 32),
+        },
+        "skills": [
+            "beads-issue-flow",
+            "github-issue-flow",
+        ],
+    },
+    "stacks": {
+        "description": "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL",
+        "display_name": "Bento Stacks",
+        "short_description": "Stack-specific implementation guidance",
+        "long_description": (
+            "Bento Stacks gives Codex focused engineering guidance for common Bento implementation "
+            "stacks, including Go with Postgres and Goose, React with Vite and Mantine, and GraphQL "
+            "flows that span server and client codegen."
+        ),
+        "category": "Developer Tools",
+        "capabilities": ["Read", "Write", "Plan"],
+        "keywords": ["go", "postgres", "react", "graphql", "full-stack"],
+        "default_prompts": [
+            "Implement this feature using the existing Go, Postgres, and Goose migration patterns.",
+            "Add a React and Vite UI change that matches the current Mantine conventions in this repo.",
+            "Update this GraphQL flow across schema, server codegen, and client query types safely.",
+        ],
+        "brand_color": "#A24C1A",
+        "palette": {
+            "primary": (162, 76, 26),
+            "secondary": (242, 145, 74),
+            "accent": (255, 220, 123),
+            "background": (23, 14, 10),
+            "surface": (49, 29, 20),
+        },
+        "skills": [
+            "go-pgx-goose",
+            "react-vite-mantine",
+            "graphql-gqlgen-gql-tada",
+        ],
+    },
 }
 
-plugin_skills() {
-  case "$1" in
-    bento-all)
-      printf '%s\n' \
-        "closure" \
-        "launch-work" \
-        "land-work" \
-        "swarm" \
-        "build-vs-buy" \
-        "generate-audit" \
-        "project-memory" \
-        "beads-issue-flow" \
-        "github-issue-flow" \
-        "go-pgx-goose" \
-        "react-vite-mantine" \
-        "graphql-gqlgen-gql-tada"
-      ;;
-    trackers)
-      printf '%s\n' \
-        "beads-issue-flow" \
-        "github-issue-flow"
-      ;;
-    stacks)
-      printf '%s\n' \
-        "go-pgx-goose" \
-        "react-vite-mantine" \
-        "graphql-gqlgen-gql-tada"
-      ;;
-    *)
-      printf 'Unknown plugin: %s\n' "$1" >&2
-      exit 1
-      ;;
-  esac
-}
 
-assert_skill_exists() {
-  local skill="$1"
-  local skill_dir="$CATALOG_DIR/$skill"
-  if [[ ! -f "$skill_dir/SKILL.md" ]]; then
-    printf 'Missing canonical skill source: %s\n' "$skill_dir/SKILL.md" >&2
-    exit 1
-  fi
-}
+def json_dump(path: Path, payload: object) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
-write_plugin_json() {
-  local plugin="$1"
-  local plugin_dir="$PLUGINS_DIR/$plugin"
-  cat >"$plugin_dir/.claude-plugin/plugin.json" <<EOF
-{
-  "name": "$plugin",
-  "description": "$(plugin_description "$plugin")",
-  "version": "$VERSION",
-  "author": {
-    "name": "$OWNER_NAME"
-  }
-}
-EOF
-}
 
-build_plugin() {
-  local plugin="$1"
-  local plugin_dir="$PLUGINS_DIR/$plugin"
-  local skill
+def ensure_skill_exists(skill: str) -> None:
+    skill_dir = CATALOG_DIR / skill
+    if not (skill_dir / "SKILL.md").exists():
+        raise SystemExit(f"Missing canonical skill source: {skill_dir / 'SKILL.md'}")
 
-  rm -rf "$plugin_dir"
-  mkdir -p "$plugin_dir/.claude-plugin" "$plugin_dir/skills"
-  write_plugin_json "$plugin"
 
-  while IFS= read -r skill; do
-    [[ -n "$skill" ]] || continue
-    assert_skill_exists "$skill"
-    cp -R "$CATALOG_DIR/$skill" "$plugin_dir/skills/$skill"
-  done < <(plugin_skills "$plugin")
-}
+def plugin_dir(plugin: str) -> Path:
+    return PLUGINS_DIR / plugin
 
-write_marketplace_manifest() {
-  local plugin
 
-  {
-    printf '{\n'
-    printf '  "name": "bento",\n'
-    printf '  "owner": {\n'
-    printf '    "name": "%s"\n' "$OWNER_NAME"
-    printf '  },\n'
-    printf '  "metadata": {\n'
-    printf '    "description": "Reusable coding-agent plugins packaged for Claude Code"\n'
-    printf '  },\n'
-    printf '  "plugins": [\n'
+def copy_skills(plugin: str) -> None:
+    target_dir = plugin_dir(plugin) / "skills"
+    for skill in PLUGIN_DEFS[plugin]["skills"]:
+        ensure_skill_exists(skill)
+        shutil.copytree(CATALOG_DIR / skill, target_dir / skill)
 
-    for i in "${!plugin_names[@]}"; do
-      plugin="${plugin_names[$i]}"
-      printf '    {\n'
-      printf '      "name": "%s",\n' "$plugin"
-      printf '      "description": "%s",\n' "$(plugin_description "$plugin")"
-      printf '      "version": "%s",\n' "$VERSION"
-      printf '      "source": "./plugins/%s",\n' "$plugin"
-      printf '      "author": {\n'
-      printf '        "name": "%s"\n' "$OWNER_NAME"
-      printf '      }\n'
-      if [[ "$i" -eq $((${#plugin_names[@]} - 1)) ]]; then
-        printf '    }\n'
-      else
-        printf '    },\n'
-      fi
-    done
 
-    printf '  ]\n'
-    printf '}\n'
-  } >"$MARKETPLACE_FILE"
-}
+def claude_manifest(plugin: str) -> dict:
+    metadata = PLUGIN_DEFS[plugin]
+    return {
+        "name": plugin,
+        "description": metadata["description"],
+        "version": VERSION,
+        "author": {
+            "name": OWNER_NAME,
+        },
+    }
 
-main() {
-  local plugin
 
-  mkdir -p "$PLUGINS_DIR"
-  rm -rf "$PLUGINS_DIR/bento-all" "$PLUGINS_DIR/core-workflow" "$PLUGINS_DIR/trackers" "$PLUGINS_DIR/stacks"
-  for plugin in "${plugin_names[@]}"; do
-    build_plugin "$plugin"
-  done
-  write_marketplace_manifest
-  (
-    cd "$ROOT_DIR"
-    "${TEST_CMD[@]}"
-    "${VALIDATE_CMD[@]}"
-  )
-}
+def codex_manifest(plugin: str) -> dict:
+    metadata = PLUGIN_DEFS[plugin]
+    return {
+        "name": plugin,
+        "version": VERSION,
+        "description": metadata["description"],
+        "author": {
+            "name": OWNER_NAME,
+            "email": OWNER_EMAIL,
+            "url": OWNER_URL,
+        },
+        "homepage": REPOSITORY_URL,
+        "repository": REPOSITORY_URL,
+        "keywords": metadata["keywords"],
+        "skills": "./skills/",
+        "interface": {
+            "displayName": metadata["display_name"],
+            "shortDescription": metadata["short_description"],
+            "longDescription": metadata["long_description"],
+            "developerName": OWNER_NAME,
+            "category": metadata["category"],
+            "capabilities": metadata["capabilities"],
+            "websiteURL": REPOSITORY_URL,
+            "defaultPrompt": metadata["default_prompts"],
+            "brandColor": metadata["brand_color"],
+            "composerIcon": "./assets/icon.png",
+            "logo": "./assets/logo.png",
+            "screenshots": [
+                "./assets/screenshot-1.png",
+                "./assets/screenshot-2.png",
+                "./assets/screenshot-3.png",
+            ],
+        },
+    }
 
-main "$@"
+
+def write_png(path: Path, width: int, height: int, pixels: bytearray) -> None:
+    def chunk(tag: bytes, data: bytes) -> bytes:
+        return (
+            struct.pack(">I", len(data))
+            + tag
+            + data
+            + struct.pack(">I", zlib.crc32(tag + data) & 0xFFFFFFFF)
+        )
+
+    raw = bytearray()
+    stride = width * 3
+    for row in range(height):
+        raw.append(0)
+        start = row * stride
+        raw.extend(pixels[start : start + stride])
+
+    payload = bytearray(b"\x89PNG\r\n\x1a\n")
+    payload.extend(chunk(b"IHDR", struct.pack(">IIBBBBB", width, height, 8, 2, 0, 0, 0)))
+    payload.extend(chunk(b"IDAT", zlib.compress(bytes(raw), level=9)))
+    payload.extend(chunk(b"IEND", b""))
+    path.write_bytes(bytes(payload))
+
+
+def fill_gradient(pixels: bytearray, width: int, height: int, top: tuple[int, int, int], bottom: tuple[int, int, int]) -> None:
+    for y in range(height):
+        blend = y / max(height - 1, 1)
+        r = int(top[0] * (1 - blend) + bottom[0] * blend)
+        g = int(top[1] * (1 - blend) + bottom[1] * blend)
+        b = int(top[2] * (1 - blend) + bottom[2] * blend)
+        for x in range(width):
+            offset = (y * width + x) * 3
+            pixels[offset] = r
+            pixels[offset + 1] = g
+            pixels[offset + 2] = b
+
+
+def draw_rect(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    left: int,
+    top: int,
+    rect_width: int,
+    rect_height: int,
+    color: tuple[int, int, int],
+) -> None:
+    right = min(left + rect_width, width)
+    bottom = min(top + rect_height, height)
+    for y in range(max(top, 0), bottom):
+        for x in range(max(left, 0), right):
+            offset = (y * width + x) * 3
+            pixels[offset] = color[0]
+            pixels[offset + 1] = color[1]
+            pixels[offset + 2] = color[2]
+
+
+def draw_circle(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    center_x: int,
+    center_y: int,
+    radius: int,
+    color: tuple[int, int, int],
+) -> None:
+    radius_sq = radius * radius
+    for y in range(max(center_y - radius, 0), min(center_y + radius, height - 1) + 1):
+        for x in range(max(center_x - radius, 0), min(center_x + radius, width - 1) + 1):
+            dx = x - center_x
+            dy = y - center_y
+            if dx * dx + dy * dy <= radius_sq:
+                offset = (y * width + x) * 3
+                pixels[offset] = color[0]
+                pixels[offset + 1] = color[1]
+                pixels[offset + 2] = color[2]
+
+
+def blend_overlay(
+    pixels: bytearray,
+    width: int,
+    height: int,
+    color: tuple[int, int, int],
+    step: int,
+    alpha_num: int,
+    alpha_den: int,
+) -> None:
+    for y in range(height):
+        for x in range(width):
+            if (x + y) % step != 0:
+                continue
+            offset = (y * width + x) * 3
+            pixels[offset] = (pixels[offset] * (alpha_den - alpha_num) + color[0] * alpha_num) // alpha_den
+            pixels[offset + 1] = (pixels[offset + 1] * (alpha_den - alpha_num) + color[1] * alpha_num) // alpha_den
+            pixels[offset + 2] = (pixels[offset + 2] * (alpha_den - alpha_num) + color[2] * alpha_num) // alpha_den
+
+
+def make_icon(path: Path, palette: dict[str, tuple[int, int, int]]) -> None:
+    width = height = 256
+    pixels = bytearray(width * height * 3)
+    fill_gradient(pixels, width, height, palette["background"], palette["surface"])
+    draw_circle(pixels, width, height, 84, 84, 48, palette["primary"])
+    draw_circle(pixels, width, height, 172, 96, 34, palette["secondary"])
+    draw_rect(pixels, width, height, 52, 148, 152, 34, palette["accent"])
+    draw_rect(pixels, width, height, 76, 188, 104, 20, palette["secondary"])
+    blend_overlay(pixels, width, height, (255, 255, 255), step=11, alpha_num=1, alpha_den=8)
+    write_png(path, width, height, pixels)
+
+
+def make_logo(path: Path, palette: dict[str, tuple[int, int, int]]) -> None:
+    width = 1200
+    height = 675
+    pixels = bytearray(width * height * 3)
+    fill_gradient(pixels, width, height, palette["background"], palette["surface"])
+    draw_rect(pixels, width, height, 72, 72, 460, 531, palette["primary"])
+    draw_rect(pixels, width, height, 558, 72, 570, 156, palette["secondary"])
+    draw_rect(pixels, width, height, 558, 258, 420, 96, palette["accent"])
+    draw_rect(pixels, width, height, 558, 396, 280, 68, palette["secondary"])
+    draw_circle(pixels, width, height, 998, 496, 84, palette["accent"])
+    blend_overlay(pixels, width, height, (255, 255, 255), step=19, alpha_num=1, alpha_den=12)
+    write_png(path, width, height, pixels)
+
+
+def make_screenshot(path: Path, palette: dict[str, tuple[int, int, int]], variant: int) -> None:
+    width = 1440
+    height = 900
+    pixels = bytearray(width * height * 3)
+    fill_gradient(pixels, width, height, palette["background"], palette["surface"])
+
+    nav_width = 220 + variant * 18
+    draw_rect(pixels, width, height, 0, 0, nav_width, height, palette["primary"])
+    draw_rect(pixels, width, height, nav_width + 36, 54, width - nav_width - 92, 118, palette["surface"])
+    draw_rect(pixels, width, height, nav_width + 36, 206, 410, 272, palette["secondary"])
+    draw_rect(pixels, width, height, nav_width + 482, 206, width - nav_width - 518, 182, palette["accent"])
+    draw_rect(pixels, width, height, nav_width + 482, 424, width - nav_width - 518, 244, palette["surface"])
+    draw_rect(pixels, width, height, nav_width + 36, 516, 410, 152, palette["surface"])
+    draw_rect(pixels, width, height, nav_width + 36, 712, width - nav_width - 92, 108, palette["secondary"])
+    draw_circle(pixels, width, height, width - 124, 112, 36 + variant * 6, palette["accent"])
+
+    for row in range(5):
+        draw_rect(
+            pixels,
+            width,
+            height,
+            28,
+            110 + row * 116,
+            nav_width - 56,
+            18,
+            palette["background"],
+        )
+
+    blend_overlay(pixels, width, height, (255, 255, 255), step=17 - min(variant, 2) * 2, alpha_num=1, alpha_den=10)
+    write_png(path, width, height, pixels)
+
+
+def write_assets(plugin: str) -> None:
+    metadata = PLUGIN_DEFS[plugin]
+    assets_dir = plugin_dir(plugin) / "assets"
+    assets_dir.mkdir(parents=True, exist_ok=True)
+    palette = metadata["palette"]
+    make_icon(assets_dir / "icon.png", palette)
+    make_logo(assets_dir / "logo.png", palette)
+    for variant in range(1, 4):
+        make_screenshot(assets_dir / f"screenshot-{variant}.png", palette, variant)
+
+
+def build_plugin(plugin: str) -> None:
+    target = plugin_dir(plugin)
+    if target.exists():
+        shutil.rmtree(target)
+    (target / ".claude-plugin").mkdir(parents=True)
+    (target / ".codex-plugin").mkdir(parents=True)
+    (target / "skills").mkdir(parents=True)
+    copy_skills(plugin)
+    write_assets(plugin)
+    json_dump(target / ".claude-plugin" / "plugin.json", claude_manifest(plugin))
+    json_dump(target / ".codex-plugin" / "plugin.json", codex_manifest(plugin))
+
+
+def write_claude_marketplace() -> None:
+    payload = {
+        "name": "bento",
+        "owner": {
+            "name": OWNER_NAME,
+        },
+        "metadata": {
+            "description": "Reusable coding-agent plugins packaged for Claude Code",
+        },
+        "plugins": [
+            {
+                "name": plugin,
+                "description": PLUGIN_DEFS[plugin]["description"],
+                "version": VERSION,
+                "source": f"./plugins/{plugin}",
+                "author": {
+                    "name": OWNER_NAME,
+                },
+            }
+            for plugin in PLUGIN_ORDER
+        ],
+    }
+    json_dump(CLAUDE_MARKETPLACE_FILE, payload)
+
+
+def write_codex_marketplace() -> None:
+    payload = {
+        "name": "bento",
+        "interface": {
+            "displayName": "Bento for Codex",
+        },
+        "plugins": [
+            {
+                "name": plugin,
+                "source": {
+                    "source": "local",
+                    "path": f"./plugins/{plugin}",
+                },
+                "policy": {
+                    "installation": "AVAILABLE",
+                    "authentication": "ON_INSTALL",
+                },
+                "category": PLUGIN_DEFS[plugin]["category"],
+            }
+            for plugin in PLUGIN_ORDER
+        ],
+    }
+    json_dump(CODEX_MARKETPLACE_FILE, payload)
+
+
+def prune_generated_plugin_dirs() -> None:
+    PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
+    valid = set(PLUGIN_ORDER)
+    for child in PLUGINS_DIR.iterdir():
+        if child.is_dir() and child.name not in valid:
+            shutil.rmtree(child)
+
+
+def run_verify_commands() -> None:
+    subprocess.run(TEST_CMD, cwd=ROOT_DIR, check=True)
+    if os.environ.get("BENTO_SKIP_CLAUDE_VALIDATE") == "1":
+        return
+    subprocess.run(CLAUDE_VALIDATE_CMD, cwd=ROOT_DIR, check=True)
+
+
+def build_repo(run_verification: bool = True) -> None:
+    prune_generated_plugin_dirs()
+    for plugin in PLUGIN_ORDER:
+        build_plugin(plugin)
+    write_claude_marketplace()
+    write_codex_marketplace()
+    if run_verification:
+        run_verify_commands()
+
+
+def main() -> None:
+    run_verification = os.environ.get("BENTO_SKIP_VERIFY") != "1"
+    build_repo(run_verification=run_verification)
+
+
+if __name__ == "__main__":
+    main()

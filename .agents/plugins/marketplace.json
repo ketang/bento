@@ -1,0 +1,44 @@
+{
+  "name": "bento",
+  "interface": {
+    "displayName": "Bento for Codex"
+  },
+  "plugins": [
+    {
+      "name": "bento-all",
+      "source": {
+        "source": "local",
+        "path": "./plugins/bento-all"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    },
+    {
+      "name": "trackers",
+      "source": {
+        "source": "local",
+        "path": "./plugins/trackers"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Project Management"
+    },
+    {
+      "name": "stacks",
+      "source": {
+        "source": "local",
+        "path": "./plugins/stacks"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
+}

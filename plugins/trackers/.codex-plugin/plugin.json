@@ -1,0 +1,46 @@
+{
+  "name": "trackers",
+  "version": "1.0.0",
+  "description": "Tracker skills for Beads and GitHub Issues workflows",
+  "author": {
+    "name": "Ketan Gangatirkar",
+    "email": "ketan@gangatirkar.com",
+    "url": "https://github.com/ketang"
+  },
+  "homepage": "https://github.com/ketang/bento",
+  "repository": "https://github.com/ketang/bento",
+  "keywords": [
+    "issues",
+    "trackers",
+    "workflow",
+    "github",
+    "planning"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Bento Trackers",
+    "shortDescription": "Tracker-driven delivery flows",
+    "longDescription": "Bento Trackers packages lightweight issue-management skills for Beads and GitHub Issues so Codex can move from triage to branch creation and follow-up with a consistent workflow.",
+    "developerName": "Ketan Gangatirkar",
+    "category": "Project Management",
+    "capabilities": [
+      "Read",
+      "Plan",
+      "Automation"
+    ],
+    "websiteURL": "https://github.com/ketang/bento",
+    "defaultPrompt": [
+      "Turn this GitHub issue into an execution plan with clear next actions and branch setup.",
+      "Run the Beads issue flow for the current task and summarize the decisions to keep.",
+      "Compare tracker state to the repo and point out missing follow-through or stale tasks."
+    ],
+    "brandColor": "#0E8F5B",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot-1.png",
+      "./assets/screenshot-2.png",
+      "./assets/screenshot-3.png"
+    ]
+  }
+}

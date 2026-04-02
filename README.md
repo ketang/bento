@@ -3,9 +3,10 @@
 `bento` is a plugin marketplace for coding agents.
 
 It packages reusable agent capabilities as installable plugins and keeps
-related hook scripts in the same repository. The current implementation targets
-Claude Code's marketplace format, but the repo is organized around a broader
-idea: versioned, composable capabilities for agentic coding workflows.
+related hook scripts in the same repository. The current implementation emits
+generated packaging for Claude Code and OpenAI Codex, but the repo is organized
+around a broader idea: versioned, composable capabilities for agentic coding
+workflows.
 
 ## What lives here
 
@@ -36,14 +37,14 @@ The separation is intentional:
 Do not hand-edit generated plugin skill directories. Edit the canonical sources
 and rebuild the plugins.
 
-## Current target platform
+## Current target platforms
 
-Today, `bento` emits plugins in Claude Code's marketplace format. That is the
-current packaging target, not the full identity of the repo.
+Today, `bento` emits plugins in Claude Code's marketplace format and Codex's
+plugin format. Those are packaging targets, not the full identity of the repo.
 
 If you are documenting or extending this project, prefer framing it as a
-marketplace for coding agents first, then describe Claude Code compatibility as
-the current concrete implementation.
+marketplace for coding agents first, then describe Claude Code and Codex
+compatibility as concrete implementations.
 
 ## Install and setup
 
@@ -52,9 +53,9 @@ For the end-user install flow, see
 
 That guide covers:
 
-- marketplace registration
+- Claude marketplace registration
 - plugin selection
-- Claude Code install commands
+- generated Codex packaging artifacts
 - update and removal guidance
 - the separate hook wiring path
 
@@ -120,14 +121,17 @@ That script:
 
 - materializes generated plugin directories under `plugins/`
 - writes each plugin's `.claude-plugin/plugin.json`
+- writes each plugin's `.codex-plugin/plugin.json`
+- generates Codex-facing assets under each plugin's `assets/`
 - rebuilds the root `.claude-plugin/marketplace.json`
+- rebuilds the root `.agents/plugins/marketplace.json`
 - runs the repository test suite with `python3 -m unittest discover -s tests -t .`
 - removes generated plugin directories that are no longer part of the current
   plugin set
 
-The generated marketplace metadata currently targets Claude Code's plugin
-format. The canonical catalog and helper scripts should remain platform-agnostic
-unless a packaging-specific constraint requires otherwise.
+The generated marketplace metadata currently targets Claude Code and Codex. The
+canonical catalog and helper scripts should remain platform-agnostic unless a
+packaging-specific constraint requires otherwise.
 
 ## Generated plugin format
 
@@ -135,14 +139,20 @@ Each generated plugin lives at `plugins/<plugin-name>/`:
 
 ```text
 plugins/<plugin-name>/
+├── .codex-plugin/
+│   └── plugin.json
 ├── .claude-plugin/
 │   └── plugin.json
+├── assets/
+│   ├── icon.png
+│   ├── logo.png
+│   └── screenshot-1.png
 └── skills/
     └── <skill-name>/
         └── SKILL.md
 ```
 
-Generated `plugin.json` format:
+Generated Claude `plugin.json` format:
 
 ```json
 {
@@ -155,8 +165,16 @@ Generated `plugin.json` format:
 }
 ```
 
-The marketplace manifest is generated automatically; do not edit
-`.claude-plugin/marketplace.json` by hand.
+Generated Codex `plugin.json` format includes:
+
+- the same top-level identity fields as the Claude manifest
+- `skills: "./skills/"`
+- an `interface` block with display text, capabilities, starter prompts, and
+  generated asset references
+
+Generated marketplace manifests are automatic; do not edit
+`.claude-plugin/marketplace.json` or `.agents/plugins/marketplace.json` by
+hand.
 
 ## Hooks
 
@@ -170,8 +188,9 @@ See [hooks/README.md](hooks/README.md) for the exact format.
 
 ```text
 bento/
+├── .agents/        # generated Codex marketplace metadata
 ├── catalog/        # canonical skill sources
-├── .claude-plugin/ # generated marketplace metadata
+├── .claude-plugin/ # generated Claude marketplace metadata
 ├── plugins/        # generated installable plugins
 ├── scripts/        # repo utilities such as build-plugins
 ├── hooks/          # hook scripts organized by event type
