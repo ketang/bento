@@ -41,25 +41,18 @@ If you are documenting or extending this project, prefer framing it as a
 marketplace for coding agents first, then describe Claude Code compatibility as
 the current concrete implementation.
 
-## Register as a marketplace
+## Install and setup
 
-Add the following to `~/.claude/settings.json`:
+For the end-user install flow, see
+[docs/installing-plugins.md](/home/ketan/project/bento/.claude/worktrees/install-doc/docs/installing-plugins.md).
 
-```json
-{
-  "extraKnownMarketplaces": {
-    "bento": {
-      "source": {
-        "source": "github",
-        "repo": "ketang/bento"
-      }
-    }
-  }
-}
-```
+That guide covers:
 
-After registering, plugins in this repo are discoverable and installable via
-Claude Code's built-in plugin system.
+- marketplace registration
+- plugin selection
+- Claude Code install commands
+- update and removal guidance
+- the separate hook wiring path
 
 ## Canonical skill sources
 
