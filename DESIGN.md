@@ -64,6 +64,26 @@ The root script `scripts/build-plugins` regenerates:
 Do not hand-edit generated plugin directories or the generated marketplace
 manifest.
 
+## Skill implementation pattern
+
+Canonical skills should keep the reusable capability contract in `SKILL.md` and
+move only the brittle, repeatable parts of execution into companion files under
+the same skill directory.
+
+Use scripts or tools when the logic is:
+- stateful or high-cost if misclassified
+- better expressed as structured JSON than prose
+- dependent on repo facts, git state, or repeatable validation steps
+- likely to be reused across runs without reinterpretation
+
+Keep prose in `SKILL.md` when the work is:
+- qualitative or judgment-heavy
+- dependent on user preferences or external tradeoffs
+- better expressed as policy, framing, or workflow guidance
+
+This split keeps canonical capabilities portable while improving runtime
+reliability for the parts that benefit from determinism.
+
 ## Model Guidance Convention
 
 Each canonical `SKILL.md` may include a short `recommended_model` scalar in

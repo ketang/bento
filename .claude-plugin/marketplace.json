@@ -1,6 +1,6 @@
 {
   "name": "bento",
-  "description": "Ketan's personal Claude Code plugins",
+  "description": "Reusable coding-agent plugins packaged for Claude Code",
   "owner": {
     "name": "Ketan Gangatirkar"
   },

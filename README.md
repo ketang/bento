@@ -44,7 +44,7 @@ the current concrete implementation.
 ## Install and setup
 
 For the end-user install flow, see
-[docs/installing-plugins.md](/home/ketan/project/bento/.claude/worktrees/install-doc/docs/installing-plugins.md).
+[docs/installing-plugins.md](docs/installing-plugins.md).
 
 That guide covers:
 
@@ -73,6 +73,12 @@ catalog/skills/<skill-name>/
 ```
 
 These companion files are copied into generated plugins along with `SKILL.md`.
+
+Use companion scripts for deterministic subproblems that are too stateful or
+fragile to leave as prose. Good script candidates include repo discovery,
+preflight validation, lease checks, structured scans, and other logic that
+should produce repeatable machine-readable output. Leave qualitative judgment,
+tradeoff analysis, and user-facing recommendations in `SKILL.md`.
 
 `SKILL.md` format:
 
@@ -114,6 +120,10 @@ That script:
 - runs the repository test suite with `python3 -m unittest discover -s tests -t .`
 - removes generated plugin directories that are no longer part of the current
   plugin set
+
+The generated marketplace metadata currently targets Claude Code's plugin
+format. The canonical catalog and helper scripts should remain platform-agnostic
+unless a packaging-specific constraint requires otherwise.
 
 ## Generated plugin format
 

@@ -1,6 +1,8 @@
 # Hooks
 
-Hook scripts organized by Claude Code event type. Each event gets its own subdirectory; each concern gets its own script.
+Hook scripts stored alongside the skill marketplace. The current hook layout and
+examples target Claude Code event types; each event gets its own subdirectory
+and each concern gets its own script.
 
 ## Directory structure
 
