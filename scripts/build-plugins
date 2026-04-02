@@ -115,7 +115,7 @@ write_marketplace_manifest() {
   {
     printf '{\n'
     printf '  "name": "bento",\n'
-    printf '  "description": "Ketan'\''s personal Claude Code plugins",\n'
+    printf '  "description": "Reusable coding-agent plugins packaged for Claude Code",\n'
     printf '  "owner": {\n'
     printf '    "name": "%s"\n' "$OWNER_NAME"
     printf '  },\n'

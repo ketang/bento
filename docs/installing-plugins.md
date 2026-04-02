@@ -101,7 +101,7 @@ If your Claude Code setup expects an explicit plugin identifier, use the same
 Hook scripts in this repository are not installed through the plugin system.
 They must be wired manually in `~/.claude/settings.json`.
 
-See [hooks/README.md](/home/ketan/project/bento/.claude/worktrees/install-doc/hooks/README.md)
+See [hooks/README.md](../hooks/README.md)
 for hook wiring examples.
 
 ## For maintainers
