@@ -28,7 +28,7 @@ repo-specific base layer before the model starts external research.
 Run it first with a short feature brief:
 
 ```bash
-python3 scripts/build-vs-buy-discover.py --feature "add background jobs"
+scripts/build-vs-buy-discover.py --feature "add background jobs"
 ```
 
 Use the JSON output as the starting point for:

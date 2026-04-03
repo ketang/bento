@@ -32,9 +32,9 @@ safely.
 This skill includes helper scripts under `scripts/` for the parts of launching
 work that benefit from repeatable checks:
 
-- `python3 scripts/launch-work-bootstrap.py --branch <name> --worktree <path>`
+- `scripts/launch-work-bootstrap.py --branch <name> --worktree <path>`
   to preview or apply branch and linked-worktree creation
-- `python3 scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
+- `scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
   to verify the current checkout is the intended linked worktree on the intended
   branch
 
@@ -54,19 +54,19 @@ target branch and worktree path are confirmed correct.
 5. Preview the setup with:
 
 ```bash
-python3 scripts/launch-work-bootstrap.py --branch <name> --worktree <path>
+scripts/launch-work-bootstrap.py --branch <name> --worktree <path>
 ```
 
 6. If the preview is correct, create the linked worktree with:
 
 ```bash
-python3 scripts/launch-work-bootstrap.py --branch <name> --worktree <path> --apply
+scripts/launch-work-bootstrap.py --branch <name> --worktree <path> --apply
 ```
 
 7. Enter the linked worktree and verify both location and branch:
 
 ```bash
-python3 scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree
+scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree
 ```
 
 8. Confirm implementation will happen in that linked worktree, not in the

@@ -38,7 +38,7 @@ class BuildVsBuyDiscoverTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def run_helper(self, feature: str | None = None) -> dict:
-        cmd = ["python3", str(SCRIPT)]
+        cmd = [str(SCRIPT)]
         if feature:
             cmd.extend(["--feature", feature])
         result = run(cmd, self.repo)

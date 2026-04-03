@@ -38,7 +38,7 @@ class AuditDiscoverTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def run_helper(self) -> dict:
-        result = run(["python3", str(SCRIPT)], self.repo)
+        result = run([str(SCRIPT)], self.repo)
         return json.loads(result.stdout)
 
     def test_discovers_typescript_repo_shape_and_workflow_surfaces(self) -> None:

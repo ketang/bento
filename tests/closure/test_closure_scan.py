@@ -59,7 +59,7 @@ class ClosureScanTest(unittest.TestCase):
         git(self.repo, "checkout", "main")
 
     def run_scan(self, *args: str) -> dict:
-        result = run(["python3", str(SCRIPT), *args], self.repo)
+        result = run([str(SCRIPT), *args], self.repo)
         return json.loads(result.stdout)
 
     def branch_record(self, scan: dict, branch_name: str) -> dict:
