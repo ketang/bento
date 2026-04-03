@@ -51,10 +51,17 @@ compatibility as concrete implementations.
 For the end-user install flow, see
 [docs/installing-plugins.md](docs/installing-plugins.md).
 
+For a one-line Codex install from GitHub, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/scripts/install-codex-home.sh | bash
+```
+
 That guide covers:
 
 - Claude marketplace registration
 - plugin selection
+- the home-scoped Codex installer
 - generated Codex packaging artifacts
 - update and removal guidance
 - the separate hook wiring path
@@ -124,7 +131,6 @@ That script:
 - writes each plugin's `.codex-plugin/plugin.json`
 - generates Codex-facing assets under each plugin's `assets/`
 - rebuilds the root `.claude-plugin/marketplace.json`
-- rebuilds the root `.agents/plugins/marketplace.json`
 - runs the repository test suite with `python3 -m unittest discover -s tests -t .`
 - removes generated plugin directories that are no longer part of the current
   plugin set
@@ -173,8 +179,7 @@ Generated Codex `plugin.json` format includes:
   generated asset references
 
 Generated marketplace manifests are automatic; do not edit
-`.claude-plugin/marketplace.json` or `.agents/plugins/marketplace.json` by
-hand.
+`.claude-plugin/marketplace.json` by hand.
 
 ## Hooks
 
@@ -188,7 +193,6 @@ See [hooks/README.md](hooks/README.md) for the exact format.
 
 ```text
 bento/
-├── .agents/        # generated Codex marketplace metadata
 ├── catalog/        # canonical skill sources
 ├── .claude-plugin/ # generated Claude marketplace metadata
 ├── plugins/        # generated installable plugins
