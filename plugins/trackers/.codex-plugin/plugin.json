@@ -9,6 +9,7 @@
   },
   "homepage": "https://github.com/ketang/bento",
   "repository": "https://github.com/ketang/bento",
+  "license": "MIT",
   "keywords": [
     "issues",
     "trackers",
@@ -22,13 +23,11 @@
     "shortDescription": "Tracker-driven delivery flows",
     "longDescription": "Bento Trackers packages lightweight issue-management skills for Beads and GitHub Issues so Codex can move from triage to branch creation and follow-up with a consistent workflow.",
     "developerName": "Ketan Gangatirkar",
-    "category": "Project Management",
-    "capabilities": [
-      "Read",
-      "Plan",
-      "Automation"
-    ],
+    "category": "Productivity",
+    "capabilities": [],
     "websiteURL": "https://github.com/ketang/bento",
+    "privacyPolicyURL": "https://github.com/ketang/bento",
+    "termsOfServiceURL": "https://github.com/ketang/bento",
     "defaultPrompt": [
       "Turn this GitHub issue into an execution plan with clear next actions and branch setup.",
       "Run the Beads issue flow for the current task and summarize the decisions to keep.",

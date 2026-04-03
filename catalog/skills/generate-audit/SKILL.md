@@ -24,13 +24,14 @@ the audit procedure that a repo should use.
 
 ## Deterministic Helper
 
-This skill includes `scripts/audit-discover.py` to collect a deterministic base
-layer of repo facts before the model starts shaping the audit.
+This skill includes `generate-audit/scripts/audit-discover.py` to collect a
+deterministic base layer of repo facts before the model starts shaping the
+audit.
 
 Run it first:
 
 ```bash
-scripts/audit-discover.py
+generate-audit/scripts/audit-discover.py
 ```
 
 Use the JSON output as the starting point for:

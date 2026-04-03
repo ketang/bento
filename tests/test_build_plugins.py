@@ -32,12 +32,11 @@ class BuildPluginsTest(unittest.TestCase):
         self.module.CATALOG_DIR = self.root / "catalog" / "skills"
         self.module.PLUGINS_DIR = self.root / "plugins"
         self.module.CLAUDE_MARKETPLACE_FILE = self.root / ".claude-plugin" / "marketplace.json"
-        self.module.CODEX_MARKETPLACE_FILE = self.root / ".agents" / "plugins" / "marketplace.json"
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_build_repo_generates_dual_manifests_assets_and_marketplaces(self) -> None:
+    def test_build_repo_generates_manifests_assets_and_claude_marketplace(self) -> None:
         self.module.build_repo(run_verification=False)
 
         plugin_dir = self.root / "plugins" / "bento-all"
@@ -58,14 +57,6 @@ class BuildPluginsTest(unittest.TestCase):
             asset = plugin_dir / "assets" / asset_name
             self.assertTrue(asset.exists(), asset_name)
             self.assertGreater(asset.stat().st_size, 0)
-
-        codex_marketplace = json.loads((self.root / ".agents" / "plugins" / "marketplace.json").read_text(encoding="utf-8"))
-        self.assertEqual(codex_marketplace["interface"]["displayName"], "Bento for Codex")
-        self.assertEqual(
-            codex_marketplace["plugins"][0]["source"],
-            {"source": "local", "path": "./plugins/bento-all"},
-        )
-        self.assertEqual(codex_marketplace["plugins"][0]["policy"]["authentication"], "ON_INSTALL")
 
         claude_marketplace = json.loads((self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         self.assertEqual(claude_marketplace["plugins"][1]["name"], "trackers")

@@ -163,3 +163,7 @@ If you are changing the canonical skill content in this repository, edit
 When changing the Codex installers or installation docs, do that work from a
 feature branch or a worktree rather than directly on `main`, then merge once
 the installer flow has been verified.
+The published installer consumes the generated `plugins/` directories directly
+from GitHub and synthesizes the user's home-scoped marketplace entries during
+install, so the generated plugin bundles under `plugins/` must be committed
+before users can install the updated plugin set.

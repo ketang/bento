@@ -9,6 +9,7 @@
   },
   "homepage": "https://github.com/ketang/bento",
   "repository": "https://github.com/ketang/bento",
+  "license": "MIT",
   "keywords": [
     "go",
     "postgres",
@@ -22,13 +23,13 @@
     "shortDescription": "Stack-specific implementation guidance",
     "longDescription": "Bento Stacks gives Codex focused engineering guidance for common Bento implementation stacks, including Go with Postgres and Goose, React with Vite and Mantine, and GraphQL flows that span server and client codegen.",
     "developerName": "Ketan Gangatirkar",
-    "category": "Developer Tools",
+    "category": "Coding",
     "capabilities": [
-      "Read",
-      "Write",
-      "Plan"
+      "Write"
     ],
     "websiteURL": "https://github.com/ketang/bento",
+    "privacyPolicyURL": "https://github.com/ketang/bento",
+    "termsOfServiceURL": "https://github.com/ketang/bento",
     "defaultPrompt": [
       "Implement this feature using the existing Go, Postgres, and Goose migration patterns.",
       "Add a React and Vite UI change that matches the current Mantine conventions in this repo.",

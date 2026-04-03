@@ -9,6 +9,7 @@
   },
   "homepage": "https://github.com/ketang/bento",
   "repository": "https://github.com/ketang/bento",
+  "license": "MIT",
   "keywords": [
     "codex",
     "agents",
@@ -22,14 +23,14 @@
     "shortDescription": "Complete coding-agent workflow pack",
     "longDescription": "Bento All bundles the full Bento marketplace into one Codex-ready plugin: workflow launch and landing guidance, repo cleanup, research support, tracker flows, and stack-specific implementation skills.",
     "developerName": "Ketan Gangatirkar",
-    "category": "Developer Tools",
+    "category": "Coding",
     "capabilities": [
-      "Read",
-      "Write",
-      "Plan",
-      "Automation"
+      "Interactive",
+      "Write"
     ],
     "websiteURL": "https://github.com/ketang/bento",
+    "privacyPolicyURL": "https://github.com/ketang/bento",
+    "termsOfServiceURL": "https://github.com/ketang/bento",
     "defaultPrompt": [
       "Launch a new implementation task with issue flow, branch setup, and a safe worktree plan.",
       "Review this repository and recommend build-vs-buy options using the existing stack.",

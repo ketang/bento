@@ -32,13 +32,13 @@ before acting:
 
 ## Deterministic Helper
 
-This skill includes `scripts/closure-scan.py` for the git-state discovery and
-the narrow cleanup actions that can be made deterministic.
+This skill includes `closure/scripts/closure-scan.py` for the git-state
+discovery and the narrow cleanup actions that can be made deterministic.
 
 Run the scan first:
 
 ```bash
-scripts/closure-scan.py
+closure/scripts/closure-scan.py
 ```
 
 Use the JSON output as the base layer for:
@@ -53,7 +53,7 @@ Use the JSON output as the base layer for:
 If the user wants the clearly safe local branch cleanup applied, run:
 
 ```bash
-scripts/closure-scan.py --apply delete-local-merged-branches
+closure/scripts/closure-scan.py --apply delete-local-merged-branches
 ```
 
 This apply mode deletes only local branches that are both:
