@@ -59,6 +59,11 @@ Generated plugins live at `plugins/<name>/` with:
 - `assets/` — generated Codex-facing icon, logo, and screenshot assets
 - `skills/<skill-name>/SKILL.md` — copied from the canonical catalog
 
+For Codex, these generated artifacts expose installable skills, apps, MCP
+servers, hooks, and UI metadata. They do not currently define custom slash
+commands, so Bento skills such as `swarm` and `closure` are invoked by skill
+name in prompts rather than as `/swarm` or `/closure`.
+
 The root script `scripts/build-plugins` regenerates:
 - the plugin directories under `plugins/`
 - each plugin's Claude and Codex manifests

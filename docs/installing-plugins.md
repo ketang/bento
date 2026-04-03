@@ -88,6 +88,11 @@ curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-hom
 After the script finishes, restart Codex if it is already running. The Bento
 plugins will then appear under `/plugins` from any project.
 
+Important: Bento's Codex install exposes skills, not custom slash commands.
+For example, `swarm` and `closure` should be invoked by name in your prompt,
+such as "use the `swarm` skill for this repo" or "run the `closure` skill",
+rather than by typing `/swarm` or `/closure`.
+
 ### Project-scoped install
 
 This installs Bento under `./plugins/` in the current repository and updates
@@ -101,6 +106,9 @@ curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-pro
 
 After the script finishes, restart Codex if it is already running, then launch
 Codex from that same project root to use the installed Bento marketplace.
+
+As with the home-scoped install, this makes Bento's skills available to Codex
+but does not register `/swarm` or `/closure` as custom slash commands.
 
 ### Updating a Codex install
 

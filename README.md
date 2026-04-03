@@ -46,6 +46,12 @@ If you are documenting or extending this project, prefer framing it as a
 marketplace for coding agents first, then describe Claude Code and Codex
 compatibility as concrete implementations.
 
+For Codex specifically, the generated plugin format installs skills and plugin
+metadata. It does not currently register custom slash commands such as
+`/swarm` or `/closure`. Invoke those capabilities by skill name in your prompt
+instead, for example "use the `swarm` skill" or "run the `closure` skill on
+this repo".
+
 ## Install and setup
 
 For the end-user install flow, see
@@ -183,6 +189,10 @@ Generated Codex `plugin.json` format includes:
 - `skills: "./skills/"`
 - an `interface` block with display text, capabilities, starter prompts, and
   generated asset references
+
+The current Codex plugin manifest shape in this repo does not include a custom
+slash-command registry. Skills are the installable unit; slash commands remain
+separate Codex UI behavior.
 
 Generated marketplace manifests are automatic; do not edit
 `.claude-plugin/marketplace.json` by hand.

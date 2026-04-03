@@ -46,9 +46,9 @@ PLUGIN_DEFS = {
         "capabilities": ["Interactive", "Write"],
         "keywords": ["codex", "agents", "skills", "workflow", "engineering"],
         "default_prompts": [
-            "Launch a new implementation task with issue flow, branch setup, and a safe worktree plan.",
+            "Use the swarm skill to plan and coordinate parallel work for this repository.",
             "Review this repository and recommend build-vs-buy options using the existing stack.",
-            "Clean up stale branches, worktrees, and partial work without losing useful context.",
+            "Run the closure skill to clean up stale branches, worktrees, and partial work safely.",
         ],
         "brand_color": "#1F6FEB",
         "palette": {
