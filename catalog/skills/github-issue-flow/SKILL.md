@@ -36,6 +36,11 @@ tracker.
 8. If work is abandoned or handed off without landing, clear or adjust the
    active-claim signal using the repo's documented policy instead of closing the
    issue.
+9. When another skill such as `closure` hands off an apparently landed issue,
+   verify the landing evidence before mutating issue state.
+10. If cleanup evidence shows the issue is superseded, abandoned, or only
+    partially landed, update or leave the issue open according to repo policy
+    instead of closing it.
 
 ## Policy Notes
 
@@ -45,6 +50,8 @@ tracker.
   documented primary-branch naming and landing flow.
 - Do not invent extra labels, comments, or issue transitions that the repo does
   not document.
+- Do not close from cleanup evidence alone unless the landed-work correlation
+  is strong enough to explain and defend.
 
 ## Common Commands
 

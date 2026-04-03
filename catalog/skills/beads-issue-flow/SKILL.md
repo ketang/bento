@@ -35,6 +35,11 @@ Use this skill only when the project documents Beads as the issue tracker.
 8. If work is abandoned or handed off without landing, clear or adjust the
    active-work status using the repo's documented policy instead of closing the
    issue.
+9. When another skill such as `closure` hands off an apparently landed task,
+   verify the landing evidence before mutating tracker state.
+10. If cleanup evidence shows the task is superseded, abandoned, or only
+    partially landed, update or leave the issue open according to repo policy
+    instead of closing it.
 
 ## Policy Notes
 
@@ -43,6 +48,8 @@ Use this skill only when the project documents Beads as the issue tracker.
   documented primary-branch naming and landing flow.
 - Do not invent extra Beads statuses or transitions that the repo does not
   document.
+- Do not close from cleanup evidence alone unless the landed-work correlation
+  is strong enough to explain and defend.
 
 ## Worktree Caveat
 
