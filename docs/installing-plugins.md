@@ -65,12 +65,40 @@ If Claude Code cannot find the marketplace or plugin:
 - confirm you used the `<plugin-name>@bento` form with `/plugin install`
 - confirm Claude Code can reach GitHub
 
-## Codex packaging artifacts
+## Using Bento in Codex
 
-For Codex, this repository generates local plugin packaging instead of the
-Claude marketplace format.
+Bento ships a Codex-compatible marketplace manifest at `.agents/plugins/marketplace.json`.
+Codex reads this file automatically when it is present at `$REPO_ROOT/.agents/plugins/marketplace.json`
+(repo-scoped) or at `~/.agents/plugins/marketplace.json` (personal scope).
 
-After running `scripts/build-plugins`, each plugin includes:
+### Option A: repo-scoped (use this repo directly)
+
+Clone or navigate to this repository. Because `.agents/plugins/marketplace.json`
+already exists at the repo root, Codex will pick it up automatically when you
+run Codex from inside this directory.
+
+### Option B: personal scope (available from any directory)
+
+Copy the marketplace manifest to your personal agents directory:
+
+```bash
+mkdir -p ~/.agents/plugins
+cp .agents/plugins/marketplace.json ~/.agents/plugins/marketplace.json
+```
+
+### Installing a plugin
+
+Once Codex can see the marketplace manifest, open the `/plugins` panel in the
+Codex TUI. The Bento plugins (`bento-all`, `trackers`, `stacks`) will appear
+under the Bento marketplace. Select a plugin to install it.
+
+Plugin management — install, update, remove — is handled through the Codex
+`/plugins` TUI. There is no separate CLI install command.
+
+### Codex packaging artifacts
+
+For reference, this repository generates the following Codex artifacts when
+`scripts/build-plugins` is run:
 
 - `plugins/<plugin-name>/.codex-plugin/plugin.json`
 - `plugins/<plugin-name>/assets/icon.png`
@@ -78,12 +106,7 @@ After running `scripts/build-plugins`, each plugin includes:
 - `plugins/<plugin-name>/assets/screenshot-1.png`
 - `plugins/<plugin-name>/assets/screenshot-2.png`
 - `plugins/<plugin-name>/assets/screenshot-3.png`
-
-The repository also generates a Codex marketplace manifest at:
-
 - `.agents/plugins/marketplace.json`
-
-That manifest points Codex at the local plugin paths under `./plugins/`.
 
 ## Updating a plugin
 
