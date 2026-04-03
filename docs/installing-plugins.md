@@ -67,32 +67,47 @@ If Claude Code cannot find the marketplace or plugin:
 
 ## Using Bento In Codex
 
-Bento provides a home-scoped installer for Codex. It downloads the published
-plugin bundles from GitHub, installs them under `~/plugins/`, and safely merges
-the Bento entries into `~/.agents/plugins/marketplace.json`.
+Bento provides two Codex installers:
 
-Run:
+- home-scoped: available from every project on the machine
+- project-scoped: only available inside one repository
+
+Both installers download the published plugin bundles from GitHub, install the
+three Bento plugins, create a timestamped backup before editing any existing
+marketplace file, and safely merge only the Bento entries.
+
+### Home-scoped install
+
+This installs Bento under `~/plugins/` and updates
+`~/.agents/plugins/marketplace.json`.
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/scripts/install-codex-home.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-home.sh | bash
 ```
 
-The installer:
+After the script finishes, restart Codex if it is already running. The Bento
+plugins will then appear under `/plugins` from any project.
 
-- downloads the published Bento repo archive from GitHub
-- installs `bento-all`, `trackers`, and `stacks` into `~/plugins/`
-- creates a timestamped backup of any existing `~/.agents/plugins/marketplace.json`
-- updates only the Bento plugin entries in that marketplace file
+### Project-scoped install
 
-After the script finishes, restart Codex if it is already running, then open
-the `/plugins` panel from any project. The Bento plugins will appear under the
-Bento marketplace with valid local paths.
+This installs Bento under `./plugins/` in the current repository and updates
+`./.agents/plugins/marketplace.json`.
+
+Run this from the project root where you want Bento available:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-project.sh | bash
+```
+
+After the script finishes, restart Codex if it is already running, then launch
+Codex from that same project root to use the installed Bento marketplace.
 
 ### Updating a Codex install
 
-Rerun the same installer command. It replaces the Bento plugin bundles in
-`~/plugins/` with the current published versions from GitHub and refreshes the
-Bento entries in `~/.agents/plugins/marketplace.json`.
+Rerun the same installer command for the scope you want to refresh. It replaces
+the Bento plugin bundles for that scope with the current published versions
+from GitHub and refreshes the Bento entries in the corresponding marketplace
+file.
 
 ### Codex packaging artifacts
 

@@ -7,9 +7,10 @@ REPO_REF="${BENTO_REPO_REF:-main}"
 ARCHIVE_URL="${BENTO_ARCHIVE_URL:-https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_REF}}"
 
 PLUGIN_NAMES=("bento-all" "trackers" "stacks")
-PLUGIN_HOME_DIR="${HOME}/plugins"
-AGENTS_DIR="${HOME}/.agents/plugins"
-MARKETPLACE_PATH="${AGENTS_DIR}/marketplace.json"
+INSTALL_SCOPE="${BENTO_INSTALL_SCOPE:?BENTO_INSTALL_SCOPE must be set to home or project}"
+INSTALL_ROOT="${BENTO_INSTALL_ROOT:?BENTO_INSTALL_ROOT must be set}"
+PLUGIN_ROOT="${BENTO_PLUGIN_ROOT:?BENTO_PLUGIN_ROOT must be set}"
+MARKETPLACE_PATH="${BENTO_MARKETPLACE_PATH:?BENTO_MARKETPLACE_PATH must be set}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -19,7 +20,7 @@ require_cmd() {
 }
 
 log() {
-  printf '[bento-install] %s\n' "$1"
+  printf '[bento-install:%s] %s\n' "$INSTALL_SCOPE" "$1"
 }
 
 require_cmd curl
@@ -46,12 +47,12 @@ if [[ -z "${repo_root}" ]]; then
   exit 1
 fi
 
-mkdir -p "$PLUGIN_HOME_DIR" "$AGENTS_DIR"
+mkdir -p "$PLUGIN_ROOT" "$(dirname "$MARKETPLACE_PATH")"
 
 for plugin in "${PLUGIN_NAMES[@]}"; do
   src="${repo_root}/plugins/${plugin}"
-  dest="${PLUGIN_HOME_DIR}/${plugin}"
-  staging="${PLUGIN_HOME_DIR}/.${plugin}.tmp"
+  dest="${PLUGIN_ROOT}/${plugin}"
+  staging="${PLUGIN_ROOT}/.${plugin}.tmp"
 
   if [[ ! -f "${src}/.codex-plugin/plugin.json" ]]; then
     echo "missing published plugin bundle for ${plugin}" >&2
@@ -135,6 +136,6 @@ target_path.parent.mkdir(parents=True, exist_ok=True)
 target_path.write_text(json.dumps(target, indent=2) + "\n", encoding="utf-8")
 PY
 
-log "installed Bento plugins to ${PLUGIN_HOME_DIR}"
+log "installed Bento plugins to ${PLUGIN_ROOT}"
 log "updated Codex marketplace at ${MARKETPLACE_PATH}"
 log "restart Codex if it is already running"

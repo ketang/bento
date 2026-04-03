@@ -51,17 +51,23 @@ compatibility as concrete implementations.
 For the end-user install flow, see
 [docs/installing-plugins.md](docs/installing-plugins.md).
 
-For a one-line Codex install from GitHub, use:
+For a one-line home-scoped Codex install from GitHub, use:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/scripts/install-codex-home.sh | bash
+curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-home.sh | bash
+```
+
+For a project-scoped Codex install in the current repository, use:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-project.sh | bash
 ```
 
 That guide covers:
 
 - Claude marketplace registration
 - plugin selection
-- the home-scoped Codex installer
+- the home-scoped and project-scoped Codex installers
 - generated Codex packaging artifacts
 - update and removal guidance
 - the separate hook wiring path
@@ -195,6 +201,7 @@ See [hooks/README.md](hooks/README.md) for the exact format.
 bento/
 ├── catalog/        # canonical skill sources
 ├── .claude-plugin/ # generated Claude marketplace metadata
+├── install/        # end-user installer entrypoints and shared installer helper
 ├── plugins/        # generated installable plugins
 ├── scripts/        # repo utilities such as build-plugins
 ├── hooks/          # hook scripts organized by event type
