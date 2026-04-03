@@ -2,11 +2,9 @@
 
 Use this overlay only when the repo uses Beads for task tracking.
 
-## Tracker Commands
+## Tracker Skill
 
-- List tasks: `bd list`
-- Show task details: `bd show <id>`
-- Close stale or completed tasks: `bd close <id>`
+- Use `beads-issue-flow` for all task-state changes.
 
 ## Correlation Guidance
 
@@ -19,4 +17,9 @@ Use this overlay only when the repo uses Beads for task tracking.
 
 ## Closeout
 
-- When the core skill says to close a tracker task, run `bd close <id>`.
+- Present the landing evidence first.
+- If the task appears complete and landed, hand off to `beads-issue-flow` with
+  a `close` recommendation.
+- If the work appears superseded, abandoned, or only partially landed, hand off
+  to `beads-issue-flow` with an `update` or `leave open` recommendation instead
+  of closing it directly from `closure`.
