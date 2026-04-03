@@ -65,35 +65,49 @@ If Claude Code cannot find the marketplace or plugin:
 - confirm you used the `<plugin-name>@bento` form with `/plugin install`
 - confirm Claude Code can reach GitHub
 
-## Using Bento in Codex
+## Using Bento In Codex
 
-Bento ships a Codex-compatible marketplace manifest at `.agents/plugins/marketplace.json`.
-Codex reads this file automatically when it is present at `$REPO_ROOT/.agents/plugins/marketplace.json`
-(repo-scoped) or at `~/.agents/plugins/marketplace.json` (personal scope).
+Bento provides two Codex installers:
 
-### Option A: repo-scoped (use this repo directly)
+- home-scoped: available from every project on the machine
+- project-scoped: only available inside one repository
 
-Clone or navigate to this repository. Because `.agents/plugins/marketplace.json`
-already exists at the repo root, Codex will pick it up automatically when you
-run Codex from inside this directory.
+Both installers download the published plugin bundles from GitHub, install the
+three Bento plugins, create a timestamped backup before editing any existing
+marketplace file, and safely merge only the Bento entries.
 
-### Option B: personal scope (available from any directory)
+### Home-scoped install
 
-Copy the marketplace manifest to your personal agents directory:
+This installs Bento under `~/plugins/` and updates
+`~/.agents/plugins/marketplace.json`.
 
 ```bash
-mkdir -p ~/.agents/plugins
-cp .agents/plugins/marketplace.json ~/.agents/plugins/marketplace.json
+curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-home.sh | bash
 ```
 
-### Installing a plugin
+After the script finishes, restart Codex if it is already running. The Bento
+plugins will then appear under `/plugins` from any project.
 
-Once Codex can see the marketplace manifest, open the `/plugins` panel in the
-Codex TUI. The Bento plugins (`bento-all`, `trackers`, `stacks`) will appear
-under the Bento marketplace. Select a plugin to install it.
+### Project-scoped install
 
-Plugin management — install, update, remove — is handled through the Codex
-`/plugins` TUI. There is no separate CLI install command.
+This installs Bento under `./plugins/` in the current repository and updates
+`./.agents/plugins/marketplace.json`.
+
+Run this from the project root where you want Bento available:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-project.sh | bash
+```
+
+After the script finishes, restart Codex if it is already running, then launch
+Codex from that same project root to use the installed Bento marketplace.
+
+### Updating a Codex install
+
+Rerun the same installer command for the scope you want to refresh. It replaces
+the Bento plugin bundles for that scope with the current published versions
+from GitHub and refreshes the Bento entries in the corresponding marketplace
+file.
 
 ### Codex packaging artifacts
 
@@ -106,7 +120,6 @@ For reference, this repository generates the following Codex artifacts when
 - `plugins/<plugin-name>/assets/screenshot-1.png`
 - `plugins/<plugin-name>/assets/screenshot-2.png`
 - `plugins/<plugin-name>/assets/screenshot-3.png`
-- `.agents/plugins/marketplace.json`
 
 ## Updating a plugin
 
@@ -147,3 +160,6 @@ This guide is for end users installing published plugins.
 
 If you are changing the canonical skill content in this repository, edit
 `catalog/skills/` and rebuild generated plugins with `scripts/build-plugins`.
+When changing the Codex installers or installation docs, do that work from a
+feature branch or a worktree rather than directly on `main`, then merge once
+the installer flow has been verified.

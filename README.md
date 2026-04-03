@@ -55,6 +55,7 @@ That guide covers:
 
 - Claude marketplace registration
 - plugin selection
+- the home-scoped and project-scoped Codex installers
 - generated Codex packaging artifacts
 - update and removal guidance
 - the separate hook wiring path
