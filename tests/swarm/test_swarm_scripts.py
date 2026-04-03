@@ -29,7 +29,7 @@ class SwarmTriageTest(unittest.TestCase):
     def run_triage(self, payload: dict) -> dict:
         input_path = self.workspace / "triage.json"
         input_path.write_text(json.dumps(payload), encoding="utf-8")
-        result = run(["python3", str(TRIAGE_SCRIPT), "--input", str(input_path)], self.workspace)
+        result = run([str(TRIAGE_SCRIPT), "--input", str(input_path)], self.workspace)
         return json.loads(result.stdout)
 
     def test_triage_uses_landed_task_ids_to_form_current_frontier(self) -> None:
@@ -89,7 +89,7 @@ class SwarmWorktreeVerifyTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def run_verify(self, cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run(["python3", str(VERIFY_SCRIPT), *args], cwd, check=check)
+        return run([str(VERIFY_SCRIPT), *args], cwd, check=check)
 
     def test_verify_accepts_linked_worktree(self) -> None:
         result = self.run_verify(

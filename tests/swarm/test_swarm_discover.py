@@ -25,13 +25,14 @@ class SwarmDiscoverTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def run_discover(self, cwd: Path | None = None) -> dict:
-        result = run(["python3", str(SCRIPT)], cwd or self.repo)
+    def run_discover(self, *args: str, cwd: Path | None = None) -> dict:
+        result = run([str(SCRIPT), *args], cwd or self.repo)
         return json.loads(result.stdout)
 
     def test_discover_reports_git_defaults_without_config(self) -> None:
         payload = self.run_discover()
 
+        self.assertEqual(payload["runtime"], "auto")
         self.assertEqual(payload["repo_root"], str(self.repo.resolve()))
         self.assertEqual(payload["primary_checkout_root"], str(self.repo.resolve()))
         self.assertEqual(payload["integration_branch"], "main")
@@ -40,7 +41,7 @@ class SwarmDiscoverTest(unittest.TestCase):
         self.assertIsNone(payload["config_path"])
         self.assertIn("origin/HEAD unavailable; primary branch detected from local refs", payload["warnings"])
 
-    def test_discover_prefers_claude_config_over_other_candidates(self) -> None:
+    def test_discover_prefers_claude_config_for_claude_runtime(self) -> None:
         write(
             self.repo / ".codex/swarm-config.json",
             json.dumps({"integration_branch": "develop", "tracker": "linear"}),
@@ -51,13 +52,54 @@ class SwarmDiscoverTest(unittest.TestCase):
         )
         write(self.repo / "swarm-config.json", json.dumps({"integration_branch": "root"}))
 
-        payload = self.run_discover()
+        payload = self.run_discover("--runtime", "claude")
 
         self.assertTrue(payload["config_found"])
+        self.assertEqual(payload["runtime"], "claude")
         self.assertEqual(payload["integration_branch"], "release")
         self.assertEqual(payload["tracker"], "jira")
         self.assertEqual(payload["quality_gates"], ["tests"])
         self.assertEqual(payload["config_path"], str((self.repo / ".claude/swarm-config.json").resolve()))
+
+    def test_discover_prefers_codex_config_for_codex_runtime(self) -> None:
+        write(
+            self.repo / ".codex/swarm-config.json",
+            json.dumps({"integration_branch": "develop", "tracker": "linear", "quality_gates": ["unit"]}),
+        )
+        write(
+            self.repo / ".claude/swarm-config.json",
+            json.dumps({"integration_branch": "release", "tracker": "jira"}),
+        )
+        write(self.repo / "swarm-config.json", json.dumps({"integration_branch": "root"}))
+
+        payload = self.run_discover("--runtime", "codex")
+
+        self.assertTrue(payload["config_found"])
+        self.assertEqual(payload["runtime"], "codex")
+        self.assertEqual(payload["integration_branch"], "develop")
+        self.assertEqual(payload["tracker"], "linear")
+        self.assertEqual(payload["quality_gates"], ["unit"])
+        self.assertEqual(payload["config_path"], str((self.repo / ".codex/swarm-config.json").resolve()))
+
+    def test_discover_auto_requires_runtime_when_both_runtime_configs_exist(self) -> None:
+        write(
+            self.repo / ".codex/swarm-config.json",
+            json.dumps({"integration_branch": "develop"}),
+        )
+        write(
+            self.repo / ".claude/swarm-config.json",
+            json.dumps({"integration_branch": "release"}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertFalse(payload["config_found"])
+        self.assertIsNone(payload["config_path"])
+        self.assertEqual(payload["integration_branch"], "main")
+        self.assertIn(
+            "multiple runtime-specific swarm configs found; rerun with --runtime claude or --runtime codex",
+            payload["warnings"],
+        )
 
 
 if __name__ == "__main__":

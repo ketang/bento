@@ -32,14 +32,15 @@ parallel with good isolation.
 This skill includes local helper scripts under `scripts/` for the parts of the
 workflow that benefit from stable, repeatable checks:
 
-- `python3 scripts/swarm-discover.py` to emit git-derived defaults plus any
+- `scripts/swarm-discover.py` to emit git-derived defaults plus any
   structured swarm config the repo exposes
-- `python3 scripts/swarm-triage.py --input <json>` to batch normalized task
+- `scripts/swarm-triage.py --input <json>` to batch normalized task
   data into the currently unblocked frontier, wait queues, and skips
-- `python3 scripts/swarm-worktree-verify.py` to verify the current checkout is
+- `scripts/swarm-worktree-verify.py` to verify the current checkout is
   the expected linked worktree on the expected branch
 
-These helpers require `python3`. If `python3` is unavailable on the machine,
+These helpers are executable entrypoints that use `#!/usr/bin/env python3`, so
+they require `python3` on `PATH`. If `python3` is unavailable on the machine,
 fall back to the prose workflow in this skill and perform the checks manually.
 
 Keep tracker fetching outside these helpers. Use the project's tracker workflow
@@ -47,18 +48,28 @@ to gather tasks, then normalize them into the triage input format.
 
 ## Continuation State
 
-When a batch overflows the current run, persist the remaining task IDs in
-`.claude/swarm-continue.txt` so a later invocation can resume the same task
+When a batch overflows the current run, persist the remaining task IDs in a
+runtime-local continuation file so a later invocation can resume the same task
 set without re-querying the tracker.
+
+Use:
+
+- `.claude/swarm-continue.txt` in Claude Code
+- `.codex/swarm-continue.txt` in Codex
+- `swarm-continue.txt` at repo root only when runtime-local storage is not
+  available
 
 Keep the continuation file minimal and tracker-agnostic:
 
 - one task ID per non-empty line
 - ignore blank lines and lines beginning with `#`
 - do not store tracker metadata, priorities, or prose
+- do not share one runtime's continuation file with another runtime unless the
+  handoff is intentional
 - if explicit task IDs are supplied on a later invocation, they supersede the
-  continuation file
-- once the continuation file has been fully consumed, delete it
+  continuation file for the current runtime
+- once the continuation file has been fully consumed, delete it for the current
+  runtime
 
 ## Companion Skills
 
@@ -74,6 +85,8 @@ Before triage, read the project's local instructions and determine:
 
 - how to list and inspect ready tasks
 - how active work is claimed
+- which agent runtime is orchestrating the swarm and which teammate launch
+  model it requires
 - how branches and worktrees are named
 - which quality gates apply per task and after all merges
 - whether a pre-completion checklist or skill is required
@@ -81,11 +94,21 @@ Before triage, read the project's local instructions and determine:
 - how completed branches land on the integration branch
 - whether post-land hooks are required
 
-When the project exposes a structured swarm config, run:
+When the project exposes a structured swarm config, run the discovery helper
+for the current runtime:
 
 ```bash
-python3 scripts/swarm-discover.py
+scripts/swarm-discover.py --runtime claude
 ```
+
+or:
+
+```bash
+scripts/swarm-discover.py --runtime codex
+```
+
+This loads the matching runtime-specific config if present and otherwise falls
+back to the shared `swarm-config.json` at the repo root.
 
 Use the output as the deterministic base layer, then fill any remaining gaps
 from repo docs.
@@ -117,7 +140,7 @@ stop and ask the user to narrow the scope or clarify the workflow.
 When the project can supply normalized task data, prefer using:
 
 ```bash
-python3 scripts/swarm-triage.py --input triage.json
+scripts/swarm-triage.py --input triage.json
 ```
 
 Expected input shape:
@@ -163,6 +186,18 @@ collecting tasks and converting them into this format.
 
 ## Phase 2: Teammate Launch
 
+Launch teammates through the runtime's managed multi-agent flow rather than
+ad hoc background workers:
+
+- In Claude Code, create a team with `TeamCreate`, create one task per approved
+  work item with `TaskCreate`, and launch each teammate via `Agent` with both
+  `team_name` and a descriptive `name` set.
+- In Codex, create one teammate per approved work item with `spawn_agent`, then
+  coordinate plan review, implementation, and completion through the native
+  agent lifecycle tools such as `send_input`, `wait_agent`, and `close_agent`.
+- Do not use standalone `run_in_background` agents as a substitute for either
+  runtime's managed teammate flow.
+
 For each approved task:
 
 1. Create exactly one branch and exactly one worktree for that task.
@@ -176,7 +211,7 @@ The teammate must verify both working directory and branch before doing any
 implementation:
 
 ```bash
-python3 scripts/swarm-worktree-verify.py --require-linked-worktree
+scripts/swarm-worktree-verify.py --require-linked-worktree
 ```
 
 Reject any teammate setup that cannot show they are inside the intended
@@ -224,7 +259,13 @@ As teammates finish:
    rebase.
 5. Run any documented post-land hooks before considering the task complete.
 6. Close or update the tracker item only after the verified landing succeeds.
-7. Clean up the task branch and worktree only after the work is safely landed.
+7. Shut down or close the teammate for that task only after the work is safely
+   landed or explicitly deferred.
+8. Clean up the task branch and worktree only after the work is safely landed.
+
+When the last Claude Code teammate in the batch is done, delete the team. In
+Codex, close each spawned agent once its task is landed or explicitly deferred
+so idle agents do not linger.
 
 Never shut down or discard a teammate's work before it is either landed or
 explicitly deferred.
