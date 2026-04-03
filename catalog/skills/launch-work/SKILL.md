@@ -1,10 +1,13 @@
 ---
 name: launch-work
 description: |
-  Use when approved work is moving into implementation and the repo's claim and
-  checkout model are known. Claims tracker-backed work when required, creates a
-  dedicated branch and linked worktree, verifies the working location
-  deterministically, and bootstraps the environment before coding.
+  Use when you anticipate editing any file in the repo. Hard triggers that
+  override judgment: invoke this skill before running any Edit, Write, or
+  file-modifying Bash command; if the working tree is already dirty from changes
+  made in the current session, halt immediately and apply this skill before doing
+  anything else. Claims tracker-backed work when required, creates a dedicated
+  branch and linked worktree, verifies the working location deterministically,
+  and bootstraps the environment before coding.
 recommended_model: mid
 ---
 
