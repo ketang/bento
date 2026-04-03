@@ -22,13 +22,13 @@ build-from-scratch path.
 
 ## Deterministic Helper
 
-This skill includes `scripts/build-vs-buy-discover.py` to collect a
-repo-specific base layer before the model starts external research.
+This skill includes `build-vs-buy/scripts/build-vs-buy-discover.py` to collect
+a repo-specific base layer before the model starts external research.
 
 Run it first with a short feature brief:
 
 ```bash
-scripts/build-vs-buy-discover.py --feature "add background jobs"
+build-vs-buy/scripts/build-vs-buy-discover.py --feature "add background jobs"
 ```
 
 Use the JSON output as the starting point for:

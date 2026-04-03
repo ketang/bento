@@ -29,14 +29,14 @@ parallel with good isolation.
 
 ## Deterministic Helpers
 
-This skill includes local helper scripts under `scripts/` for the parts of the
-workflow that benefit from stable, repeatable checks:
+This skill includes local helper scripts under `swarm/scripts/` for the parts
+of the workflow that benefit from stable, repeatable checks:
 
-- `scripts/swarm-discover.py` to emit git-derived defaults plus any
+- `swarm/scripts/swarm-discover.py` to emit git-derived defaults plus any
   structured swarm config the repo exposes
-- `scripts/swarm-triage.py --input <json>` to batch normalized task
+- `swarm/scripts/swarm-triage.py --input <json>` to batch normalized task
   data into the currently unblocked frontier, wait queues, and skips
-- `scripts/swarm-worktree-verify.py` to verify the current checkout is
+- `swarm/scripts/swarm-worktree-verify.py` to verify the current checkout is
   the expected linked worktree on the expected branch
 
 These helpers are executable entrypoints that use `#!/usr/bin/env python3`, so
@@ -98,13 +98,13 @@ When the project exposes a structured swarm config, run the discovery helper
 for the current runtime:
 
 ```bash
-scripts/swarm-discover.py --runtime claude
+swarm/scripts/swarm-discover.py --runtime claude
 ```
 
 or:
 
 ```bash
-scripts/swarm-discover.py --runtime codex
+swarm/scripts/swarm-discover.py --runtime codex
 ```
 
 This loads the matching runtime-specific config if present and otherwise falls
@@ -140,7 +140,7 @@ stop and ask the user to narrow the scope or clarify the workflow.
 When the project can supply normalized task data, prefer using:
 
 ```bash
-scripts/swarm-triage.py --input triage.json
+swarm/scripts/swarm-triage.py --input triage.json
 ```
 
 Expected input shape:
@@ -211,7 +211,7 @@ The teammate must verify both working directory and branch before doing any
 implementation:
 
 ```bash
-scripts/swarm-worktree-verify.py --require-linked-worktree
+swarm/scripts/swarm-worktree-verify.py --require-linked-worktree
 ```
 
 Reject any teammate setup that cannot show they are inside the intended

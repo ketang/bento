@@ -29,13 +29,13 @@ and the repo's merge policy is documented clearly enough to execute safely.
 
 ## Deterministic Helpers
 
-This skill includes helper scripts under `scripts/` for the risky state checks
-that should not rely on ad hoc prose reconstruction:
+This skill includes helper scripts under `land-work/scripts/` for the risky
+state checks that should not rely on ad hoc prose reconstruction:
 
-- `scripts/land-work-prepare.py` to verify the current checkout is a
+- `land-work/scripts/land-work-prepare.py` to verify the current checkout is a
   clean feature-branch worktree with something to land
-- `scripts/land-work-verify-lease.py --expected-sha <sha>` to verify the
-  landing lease still matches the intended primary-branch ref
+- `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
+  the landing lease still matches the intended primary-branch ref
 
 Run the prepare helper from the feature-branch worktree first. Use the lease
 helper whenever you capture or re-check the compare-and-set merge lease.
@@ -45,7 +45,7 @@ helper whenever you capture or re-check the compare-and-set merge lease.
 1. Run the prepare helper from the feature-branch worktree:
 
 ```bash
-scripts/land-work-prepare.py
+land-work/scripts/land-work-prepare.py
 ```
 
 2. Confirm the current branch is the intended landing branch and that the helper
@@ -64,7 +64,7 @@ scripts/land-work-prepare.py
    - re-check the lease with:
 
 ```bash
-scripts/land-work-verify-lease.py --expected-sha <sha>
+land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 ```
 
    - abort if the lease changed
