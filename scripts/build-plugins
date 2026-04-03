@@ -153,7 +153,11 @@ def copy_skills(plugin: str) -> None:
     target_dir = plugin_dir(plugin) / "skills"
     for skill in PLUGIN_DEFS[plugin]["skills"]:
         ensure_skill_exists(skill)
-        shutil.copytree(CATALOG_DIR / skill, target_dir / skill)
+        shutil.copytree(
+            CATALOG_DIR / skill,
+            target_dir / skill,
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        )
 
 
 def claude_manifest(plugin: str) -> dict:
