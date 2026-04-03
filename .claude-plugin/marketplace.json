@@ -10,7 +10,7 @@
     {
       "name": "bento-all",
       "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./plugins/bento-all",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -19,7 +19,7 @@
     {
       "name": "trackers",
       "description": "Tracker skills for Beads and GitHub Issues workflows",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./plugins/trackers",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -28,7 +28,7 @@
     {
       "name": "stacks",
       "description": "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL",
-      "version": "1.0.0",
+      "version": "1.0.1",
       "source": "./plugins/stacks",
       "author": {
         "name": "Ketan Gangatirkar"
