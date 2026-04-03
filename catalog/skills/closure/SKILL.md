@@ -38,7 +38,7 @@ the narrow cleanup actions that can be made deterministic.
 Run the scan first:
 
 ```bash
-python3 scripts/closure-scan.py
+scripts/closure-scan.py
 ```
 
 Use the JSON output as the base layer for:
@@ -53,7 +53,7 @@ Use the JSON output as the base layer for:
 If the user wants the clearly safe local branch cleanup applied, run:
 
 ```bash
-python3 scripts/closure-scan.py --apply delete-local-merged-branches
+scripts/closure-scan.py --apply delete-local-merged-branches
 ```
 
 This apply mode deletes only local branches that are both:

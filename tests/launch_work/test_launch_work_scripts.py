@@ -35,10 +35,10 @@ class LaunchWorkScriptsTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def run_bootstrap(self, *args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run(["python3", str(BOOTSTRAP_SCRIPT), *args], cwd or self.repo, check=check)
+        return run([str(BOOTSTRAP_SCRIPT), *args], cwd or self.repo, check=check)
 
     def run_verify(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run(["python3", str(VERIFY_SCRIPT), *args], cwd, check=check)
+        return run([str(VERIFY_SCRIPT), *args], cwd, check=check)
 
     def test_bootstrap_preview_reports_createable_target(self) -> None:
         target_worktree = Path(self.temp_dir.name) / "feature-123"

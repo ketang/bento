@@ -41,10 +41,10 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def run_prepare(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run(["python3", str(PREPARE_SCRIPT), *args], cwd, check=check)
+        return run([str(PREPARE_SCRIPT), *args], cwd, check=check)
 
     def run_lease(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run(["python3", str(LEASE_SCRIPT), *args], cwd, check=check)
+        return run([str(LEASE_SCRIPT), *args], cwd, check=check)
 
     def test_prepare_accepts_clean_feature_branch_worktree(self) -> None:
         result = self.run_prepare("--expected-branch", "feature/test", "--require-linked-worktree", cwd=self.worktree)

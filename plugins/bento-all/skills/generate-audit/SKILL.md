@@ -30,7 +30,7 @@ layer of repo facts before the model starts shaping the audit.
 Run it first:
 
 ```bash
-python3 scripts/audit-discover.py
+scripts/audit-discover.py
 ```
 
 Use the JSON output as the starting point for:
