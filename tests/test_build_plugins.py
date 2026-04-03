@@ -51,6 +51,8 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(len(codex_manifest["interface"]["defaultPrompt"]), 3)
         self.assertEqual(codex_manifest["interface"]["composerIcon"], "./assets/icon.png")
         self.assertEqual(codex_manifest["interface"]["screenshots"][2], "./assets/screenshot-3.png")
+        self.assertEqual(list(plugin_dir.rglob("*.pyc")), [])
+        self.assertEqual([path.name for path in plugin_dir.rglob("__pycache__")], [])
 
         for asset_name in ["icon.png", "logo.png", "screenshot-1.png", "screenshot-2.png", "screenshot-3.png"]:
             asset = plugin_dir / "assets" / asset_name
