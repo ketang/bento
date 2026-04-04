@@ -107,5 +107,139 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertIn("make lint", payload["project_shape"]["commands"]["lint"])
 
 
+    # ── Static analysis: Go ──────────────────────────────────────────────────
+
+    def test_static_analysis_detects_golangci_lint(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+        write(self.repo / ".golangci.yml", "linters:\n  enable-all: true\n")
+
+        payload = self.run_helper()
+
+        sa = payload["static_analysis"]
+        tools = [t["tool"] for t in sa["detected_tools"]]
+        self.assertIn("golangci-lint", tools)
+        entry = next(t for t in sa["detected_tools"] if t["tool"] == "golangci-lint")
+        self.assertEqual(entry["config"], ".golangci.yml")
+        self.assertEqual(entry["run"], "golangci-lint run ./...")
+
+    def test_static_analysis_zero_config_go_tools_always_detected(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+
+        payload = self.run_helper()
+
+        sa = payload["static_analysis"]
+        tools = [t["tool"] for t in sa["detected_tools"]]
+        self.assertIn("govulncheck", tools)
+        self.assertIn("gofmt", tools)
+
+    def test_static_analysis_missing_by_language_go_without_linter(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+
+        payload = self.run_helper()
+
+        missing = payload["static_analysis"]["missing_by_language"]
+        self.assertIn("Go", missing)
+        self.assertIn("golangci-lint", missing["Go"])
+
+    def test_static_analysis_go_linter_present_not_in_missing(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+        write(self.repo / ".golangci.yml", "linters:\n  enable-all: true\n")
+
+        payload = self.run_helper()
+
+        missing = payload["static_analysis"]["missing_by_language"]
+        go_missing = missing.get("Go", [])
+        self.assertNotIn("golangci-lint", go_missing)
+
+    # ── Static analysis: TypeScript ──────────────────────────────────────────
+
+    def test_static_analysis_detects_eslint_in_typescript_repo(self) -> None:
+        write(self.repo / "package.json", '{"dependencies": {}}')
+        write(self.repo / "tsconfig.json", "{}")
+        write(self.repo / ".eslintrc.json", '{"extends": "eslint:recommended"}')
+
+        payload = self.run_helper()
+
+        sa = payload["static_analysis"]
+        tools = [t["tool"] for t in sa["detected_tools"]]
+        self.assertIn("eslint", tools)
+        entry = next(t for t in sa["detected_tools"] if t["tool"] == "eslint")
+        self.assertIn("eslint", entry["run"])
+
+    def test_static_analysis_detects_tsc_in_typescript_repo(self) -> None:
+        write(self.repo / "package.json", '{"dependencies": {}}')
+        write(self.repo / "tsconfig.json", "{}")
+
+        payload = self.run_helper()
+
+        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        self.assertIn("tsc", tools)
+
+    def test_static_analysis_missing_by_language_typescript_without_eslint(self) -> None:
+        write(self.repo / "package.json", '{"dependencies": {}}')
+        write(self.repo / "tsconfig.json", "{}")
+
+        payload = self.run_helper()
+
+        missing = payload["static_analysis"]["missing_by_language"]
+        self.assertIn("TypeScript", missing)
+        self.assertIn("eslint", missing["TypeScript"])
+
+    # ── Static analysis: Python & Rust ───────────────────────────────────────
+
+    def test_static_analysis_detects_ruff_in_python_repo(self) -> None:
+        write(self.repo / "pyproject.toml", "[project]\nname = 'test'\n")
+        write(self.repo / "ruff.toml", "[lint]\nselect = ['E', 'F']\n")
+
+        payload = self.run_helper()
+
+        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        self.assertIn("ruff", tools)
+
+    def test_static_analysis_missing_by_language_python_without_ruff(self) -> None:
+        write(self.repo / "pyproject.toml", "[project]\nname = 'test'\n")
+
+        payload = self.run_helper()
+
+        missing = payload["static_analysis"]["missing_by_language"]
+        self.assertIn("Python", missing)
+        self.assertIn("ruff", missing["Python"])
+
+    def test_static_analysis_zero_config_rust_tools_always_detected(self) -> None:
+        write(self.repo / "Cargo.toml", "[package]\nname = 'test'\nversion = '0.1.0'\n")
+
+        payload = self.run_helper()
+
+        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        self.assertIn("clippy", tools)
+        self.assertIn("cargo-audit", tools)
+
+    # ── Static analysis: cross-language secrets ──────────────────────────────
+
+    def test_static_analysis_detects_gitleaks_when_configured(self) -> None:
+        write(self.repo / ".gitleaks.toml", "[extend]\nuseDefault = true\n")
+
+        payload = self.run_helper()
+
+        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        self.assertIn("gitleaks", tools)
+
+    def test_static_analysis_secrets_missing_cross_language_when_no_tool(self) -> None:
+        payload = self.run_helper()
+
+        missing_xl = payload["static_analysis"]["missing_cross_language"]
+        self.assertIn("gitleaks", missing_xl)
+
+    def test_static_analysis_secrets_not_missing_when_gitleaks_present(self) -> None:
+        write(self.repo / ".gitleaks.toml", "[extend]\nuseDefault = true\n")
+
+        payload = self.run_helper()
+
+        missing_xl = payload["static_analysis"]["missing_cross_language"]
+        self.assertNotIn("gitleaks", missing_xl)
+        self.assertNotIn("trufflehog", missing_xl)
+        self.assertNotIn("detect-secrets", missing_xl)
+
+
 if __name__ == "__main__":
     unittest.main()
