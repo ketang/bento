@@ -1,0 +1,161 @@
+#!/usr/bin/env python3
+
+import argparse
+import importlib.machinery
+import importlib.util
+import json
+import subprocess
+import sys
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+VERSIONS_FILE = ROOT_DIR / "catalog" / "plugin-versions.json"
+BUILD_PLUGINS_SCRIPT = ROOT_DIR / "scripts" / "build-plugins"
+IGNORED_PATHS = {
+    ".claude-plugin/marketplace.json",
+    ".agents/plugins/marketplace.json",
+    "catalog/plugin-versions.json",
+}
+IGNORED_PREFIXES = (
+    "plugins/",
+)
+GLOBAL_BUMP_FILES = {
+    "scripts/build-plugins",
+}
+
+
+def load_build_plugins_module():
+    loader = importlib.machinery.SourceFileLoader("build_plugins", str(BUILD_PLUGINS_SCRIPT))
+    spec = importlib.util.spec_from_loader("build_plugins", loader)
+    if spec is None:
+        raise RuntimeError("unable to load build-plugins module")
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+def git_stdout(*args: str) -> str:
+    result = subprocess.run(
+        ["git", *args],
+        cwd=ROOT_DIR,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    return result.stdout.strip()
+
+
+def latest_version_commit() -> str | None:
+    commit = git_stdout("log", "-n", "1", "--format=%H", "--", str(VERSIONS_FILE.relative_to(ROOT_DIR)))
+    return commit or None
+
+
+def changed_paths_since(commit: str) -> list[str]:
+    output = git_stdout("diff", "--name-only", commit)
+    return [line for line in output.splitlines() if line]
+
+
+def load_versions() -> dict[str, str]:
+    return json.loads(VERSIONS_FILE.read_text(encoding="utf-8"))
+
+
+def bump_version(version: str, part: str) -> str:
+    major_str, minor_str, patch_str = version.split(".")
+    major = int(major_str)
+    minor = int(minor_str)
+    patch = int(patch_str)
+    if part == "major":
+        return f"{major + 1}.0.0"
+    if part == "minor":
+        return f"{major}.{minor + 1}.0"
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def affected_plugins(paths: list[str], build_plugins_module) -> tuple[set[str], list[str]]:
+    plugin_defs = build_plugins_module.PLUGIN_DEFS
+    skills_to_plugins: dict[str, set[str]] = {}
+    for plugin, metadata in plugin_defs.items():
+        for skill in metadata["skills"]:
+            skills_to_plugins.setdefault(skill, set()).add(plugin)
+
+    affected: set[str] = set()
+    relevant_paths: list[str] = []
+    for path in paths:
+        if path in IGNORED_PATHS or path.startswith(IGNORED_PREFIXES):
+            continue
+        if path in GLOBAL_BUMP_FILES:
+            affected.update(build_plugins_module.PLUGIN_ORDER)
+            relevant_paths.append(path)
+            continue
+        if path.startswith("catalog/skills/"):
+            parts = Path(path).parts
+            if len(parts) >= 3:
+                skill = parts[2]
+                matched = skills_to_plugins.get(skill, set())
+                if matched:
+                    affected.update(matched)
+                    relevant_paths.append(path)
+            continue
+    return affected, relevant_paths
+
+
+def write_versions(versions: dict[str, str]) -> None:
+    VERSIONS_FILE.write_text(json.dumps(versions, indent=2) + "\n", encoding="utf-8")
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Bump plugin versions for meaningful canonical changes.")
+    parser.add_argument(
+        "--part",
+        choices=["patch", "minor", "major"],
+        default="patch",
+        help="semver component to bump for affected plugins",
+    )
+    args = parser.parse_args()
+
+    build_plugins_module = load_build_plugins_module()
+    baseline_commit = latest_version_commit()
+    if baseline_commit is None:
+        payload = {
+            "baseline_commit": None,
+            "bootstrap_required": True,
+            "part": args.part,
+            "changed_paths": [],
+            "relevant_paths": [],
+            "bumps": {},
+        }
+        json.dump(payload, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return
+
+    changed_paths = changed_paths_since(baseline_commit)
+    affected, relevant_paths = affected_plugins(changed_paths, build_plugins_module)
+    versions = load_versions()
+
+    bumps: dict[str, dict[str, str]] = {}
+    for plugin in build_plugins_module.PLUGIN_ORDER:
+        if plugin not in affected:
+            continue
+        before = versions[plugin]
+        after = bump_version(before, args.part)
+        versions[plugin] = after
+        bumps[plugin] = {"from": before, "to": after}
+
+    if bumps:
+        write_versions(versions)
+
+    payload = {
+        "baseline_commit": baseline_commit,
+        "bootstrap_required": False,
+        "part": args.part,
+        "changed_paths": changed_paths,
+        "relevant_paths": relevant_paths,
+        "bumps": bumps,
+    }
+    json.dump(payload, sys.stdout, indent=2)
+    sys.stdout.write("\n")
+
+
+if __name__ == "__main__":
+    main()

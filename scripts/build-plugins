@@ -20,7 +20,6 @@ REPOSITORY_URL = "https://github.com/ketang/bento"
 PRIVACY_POLICY_URL = "https://github.com/ketang/bento"
 TERMS_OF_SERVICE_URL = "https://github.com/ketang/bento"
 LICENSE = "MIT"
-VERSION = "1.0.1"
 TEST_CMD = ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."]
 CLAUDE_VALIDATE_CMD = ["claude", "plugin", "validate", "."]
 
@@ -136,9 +135,33 @@ PLUGIN_DEFS = {
 }
 
 
+def plugin_versions_file() -> Path:
+    return ROOT_DIR / "catalog" / "plugin-versions.json"
+
+
 def json_dump(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
+
+
+def load_plugin_versions() -> dict[str, str]:
+    versions = json.loads(plugin_versions_file().read_text(encoding="utf-8"))
+    expected = set(PLUGIN_ORDER)
+    actual = set(versions)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing versions for: {', '.join(missing)}")
+        if extra:
+            details.append(f"unexpected versions for: {', '.join(extra)}")
+        raise SystemExit(f"Invalid plugin version map in {plugin_versions_file()}: {'; '.join(details)}")
+    return versions
+
+
+def plugin_version(plugin: str) -> str:
+    return load_plugin_versions()[plugin]
 
 
 def ensure_skill_exists(skill: str) -> None:
@@ -167,7 +190,7 @@ def claude_manifest(plugin: str) -> dict:
     return {
         "name": plugin,
         "description": metadata["description"],
-        "version": VERSION,
+        "version": plugin_version(plugin),
         "author": {
             "name": OWNER_NAME,
         },
@@ -178,7 +201,7 @@ def codex_manifest(plugin: str) -> dict:
     metadata = PLUGIN_DEFS[plugin]
     return {
         "name": plugin,
-        "version": VERSION,
+        "version": plugin_version(plugin),
         "description": metadata["description"],
         "author": {
             "name": OWNER_NAME,
@@ -404,7 +427,7 @@ def write_claude_marketplace() -> None:
             {
                 "name": plugin,
                 "description": PLUGIN_DEFS[plugin]["description"],
-                "version": VERSION,
+                "version": plugin_version(plugin),
                 "source": f"./plugins/{plugin}",
                 "author": {
                     "name": OWNER_NAME,
