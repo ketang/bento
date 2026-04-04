@@ -86,14 +86,31 @@ Choose one of these outputs based on the user's request:
    - external network calls
    - background jobs
    - secrets and token handling
+7. Static analysis surface — read `generate-audit/references/static-analysis-tools.md`:
+   - Cross-reference `static_analysis.detected_tools` from the helper output
+   - Note all gaps from `missing_by_language` and `missing_cross_language`
+   - Read the config file of each detected tool and note any disabled rules,
+     raised thresholds, or excluded paths — these are findings if they weaken
+     the analysis
+8. Quality standards binding — read `generate-audit/references/quality-standards.md`:
+   - This governs the code quality audit phase
+   - Sampling target: files in `risk_surfaces` first, then highest-churn files
+     from `git log --format='' --name-only | sort | uniq -c | sort -rn | head -20`,
+     then remainder
 
 ## Audit Modules
 
 Include only the modules that fit the discovered repo. The usual set is:
 
 - build health
-- code quality sampling
+- static analysis (run detected tools; emit run blocks per `static-analysis-tools.md`)
+- code quality (model-based review using thresholds and smell catalog from `quality-standards.md`)
+- dependency health (outdated packages, unused dependencies, license compliance)
+- secrets scan (always include; scans git history and working tree)
 - contract or schema consistency
+- duplication (cross-file clone detection)
+- test coverage (gap analysis against risk surfaces; no blanket % target)
+- documentation coverage (exported/public symbol coverage)
 - docs truthfulness
 - issue hygiene
 - foundation review
@@ -105,6 +122,8 @@ Include only the modules that fit the discovered repo. The usual set is:
 Omit modules that do not match the repo. Do not invent a frontend UX section
 for a backend-only service, or a migration section for a repo with no database.
 
+**Always include:** secrets scan — it is never optional regardless of stack.
+
 ## Generation Rules
 
 - Generate from discovered facts, not assumptions.
@@ -113,6 +132,16 @@ for a backend-only service, or a migration section for a repo with no database.
 - Separate generic audit structure from repo-specific bindings.
 - Mark expensive or optional phases clearly.
 - Default to observation only. Put follow-up actions in a separate section.
+- For each detected tool: emit a concrete run block with command, output
+  interpretation instructions, and severity mapping (see `static-analysis-tools.md`).
+- For each missing tool: emit a recommendations block with install instructions.
+  Do not recommend tools that conflict with existing ones.
+- For the code quality phase: sample files from `risk_surfaces` first; apply
+  all thresholds; call out named smells by name with file and line where possible.
+- When zero tools detected: the model-based quality pass is the primary code
+  quality phase, not a fallback footnote.
+- Coverage thresholds must not be hardcoded — surface gaps in risk surfaces only;
+  never mandate a specific percentage target.
 
 When drafting a repo-local `audit` skill, structure it as:
 
@@ -125,11 +154,17 @@ When drafting a repo-local `audit` skill, structure it as:
 
 - Do not hardcode Rust, Go, TypeScript, Beads, GitHub, or any specific tool
   unless the repo actually uses it.
+- Do not emit tool run blocks for tools absent from `detected_tools`.
 - Do not require issue creation, commits, or memory edits by default.
 - Do not copy a foreign repo's audit verbatim and swap names.
 - Do not let the generated audit become a giant project SOP dump.
+- Do not let the recommendations block become a shopping list — recommend only
+  the highest-value missing tool per gap, not every alternative.
 - If the repo lacks enough structure to justify a full audit skill, produce a
   lightweight audit plan instead.
+- Secrets scan is always included; it is never optional regardless of stack.
+- If a tool's config file disables or weakens rules, flag it as a finding, not
+  merely a note.
 
 ## Recommended Output Shape
 

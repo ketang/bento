@@ -48,6 +48,78 @@ RISK_PATTERNS = {
     "secrets_tokens": ("secret", "token", "credential", "apikey", "api_key", "oauth", "jwt"),
 }
 
+# Each entry: (tool_name, language_or_None, config_candidates, run_command, zero_config)
+# language=None  — cross-language tool, checked regardless of detected languages
+# zero_config=True  — included whenever the language is present; never in missing_by_language
+# zero_config=False — included only when a config file is found; in missing_by_language when absent
+STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
+    # ── Go ──────────────────────────────────────────────────────────────────
+    ("golangci-lint", "Go", [".golangci.yml", ".golangci.yaml", ".golangci.toml", ".golangci.json"],
+     "golangci-lint run ./...", False),
+    ("govulncheck",   "Go", [], "govulncheck ./...", True),
+    ("gofmt",         "Go", [], "gofmt -l .", True),
+    ("go-test-cover", "Go", [],
+     "go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out", True),
+    ("dupl",          "Go", [".dupl"], "dupl ./...", False),
+    ("deadcode",      "Go", [], "deadcode ./...", True),
+    ("nancy",         "Go", ["nancy.ignore"], "go list -json -deps ./... | nancy sleuth", False),
+    # ── TypeScript / JavaScript ─────────────────────────────────────────────
+    ("eslint", "TypeScript",
+     [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
+      ".eslintrc.yaml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"],
+     "npx eslint . --format=compact", False),
+    ("eslint", "JavaScript",
+     [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
+      ".eslintrc.yaml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"],
+     "npx eslint . --format=compact", False),
+    ("tsc",     "TypeScript", ["tsconfig.json"], "npx tsc --noEmit", False),
+    ("knip",    "TypeScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
+    ("knip",    "JavaScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
+    ("prettier", "TypeScript",
+     [".prettierrc", ".prettierrc.json", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.yml",
+      ".prettierrc.yaml", "prettier.config.js", "prettier.config.cjs"],
+     "npx prettier --check .", False),
+    ("jscpd", "TypeScript", [".jscpd.json", ".jscpd.yaml", ".jscpd.yml"], "npx jscpd .", False),
+    # ── Python ──────────────────────────────────────────────────────────────
+    ("ruff",        "Python", ["ruff.toml", ".ruff.toml"], "ruff check .", False),
+    ("mypy",        "Python", ["mypy.ini", ".mypy.ini"], "mypy .", False),
+    ("bandit",      "Python", [".bandit", "bandit.yaml", "bandit.yml"], "bandit -r .", False),
+    ("pytest-cov",  "Python", ["pytest.ini", "setup.cfg"], "pytest --cov", False),
+    ("interrogate", "Python", [".interrogate.ini"], "interrogate .", False),
+    ("vulture",     "Python", ["whitelist.py"], "vulture .", False),
+    # ── Rust ────────────────────────────────────────────────────────────────
+    ("clippy",          "Rust", [], "cargo clippy -- -D warnings", True),
+    ("cargo-audit",     "Rust", [], "cargo audit", True),
+    ("rustfmt",         "Rust", [".rustfmt.toml", "rustfmt.toml"], "cargo fmt --check", False),
+    ("cargo-tarpaulin", "Rust", [], "cargo tarpaulin", True),
+    # ── Cross-language: secrets ─────────────────────────────────────────────
+    ("gitleaks",       None, [".gitleaks.toml", ".gitleaks.json", ".gitleaksignore"],
+     "gitleaks detect --source . --verbose", False),
+    ("trufflehog",     None, [".trufflehog.yml", ".trufflehog.yaml"], "trufflehog filesystem .", False),
+    ("detect-secrets", None, [".secrets.baseline"], "detect-secrets scan .", False),
+    # ── Cross-language: config linting ──────────────────────────────────────
+    ("hadolint",   None, [".hadolint.yaml", ".hadolint.yml"], "hadolint Dockerfile", False),
+    ("yamllint",   None, [".yamllint", ".yamllint.yml", ".yamllint.yaml", ".yamllint.json"],
+     "yamllint .", False),
+    ("shellcheck", None, [],
+     "find . -name '*.sh' -not -path './.git/*' | xargs shellcheck", True),
+]
+
+# Tools that form alternative groups: detecting any one covers the category.
+# Used to suppress alternatives from missing_by_language once any in the group is found.
+TOOL_ALTERNATIVE_GROUPS: dict[tuple[str | None, str], list[str]] = {
+    ("Go",         "linter"):    ["golangci-lint"],
+    ("TypeScript", "linter"):    ["eslint"],
+    ("JavaScript", "linter"):    ["eslint"],
+    ("Python",     "linter"):    ["ruff"],
+    ("Rust",       "linter"):    ["clippy"],
+    ("TypeScript", "dead_code"): ["knip"],
+    ("JavaScript", "dead_code"): ["knip"],
+    ("Python",     "type"):      ["mypy"],
+    ("TypeScript", "type"):      ["tsc"],
+    (None,         "secrets"):   ["gitleaks", "trufflehog", "detect-secrets"],
+}
+
 
 def is_doc_like(path: str) -> bool:
     suffix = Path(path).suffix.lower()
@@ -295,6 +367,61 @@ def detect_risk_surfaces(files: list[str]) -> dict[str, list[str]]:
     return {key: unique_sorted(value) for key, value in output.items()}
 
 
+def detect_static_analysis_tools(
+    repo_root: Path, file_set: set[str], languages: list[str]
+) -> dict[str, object]:
+    lang_set = set(languages)
+    detected: list[dict[str, str | None]] = []
+    detected_names: set[tuple[str | None, str]] = set()  # (language, tool_name)
+
+    for tool_name, language, config_candidates, run_cmd, zero_config in STATIC_TOOLS:
+        if language is not None and language not in lang_set:
+            continue
+
+        if zero_config:
+            config_found: str | None = None
+        else:
+            config_found = next((c for c in config_candidates if c in file_set), None)
+            if config_found is None:
+                continue
+
+        detected.append({"tool": tool_name, "config": config_found, "run": run_cmd})
+        detected_names.add((language, tool_name))
+
+    # Config-required tools absent for each detected language
+    missing_by_language: dict[str, list[str]] = {}
+    for tool_name, language, _configs, _run, zero_config in STATIC_TOOLS:
+        if language is None or zero_config:
+            continue
+        if language not in lang_set:
+            continue
+        if (language, tool_name) in detected_names:
+            continue
+        covered = False
+        for (grp_lang, _cat), alternatives in TOOL_ALTERNATIVE_GROUPS.items():
+            if grp_lang == language and tool_name in alternatives:
+                if any((language, alt) in detected_names for alt in alternatives):
+                    covered = True
+                    break
+        if not covered:
+            missing_by_language.setdefault(language, [])
+            if tool_name not in missing_by_language[language]:
+                missing_by_language[language].append(tool_name)
+
+    # Config-required cross-language secrets tools not detected
+    secrets_group = TOOL_ALTERNATIVE_GROUPS.get((None, "secrets"), [])
+    secrets_detected = any((None, t) in detected_names for t in secrets_group)
+    missing_cross_language: list[str] = []
+    if not secrets_detected:
+        missing_cross_language.append(secrets_group[0] if secrets_group else "gitleaks")
+
+    return {
+        "detected_tools": detected,
+        "missing_by_language": missing_by_language,
+        "missing_cross_language": missing_cross_language,
+    }
+
+
 def main() -> int:
     cwd = Path.cwd().resolve()
     repo_root = detect_repo_root(cwd)
@@ -313,12 +440,14 @@ def main() -> int:
     typecheck_commands = unique_sorted(npm_commands["typecheck"] + makefile_commands["typecheck"])
 
     docs = detect_docs(rel_files)
+    languages = detect_languages(file_set)
+    static_analysis = detect_static_analysis_tools(repo_root, file_set, languages)
 
     payload = {
         "repo_root": str(repo_root),
         "primary_branch": primary_branch,
         "project_shape": {
-            "languages": detect_languages(file_set),
+            "languages": languages,
             "frameworks": detect_frameworks(package_json),
             "package_managers": unique_sorted([manager] if manager else []),
             "manifests": unique_sorted(
@@ -339,6 +468,7 @@ def main() -> int:
         "interface_surfaces": interface_surfaces(rel_files),
         "workflow_surfaces": workflow_surfaces(repo_root, rel_files, docs, primary_branch),
         "risk_surfaces": detect_risk_surfaces(rel_files),
+        "static_analysis": static_analysis,
         "warnings": warnings,
     }
 
