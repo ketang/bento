@@ -133,10 +133,16 @@ when you do not want it copied into generated plugins.
 Run:
 
 ```bash
+scripts/bump-plugin-versions
 scripts/build-plugins
 ```
 
-That script:
+Use `scripts/bump-plugin-versions` when preparing a shipped plugin update. It
+diffs the current tree against the most recent commit that changed
+`catalog/plugin-versions.json`, bumps only the affected plugin versions, and
+ignores generated outputs such as `plugins/` and marketplace manifests.
+
+Then `scripts/build-plugins`:
 
 - materializes generated plugin directories under `plugins/`
 - writes each plugin's `.claude-plugin/plugin.json`
@@ -196,6 +202,11 @@ separate Codex UI behavior.
 
 Generated marketplace manifests are automatic; do not edit
 `.claude-plugin/marketplace.json` by hand.
+
+Plugin versions live in `catalog/plugin-versions.json`. Treat that file as the
+release boundary for plugin artifacts: the bump script compares the current tree
+to the last commit that updated those versions and advances only the plugins
+whose canonical shipped inputs changed.
 
 ## Hooks
 

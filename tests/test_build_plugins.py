@@ -45,6 +45,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue((plugin_dir / "skills" / "closure" / "SKILL.md").exists())
 
         codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertEqual(codex_manifest["version"], "1.0.1")
         self.assertEqual(codex_manifest["skills"], "./skills/")
         self.assertEqual(codex_manifest["interface"]["displayName"], "Bento All")
         self.assertEqual(len(codex_manifest["interface"]["defaultPrompt"]), 3)
@@ -60,6 +61,7 @@ class BuildPluginsTest(unittest.TestCase):
 
         claude_marketplace = json.loads((self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         self.assertEqual(claude_marketplace["plugins"][1]["name"], "trackers")
+        self.assertEqual(claude_marketplace["plugins"][1]["version"], "1.0.1")
         self.assertEqual(claude_marketplace["plugins"][2]["source"], "./plugins/stacks")
 
     def test_build_repo_prunes_stale_generated_plugin_directories(self) -> None:
