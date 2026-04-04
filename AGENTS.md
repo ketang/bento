@@ -53,6 +53,15 @@ Be careful in:
 - `.claude-plugin/marketplace.json` because it is generated
 - `.agents/plugins/marketplace.json` because it is generated
 
+## Version Management
+
+After completing a meaningful unit of work (feature complete, all plan tasks
+done, or ending a session with unbumped behavioral changes in catalog/skills/),
+invoke the `.claude/skills/version-bump.md` skill to evaluate whether a version
+bump is warranted. Do not bump manually — the skill handles the judgment.
+
+Pushes are independent of version bumps. Push eagerly and frequently for safety.
+
 ## Typical maintenance workflow
 
 1. Update canonical skill content in `catalog/skills/`
