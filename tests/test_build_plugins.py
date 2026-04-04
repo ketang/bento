@@ -61,8 +61,9 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertTrue(helper.exists(), helper)
             self.assertTrue(os.access(helper, os.X_OK), helper)
 
+        versions = json.loads((REPO_ROOT / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
         codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(codex_manifest["version"], "1.0.1")
+        self.assertEqual(codex_manifest["version"], versions["bento-all"])
         self.assertEqual(codex_manifest["skills"], "./skills/")
         self.assertEqual(codex_manifest["interface"]["displayName"], "Bento All")
         self.assertEqual(len(codex_manifest["interface"]["defaultPrompt"]), 3)

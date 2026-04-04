@@ -52,6 +52,11 @@ class BumpPluginVersionsTest(unittest.TestCase):
         )
 
     def test_bumps_only_plugins_affected_by_changed_skill(self) -> None:
+        versions_before = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
+        bento_before = versions_before["bento-all"]
+        major, minor, patch = bento_before.split(".")
+        bento_after = f"{major}.{minor}.{int(patch) + 1}"
+
         skill_path = self.repo / "catalog" / "skills" / "closure" / "SKILL.md"
         skill_path.write_text(skill_path.read_text(encoding="utf-8") + "\nMeaningful change.\n", encoding="utf-8")
 
@@ -59,12 +64,18 @@ class BumpPluginVersionsTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         versions = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(payload["bumps"], {"bento-all": {"from": "1.0.1", "to": "1.0.2"}})
-        self.assertEqual(versions["bento-all"], "1.0.2")
-        self.assertEqual(versions["trackers"], "1.0.1")
-        self.assertEqual(versions["stacks"], "1.0.1")
+        self.assertEqual(payload["bumps"], {"bento-all": {"from": bento_before, "to": bento_after}})
+        self.assertEqual(versions["bento-all"], bento_after)
+        self.assertEqual(versions["trackers"], versions_before["trackers"])
+        self.assertEqual(versions["stacks"], versions_before["stacks"])
 
     def test_build_script_change_bumps_all_plugins(self) -> None:
+        versions_before = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
+
+        def minor_bump(v: str) -> str:
+            major, minor, _patch = v.split(".")
+            return f"{major}.{int(minor) + 1}.0"
+
         build_script = self.repo / "scripts" / "build-plugins"
         build_script.write_text(build_script.read_text(encoding="utf-8") + "\n# packaging change\n", encoding="utf-8")
 
@@ -75,15 +86,16 @@ class BumpPluginVersionsTest(unittest.TestCase):
         self.assertEqual(
             payload["bumps"],
             {
-                "bento-all": {"from": "1.0.1", "to": "1.1.0"},
-                "trackers": {"from": "1.0.1", "to": "1.1.0"},
-                "stacks": {"from": "1.0.1", "to": "1.1.0"},
+                plugin: {"from": versions_before[plugin], "to": minor_bump(versions_before[plugin])}
+                for plugin in versions_before
             },
         )
         self.assertEqual(set(payload["relevant_paths"]), {"scripts/build-plugins"})
-        self.assertEqual(set(versions.values()), {"1.1.0"})
+        self.assertEqual(len(set(versions.values())), 1)  # all bumped to the same minor version
 
     def test_ignores_generated_outputs(self) -> None:
+        versions_before = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
+
         generated_manifest = self.repo / ".claude-plugin" / "marketplace.json"
         generated_manifest.parent.mkdir(parents=True, exist_ok=True)
         generated_manifest.write_text("{\"name\": \"generated\"}\n", encoding="utf-8")
@@ -93,7 +105,7 @@ class BumpPluginVersionsTest(unittest.TestCase):
         versions = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
 
         self.assertEqual(payload["bumps"], {})
-        self.assertEqual(set(versions.values()), {"1.0.1"})
+        self.assertEqual(versions, versions_before)
 
     def test_bootstrap_mode_when_version_file_has_no_committed_boundary(self) -> None:
         bootstrap_repo = Path(self.temp_dir.name) / "bootstrap-repo"
@@ -121,10 +133,12 @@ class BumpPluginVersionsTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         versions = json.loads((bootstrap_repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
 
+        versions_in_catalog = json.loads((REPO_ROOT / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
+
         self.assertIsNone(payload["baseline_commit"])
         self.assertTrue(payload["bootstrap_required"])
         self.assertEqual(payload["bumps"], {})
-        self.assertEqual(set(versions.values()), {"1.0.1"})
+        self.assertEqual(versions, versions_in_catalog)
 
 
 if __name__ == "__main__":
