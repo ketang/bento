@@ -67,6 +67,8 @@ Everything else remains review-driven.
 
 - Invoke `closure` for a full scan of the current repo.
 - Keep the first pass dry-run unless the user explicitly wants cleanup applied.
+- Do not stop at reporting findings from a dry-run scan. End by presenting the
+  safest supported next actions and asking the user to choose one.
 
 ## Workflow
 
@@ -112,6 +114,17 @@ Everything else remains review-driven.
    report the deleted branches.
 9. Summarize the remaining artifacts and recommend a recovery or closeout plan
    biased toward finishing or landing incomplete work rather than discarding it.
+10. End every dry-run pass with a clear next-step choice for the user instead
+    of a passive summary.
+    - Include only actions supported by the evidence from the current scan.
+    - Prefer a compact choice set such as:
+      - apply safe local branch cleanup
+      - inspect or preserve working-tree changes
+      - hand off a landing-ready branch to `land-work`
+      - hand off a landed tracker item to the tracker workflow skill
+      - leave everything unchanged for now
+    - If only one action is actually justified, present that recommendation and
+      ask for explicit confirmation before applying it.
 
 ## Handoff To Land Work
 
@@ -151,6 +164,10 @@ Tracker-specific skills own the actual mutation:
 Produce output progressively while scanning and cleaning. Narrate findings by
 phase and ground the recommendations in the helper output rather than vague git
 intuition.
+
+When the scan remains in dry-run mode, end with a concise, explicit next-step
+choice for the user. Prefer a short, concrete set of supported actions over an
+open-ended summary.
 
 ## Safety
 
