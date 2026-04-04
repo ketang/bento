@@ -41,6 +41,9 @@ of launching work that benefit from repeatable checks:
   to verify the current checkout is the intended linked worktree on the intended
   branch
 
+Invoke these helpers by script path, not `python3 <script>`, so approvals stay
+scoped to the script.
+
 Use the bootstrap helper in dry-run mode first. Add `--apply` only after the
 target branch and worktree path are confirmed correct.
 

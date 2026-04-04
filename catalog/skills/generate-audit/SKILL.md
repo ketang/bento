@@ -26,7 +26,8 @@ the audit procedure that a repo should use.
 
 This skill includes `generate-audit/scripts/audit-discover.py` to collect a
 deterministic base layer of repo facts before the model starts shaping the
-audit.
+audit. Invoke this helper by script path, not `python3 <script>`, so approvals
+stay scoped to the script.
 
 Run it first:
 

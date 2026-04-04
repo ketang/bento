@@ -37,6 +37,9 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 
+Invoke these helpers by script path, not `python3 <script>`, so approvals stay
+scoped to the script.
+
 Run the prepare helper from the feature-branch worktree first. Use the lease
 helper whenever you capture or re-check the compare-and-set merge lease.
 

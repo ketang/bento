@@ -34,6 +34,8 @@ before acting:
 
 This skill includes `closure/scripts/closure-scan.py` for the git-state
 discovery and the narrow cleanup actions that can be made deterministic.
+Invoke this helper by script path, not `python3 <script>`, so approvals stay
+scoped to the script.
 
 Run the scan first:
 

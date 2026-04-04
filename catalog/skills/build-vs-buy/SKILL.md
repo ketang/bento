@@ -23,7 +23,9 @@ build-from-scratch path.
 ## Deterministic Helper
 
 This skill includes `build-vs-buy/scripts/build-vs-buy-discover.py` to collect
-a repo-specific base layer before the model starts external research.
+a repo-specific base layer before the model starts external research. Invoke
+this helper by script path, not `python3 <script>`, so approvals stay scoped
+to the script.
 
 Run it first with a short feature brief:
 

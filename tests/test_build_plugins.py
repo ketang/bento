@@ -1,6 +1,7 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
 import shutil
 import tempfile
 import unittest
@@ -40,9 +41,25 @@ class BuildPluginsTest(unittest.TestCase):
         self.module.build_repo(run_verification=False)
 
         plugin_dir = self.root / "plugins" / "bento-all"
+        executable_helpers = [
+            plugin_dir / "skills" / "build-vs-buy" / "scripts" / "build-vs-buy-discover.py",
+            plugin_dir / "skills" / "closure" / "scripts" / "closure-scan.py",
+            plugin_dir / "skills" / "generate-audit" / "scripts" / "audit-discover.py",
+            plugin_dir / "skills" / "land-work" / "scripts" / "land-work-prepare.py",
+            plugin_dir / "skills" / "land-work" / "scripts" / "land-work-verify-lease.py",
+            plugin_dir / "skills" / "launch-work" / "scripts" / "launch-work-bootstrap.py",
+            plugin_dir / "skills" / "launch-work" / "scripts" / "launch-work-verify.py",
+            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-discover.py",
+            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-triage.py",
+            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-worktree-verify.py",
+        ]
         self.assertTrue((plugin_dir / ".claude-plugin" / "plugin.json").exists())
         self.assertTrue((plugin_dir / ".codex-plugin" / "plugin.json").exists())
         self.assertTrue((plugin_dir / "skills" / "closure" / "SKILL.md").exists())
+
+        for helper in executable_helpers:
+            self.assertTrue(helper.exists(), helper)
+            self.assertTrue(os.access(helper, os.X_OK), helper)
 
         codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(codex_manifest["version"], "1.0.1")

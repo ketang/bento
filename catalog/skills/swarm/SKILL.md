@@ -39,9 +39,10 @@ of the workflow that benefit from stable, repeatable checks:
 - `swarm/scripts/swarm-worktree-verify.py` to verify the current checkout is
   the expected linked worktree on the expected branch
 
-These helpers are executable entrypoints that use `#!/usr/bin/env python3`, so
-they require `python3` on `PATH`. If `python3` is unavailable on the machine,
-fall back to the prose workflow in this skill and perform the checks manually.
+Invoke these helpers by script path, not `python3 <script>`, so approvals stay
+scoped to the script. They require `python3` on `PATH`. If `python3` is
+unavailable on the machine, fall back to the prose workflow in this skill and
+perform the checks manually.
 
 Keep tracker fetching outside these helpers. Use the project's tracker workflow
 to gather tasks, then normalize them into the triage input format.
