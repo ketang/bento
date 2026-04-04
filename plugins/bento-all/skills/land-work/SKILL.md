@@ -43,6 +43,20 @@ scoped to the script.
 Run the prepare helper from the feature-branch worktree first. Use the lease
 helper whenever you capture or re-check the compare-and-set merge lease.
 
+## Command Rule
+
+Do not generate landing as a single shell one-liner.
+
+Never combine fetch/reset/merge/verify/push in one `Bash` command, especially
+with `&&`, pipes, `$(...)`, or inline interpreters like `python3 -c`.
+
+Prefer:
+1. the repo's landing helper, or
+2. separate shell commands, one step at a time.
+
+Run verification as its own command. Do not pipe verifier output into inline
+Python.
+
 ## Workflow
 
 1. Run the prepare helper from the feature-branch worktree:
@@ -59,7 +73,8 @@ land-work/scripts/land-work-prepare.py
 5. Push the feature branch with `--force-with-lease` if rebasing changed
    history.
 6. Prefer the repo's documented merge helper if one exists.
-7. Otherwise, perform a compare-and-set merge flow:
+7. Otherwise, perform a compare-and-set merge flow as separate commands, not
+   one compound command string:
    - refresh the primary-branch ref you intend to lease
    - capture its SHA
    - create the merge preview the repo expects
