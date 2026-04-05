@@ -49,28 +49,43 @@ to gather tasks, then normalize them into the triage input format.
 
 ## Continuation State
 
-When a batch overflows the current run, persist the remaining task IDs in a
-runtime-local continuation file so a later invocation can resume the same task
+When a batch overflows the current run, persist the remaining task IDs in
+runtime-local continuation state so a later invocation can resume the same task
 set without re-querying the tracker.
 
-Use:
+Use runtime-scoped state rooted at:
 
-- `.claude/swarm-continue.txt` in Claude Code
-- `.codex/swarm-continue.txt` in Codex
-- `swarm-continue.txt` at repo root only when runtime-local storage is not
-  available
+- `.claude/swarm/<session-or-thread-id>/` in Claude Code when the runtime
+  exposes a stable resumable session identifier
+- `/tmp/codex-swarm/$CODEX_THREAD_ID/` in Codex
+- `swarm-state/<session-or-thread-id>/` at repo root only when no safer
+  runtime-local storage is available
 
-Keep the continuation file minimal and tracker-agnostic:
+Inside that state root, keep the files minimal and role-specific:
+
+- `continue.txt` for remaining task IDs only
+- `handoff.md` for the compact narrative needed after a context reset
+
+Keep `continue.txt` tracker-agnostic:
 
 - one task ID per non-empty line
 - ignore blank lines and lines beginning with `#`
 - do not store tracker metadata, priorities, or prose
-- do not share one runtime's continuation file with another runtime unless the
+- do not share one runtime's continuation state with another runtime unless the
   handoff is intentional
 - if explicit task IDs are supplied on a later invocation, they supersede the
-  continuation file for the current runtime
-- once the continuation file has been fully consumed, delete it for the current
+  continuation state for the current runtime
+- once `continue.txt` has been fully consumed, delete it for the current
   runtime
+
+Keep `handoff.md` short and reset-oriented:
+
+- record only the last landed or deferred task plus what the next invocation
+  needs to know
+- include branch, worktree, verification, and any newly unblocked follow-up
+  tasks when relevant
+- treat this state as ephemeral; if the runtime-local directory disappears,
+  recompute from tracker and repo state rather than treating it as a fatal error
 
 ## Companion Skills
 
