@@ -50,6 +50,7 @@ class BuildPluginsTest(unittest.TestCase):
             plugin_dir / "skills" / "launch-work" / "scripts" / "launch-work-bootstrap.py",
             plugin_dir / "skills" / "launch-work" / "scripts" / "launch-work-verify.py",
             plugin_dir / "skills" / "swarm" / "scripts" / "swarm-discover.py",
+            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-state.py",
             plugin_dir / "skills" / "swarm" / "scripts" / "swarm-triage.py",
             plugin_dir / "skills" / "swarm" / "scripts" / "swarm-worktree-verify.py",
         ]
