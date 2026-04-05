@@ -11,6 +11,7 @@ from pathlib import Path
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CATALOG_DIR = ROOT_DIR / "catalog" / "skills"
+HOOKS_CATALOG_DIR = ROOT_DIR / "catalog" / "hooks"
 PLUGINS_DIR = ROOT_DIR / "plugins"
 CLAUDE_MARKETPLACE_FILE = ROOT_DIR / ".claude-plugin" / "marketplace.json"
 OWNER_NAME = "Ketan Gangatirkar"
@@ -28,6 +29,7 @@ PLUGIN_ORDER = [
     "bento-all",
     "trackers",
     "stacks",
+    "session-id",
 ]
 
 
@@ -132,6 +134,33 @@ PLUGIN_DEFS = {
             "graphql-gqlgen-gql-tada",
         ],
     },
+    "session-id": {
+        "description": "SessionStart hook that writes the Claude Code session ID to ~/.claude/session_id",
+        "display_name": "Bento Session ID",
+        "short_description": "Persist session ID across context resets",
+        "long_description": (
+            "Bento Session ID installs a SessionStart hook that captures the Claude Code session ID "
+            "on every session start, resume, and context reset, writing it to ~/.claude/session_id "
+            "and creating a per-session scratch directory at /tmp/claude-session-<id>/. "
+            "This makes the session ID available to the model and to shell commands throughout the session."
+        ),
+        "category": "Productivity",
+        "capabilities": [],
+        "keywords": ["session", "hooks", "automation", "scratch"],
+        "default_prompts": [
+            "What is the current session ID?",
+        ],
+        "brand_color": "#6B21A8",
+        "palette": {
+            "primary": (107, 33, 168),
+            "secondary": (167, 139, 250),
+            "accent": (232, 121, 249),
+            "background": (15, 10, 23),
+            "surface": (30, 20, 46),
+        },
+        "skills": [],
+        "hooks": "session-id",
+    },
 }
 
 
@@ -185,6 +214,20 @@ def copy_skills(plugin: str) -> None:
         )
 
 
+def copy_hooks(plugin: str) -> None:
+    hook_name = PLUGIN_DEFS[plugin].get("hooks")
+    if not hook_name:
+        return
+    src = HOOKS_CATALOG_DIR / hook_name
+    if not src.exists():
+        raise SystemExit(f"Missing hook catalog source: {src}")
+    shutil.copytree(
+        src,
+        plugin_dir(plugin) / "hooks",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+    )
+
+
 def claude_manifest(plugin: str) -> dict:
     metadata = PLUGIN_DEFS[plugin]
     return {
@@ -212,7 +255,7 @@ def codex_manifest(plugin: str) -> dict:
         "repository": REPOSITORY_URL,
         "license": LICENSE,
         "keywords": metadata["keywords"],
-        "skills": "./skills/",
+        **({"skills": "./skills/"} if metadata.get("skills") else {}),
         "interface": {
             "displayName": metadata["display_name"],
             "shortDescription": metadata["short_description"],
@@ -407,8 +450,10 @@ def build_plugin(plugin: str) -> None:
         shutil.rmtree(target)
     (target / ".claude-plugin").mkdir(parents=True)
     (target / ".codex-plugin").mkdir(parents=True)
-    (target / "skills").mkdir(parents=True)
-    copy_skills(plugin)
+    if PLUGIN_DEFS[plugin].get("skills"):
+        (target / "skills").mkdir(parents=True)
+        copy_skills(plugin)
+    copy_hooks(plugin)
     write_assets(plugin)
     json_dump(target / ".claude-plugin" / "plugin.json", claude_manifest(plugin))
     json_dump(target / ".codex-plugin" / "plugin.json", codex_manifest(plugin))

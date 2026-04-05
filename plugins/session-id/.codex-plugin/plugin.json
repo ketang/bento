@@ -1,0 +1,41 @@
+{
+  "name": "session-id",
+  "version": "1.0.0",
+  "description": "SessionStart hook that writes the Claude Code session ID to ~/.claude/session_id",
+  "author": {
+    "name": "Ketan Gangatirkar",
+    "email": "ketan@gangatirkar.com",
+    "url": "https://github.com/ketang"
+  },
+  "homepage": "https://github.com/ketang/bento",
+  "repository": "https://github.com/ketang/bento",
+  "license": "MIT",
+  "keywords": [
+    "session",
+    "hooks",
+    "automation",
+    "scratch"
+  ],
+  "interface": {
+    "displayName": "Bento Session ID",
+    "shortDescription": "Persist session ID across context resets",
+    "longDescription": "Bento Session ID installs a SessionStart hook that captures the Claude Code session ID on every session start, resume, and context reset, writing it to ~/.claude/session_id and creating a per-session scratch directory at /tmp/claude-session-<id>/. This makes the session ID available to the model and to shell commands throughout the session.",
+    "developerName": "Ketan Gangatirkar",
+    "category": "Productivity",
+    "capabilities": [],
+    "websiteURL": "https://github.com/ketang/bento",
+    "privacyPolicyURL": "https://github.com/ketang/bento",
+    "termsOfServiceURL": "https://github.com/ketang/bento",
+    "defaultPrompt": [
+      "What is the current session ID?"
+    ],
+    "brandColor": "#6B21A8",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot-1.png",
+      "./assets/screenshot-2.png",
+      "./assets/screenshot-3.png"
+    ]
+  }
+}

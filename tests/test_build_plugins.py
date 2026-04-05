@@ -31,6 +31,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.module = load_build_plugins_module()
         self.module.ROOT_DIR = self.root
         self.module.CATALOG_DIR = self.root / "catalog" / "skills"
+        self.module.HOOKS_CATALOG_DIR = self.root / "catalog" / "hooks"
         self.module.PLUGINS_DIR = self.root / "plugins"
         self.module.CLAUDE_MARKETPLACE_FILE = self.root / ".claude-plugin" / "marketplace.json"
 
@@ -81,6 +82,32 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(claude_marketplace["plugins"][1]["name"], "trackers")
         self.assertEqual(claude_marketplace["plugins"][1]["version"], "1.0.1")
         self.assertEqual(claude_marketplace["plugins"][2]["source"], "./plugins/stacks")
+        self.assertEqual(claude_marketplace["plugins"][3]["name"], "session-id")
+
+    def test_session_id_plugin_has_hooks_and_no_skills_dir(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        plugin_dir = self.root / "plugins" / "session-id"
+        self.assertTrue(plugin_dir.exists())
+
+        # no skills directory for a hook-only plugin
+        self.assertFalse((plugin_dir / "skills").exists())
+
+        # hooks directory and config present
+        hooks_json = plugin_dir / "hooks" / "hooks.json"
+        self.assertTrue(hooks_json.exists())
+        hooks = json.loads(hooks_json.read_text(encoding="utf-8"))
+        self.assertIn("SessionStart", hooks["hooks"])
+
+        # hook script is executable
+        hook_script = plugin_dir / "hooks" / "scripts" / "session-start.py"
+        self.assertTrue(hook_script.exists())
+        self.assertTrue(os.access(hook_script, os.X_OK))
+
+        # codex manifest has no "skills" field
+        codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        self.assertNotIn("skills", codex_manifest)
+        self.assertEqual(codex_manifest["version"], "1.0.0")
 
     def test_build_repo_prunes_stale_generated_plugin_directories(self) -> None:
         stale_dir = self.root / "plugins" / "obsolete-pack"
