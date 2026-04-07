@@ -55,10 +55,23 @@ Be careful in:
 
 ## Version Management
 
-After completing a meaningful unit of work (feature complete, all plan tasks
-done, or ending a session with unbumped behavioral changes in catalog/skills/),
-invoke the `.claude/skills/version-bump.md` skill to evaluate whether a version
-bump is warranted. Do not bump manually — the skill handles the judgment.
+**Every time you modify `catalog/skills/` or `scripts/build-plugins`, evaluate
+whether a version bump is warranted before ending the session.**  This includes
+any feature branch that touches those paths, even if the change seems small.
+
+Read and follow `.claude/skills/version-bump.md` for the full evaluation
+workflow.  In brief:
+
+- **Behavioral changes** → bump required.  Behavioral means: new or changed
+  Python logic, new functions, changed control flow, new output fields, new or
+  modified SKILL.md workflow steps, new or modified reference docs, new or
+  modified test assertions.
+- **Cosmetic changes only** → no bump.  Cosmetic means: whitespace, rewording,
+  typo fixes, reformatting without semantic change.
+- **Mixed** → bump.  When in doubt, bump.
+
+Do not bump manually — `scripts/bump-plugin-versions` handles the version
+arithmetic.  After bumping, run `scripts/build-plugins` and commit both together.
 
 Pushes are independent of version bumps. Push eagerly and frequently for safety.
 
