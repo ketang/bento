@@ -1,12 +1,25 @@
+import importlib.util
 import json
 import subprocess
 import tempfile
+import time
 import unittest
+from datetime import datetime, timedelta
 from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "catalog/skills/closure/scripts/closure-scan.py"
+
+
+def _load_module():
+    spec = importlib.util.spec_from_file_location(
+        "closure_scan",
+        REPO_ROOT / "catalog/skills/closure/scripts/closure-scan.py",
+    )
+    mod = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(mod)
+    return mod
 
 
 def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
@@ -99,6 +112,145 @@ class ClosureScanTest(unittest.TestCase):
         self.assertNotIn("feature-merged", branches)
         self.assertIn("feature-equivalent", branches)
         self.assertIn("feature-open", branches)
+
+
+class ActiveSecondsElapsedTest(unittest.TestCase):
+    """Tests for the overnight-aware active_seconds_elapsed function."""
+
+    def setUp(self):
+        self.mod = _load_module()
+
+    def _ts(self, hour: int, minute: int = 0, day_offset: int = 0) -> float:
+        base = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
+        return (base + timedelta(days=day_offset)).timestamp()
+
+    def test_overnight_gap_excluded(self):
+        # 10:45pm → 8:15am next morning: 15 min before midnight + 15 min after 8am = 30 min
+        last = self._ts(22, 45, day_offset=-1)
+        now  = self._ts(8, 15, day_offset=0)
+        result = self.mod.active_seconds_elapsed(last, now)
+        self.assertAlmostEqual(result, 1800, delta=60)
+
+    def test_same_day_active_window(self):
+        # 1pm → 3pm: fully within active window, 2 hours
+        last = self._ts(13, 0)
+        now  = self._ts(15, 0)
+        result = self.mod.active_seconds_elapsed(last, now)
+        self.assertAlmostEqual(result, 7200, delta=5)
+
+    def test_straddles_end_of_active_window(self):
+        # 11:30pm → 9am: 11:30pm is already past the 11pm active-window end,
+        # so 0 active minutes before midnight; only 8am–9am = 1 hour counts.
+        last = self._ts(23, 30, day_offset=-1)
+        now  = self._ts(9, 0, day_offset=0)
+        result = self.mod.active_seconds_elapsed(last, now)
+        self.assertAlmostEqual(result, 3600, delta=60)
+
+    def test_start_inside_inactive_window(self):
+        # 2am → 10am: the 2am–8am gap is inactive; only 8am–10am = 2 hours counts
+        last = self._ts(2, 0)
+        now  = self._ts(10, 0)
+        result = self.mod.active_seconds_elapsed(last, now)
+        self.assertAlmostEqual(result, 7200, delta=5)
+
+    def test_zero_elapsed_when_equal(self):
+        ts = self._ts(14, 0)
+        self.assertEqual(self.mod.active_seconds_elapsed(ts, ts), 0.0)
+
+    def test_zero_elapsed_when_last_after_now(self):
+        last = self._ts(15, 0)
+        now  = self._ts(14, 0)
+        self.assertEqual(self.mod.active_seconds_elapsed(last, now), 0.0)
+
+
+class MergedCheckedOutTest(unittest.TestCase):
+    """Tests for the merged_checked_out branch classification."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        self.commit_file("README.md", "root\n", "initial commit")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def commit_file(self, relative_path: str, content: str, message: str) -> str:
+        path = self.repo / relative_path
+        path.write_text(content, encoding="utf-8")
+        git(self.repo, "add", relative_path)
+        git(self.repo, "commit", "-m", message)
+        return git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+    def run_scan(self, *args: str) -> dict:
+        return json.loads(run([str(SCRIPT), "--no-liveness", *args], self.repo).stdout)
+
+    def branch_record(self, scan: dict, branch_name: str) -> dict:
+        for branch in scan["local_branches"]:
+            if branch["name"] == branch_name:
+                return branch
+        self.fail(f"missing branch record for {branch_name}")
+
+    def test_merged_branch_in_worktree_classified_as_merged_checked_out(self) -> None:
+        # Create and merge a feature branch, then add a linked worktree for it.
+        # The branch should be classified as merged_checked_out, not
+        # checked_out_in_worktree, so the agent knows the work is already landed.
+        git(self.repo, "checkout", "-b", "feature-done")
+        self.commit_file("done.txt", "done\n", "add done work")
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-done", "-m", "merge feature-done")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-done"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-done")
+
+        scan = self.run_scan()
+
+        rec = self.branch_record(scan, "feature-done")
+        self.assertEqual(rec["classification"], "merged_checked_out")
+        self.assertTrue(rec["merged_into_primary"])
+        self.assertTrue(rec["checked_out_in_worktree"])
+        self.assertIn("feature-done", scan["summary"]["merged_checked_out_local_branches"])
+        self.assertNotIn("feature-done", scan["summary"]["checked_out_local_branches"])
+
+    def test_unmerged_branch_in_worktree_still_checked_out_classification(self) -> None:
+        git(self.repo, "checkout", "-b", "feature-wip")
+        self.commit_file("wip.txt", "wip\n", "add wip")
+        git(self.repo, "checkout", "main")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-wip"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-wip")
+
+        scan = self.run_scan()
+
+        rec = self.branch_record(scan, "feature-wip")
+        self.assertEqual(rec["classification"], "checked_out_in_worktree")
+        self.assertFalse(rec["merged_into_primary"])
+        self.assertIn("feature-wip", scan["summary"]["checked_out_local_branches"])
+        self.assertNotIn("feature-wip", scan["summary"]["merged_checked_out_local_branches"])
+
+    def test_no_liveness_flag_skips_liveness_field(self) -> None:
+        scan = self.run_scan("--no-liveness")
+        for wt in scan["worktrees"]:
+            self.assertNotIn("liveness", wt)
+
+    def test_worktree_dirty_state_reported(self) -> None:
+        # Create a branch and linked worktree, then dirty a tracked file in it.
+        git(self.repo, "checkout", "-b", "feature-dirty")
+        self.commit_file("dirty.txt", "original\n", "add dirty file")
+        git(self.repo, "checkout", "main")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-dirty"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-dirty")
+        (worktree_path / "dirty.txt").write_text("modified\n", encoding="utf-8")
+
+        scan = self.run_scan("--no-liveness")
+        wt_records = {wt["path"]: wt for wt in scan["worktrees"]}
+        linked = wt_records.get(str(worktree_path))
+        self.assertIsNotNone(linked)
+        self.assertTrue(linked["working_tree_dirty"])
 
 
 if __name__ == "__main__":
