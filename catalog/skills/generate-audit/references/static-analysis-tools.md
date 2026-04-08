@@ -50,6 +50,12 @@ Any unreachable function → audit `warning`. Exported-but-unreachable in a
 library → `note` (may be public API).
 Run: `deadcode ./...`
 
+### gocyclo
+Functions with cyclomatic complexity > 10 → audit `warning`. Complexity > 20
+→ audit `error`. These thresholds match the code quality phase benchmarks in
+`quality-standards.md`. Report each function with its score; do not average.
+Run: `gocyclo -over 10 ./...`
+
 ### dupl
 Any clone above the threshold → audit `note`. Review before flagging — some
 duplication (e.g. test fixtures) is intentional.
@@ -111,6 +117,14 @@ Run: `interrogate .`
 Any dead code hit in non-test files → audit `note`. Confirm before reporting —
 vulture has false positives on dynamically accessed attributes.
 Run: `vulture .`
+
+### radon
+Grade the cyclomatic complexity of each function. Grade B (CC 6–10) → audit
+`note`. Grade C–D (CC 11–20) → audit `warning`. Grade E–F (CC > 20) → audit
+`error`. These thresholds match the code quality phase benchmarks in
+`quality-standards.md`. Report each function with its score and grade; do not
+average across the module.
+Run: `radon cc . --min B -s`
 
 ### clippy
 Any `deny`-level finding → audit `error`. `warn`-level → audit `warning`. Note

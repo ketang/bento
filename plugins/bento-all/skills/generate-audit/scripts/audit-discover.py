@@ -61,6 +61,7 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("go-test-cover", "Go", [],
      "go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out", True),
     ("dupl",          "Go", [".dupl"], "dupl ./...", False),
+    ("gocyclo",       "Go", [], "gocyclo -over 10 ./...", True),
     ("deadcode",      "Go", [], "deadcode ./...", True),
     ("nancy",         "Go", ["nancy.ignore"], "go list -json -deps ./... | nancy sleuth", False),
     # ── TypeScript / JavaScript ─────────────────────────────────────────────
@@ -80,6 +81,7 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
       ".prettierrc.yaml", "prettier.config.js", "prettier.config.cjs"],
      "npx prettier --check .", False),
     ("jscpd", "TypeScript", [".jscpd.json", ".jscpd.yaml", ".jscpd.yml"], "npx jscpd .", False),
+    ("jscpd", "JavaScript", [".jscpd.json", ".jscpd.yaml", ".jscpd.yml"], "npx jscpd .", False),
     # ── Python ──────────────────────────────────────────────────────────────
     ("ruff",        "Python", ["ruff.toml", ".ruff.toml"], "ruff check .", False),
     ("mypy",        "Python", ["mypy.ini", ".mypy.ini"], "mypy .", False),
@@ -87,6 +89,7 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("pytest-cov",  "Python", ["pytest.ini", "setup.cfg"], "pytest --cov", False),
     ("interrogate", "Python", [".interrogate.ini"], "interrogate .", False),
     ("vulture",     "Python", ["whitelist.py"], "vulture .", False),
+    ("radon",       "Python", [], "radon cc . --min B -s", True),
     # ── Rust ────────────────────────────────────────────────────────────────
     ("clippy",          "Rust", [], "cargo clippy -- -D warnings", True),
     ("cargo-audit",     "Rust", [], "cargo audit", True),
@@ -115,9 +118,12 @@ TOOL_ALTERNATIVE_GROUPS: dict[tuple[str | None, str], list[str]] = {
     ("Rust",       "linter"):    ["clippy"],
     ("TypeScript", "dead_code"): ["knip"],
     ("JavaScript", "dead_code"): ["knip"],
-    ("Python",     "type"):      ["mypy"],
-    ("TypeScript", "type"):      ["tsc"],
-    (None,         "secrets"):   ["gitleaks", "trufflehog", "detect-secrets"],
+    ("Python",     "type"):        ["mypy"],
+    ("TypeScript", "type"):        ["tsc"],
+    ("Go",         "duplication"): ["dupl"],
+    ("TypeScript", "duplication"): ["jscpd"],
+    ("JavaScript", "duplication"): ["jscpd"],
+    (None,         "secrets"):     ["gitleaks", "trufflehog", "detect-secrets"],
 }
 
 
