@@ -257,3 +257,7 @@ open-ended summary.
 - Do not treat absence of a live process or recent activity as proof that a
   worktree is safe to discard — an agent waiting for input may be idle for
   hours.
+- **Never construct manual `git branch -D` or `git branch -d` commands.**  All
+  branch deletion must go through the helper's `--apply delete-local-merged-branches`
+  mode.  Manually scripted deletion loops (e.g. for-loops over branch names)
+  bypass the helper's safety checks and can trigger Claude Code rendering errors.
