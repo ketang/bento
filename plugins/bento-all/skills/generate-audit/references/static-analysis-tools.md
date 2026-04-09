@@ -128,8 +128,20 @@ Run: `radon cc . --min B -s`
 
 ### clippy
 Any `deny`-level finding → audit `error`. `warn`-level → audit `warning`. Note
-`#[allow(...)]` attributes that suppress important lints.
+`#[allow(...)]` attributes that suppress important lints. `clippy::cognitive_complexity`
+is in the `nursery` group and is **off by default** — check for it separately via
+the `clippy-cognitive-complexity` entry below.
 Run: `cargo clippy -- -D warnings`
+
+### clippy-cognitive-complexity
+Detected when `clippy.toml` or `.clippy.toml` is present (the threshold must be
+configured there — the default of 25 is too permissive to catch real-world
+complexity). Functions exceeding the configured threshold → audit `warning`.
+Check that `clippy.toml` sets `cognitive-complexity-threshold` to a value ≤ 15;
+if the file exists but omits the key, flag that as a `note` (threshold defaults
+to 25). If the config file is absent entirely, this entry appears in the
+recommendations block — see below.
+Run: `cargo clippy -- -W clippy::cognitive_complexity`
 
 ### cargo-audit
 Any CVE → audit `error`. Unmaintained crates → audit `warning`.
@@ -184,6 +196,19 @@ alternative.
 - **<tool>** — <one-line description of what it catches>
   Install: `<install command>`
   First run: `<run command>`
+```
+
+### clippy-cognitive-complexity recommendation text
+
+When `clippy-cognitive-complexity` appears in `missing_by_language` for Rust,
+emit:
+
+```markdown
+- **clippy cognitive_complexity** — catches functions with high cognitive
+  complexity; requires opt-in because the default threshold (25) is too
+  permissive to be useful without configuration.
+  Setup: create `clippy.toml` with `cognitive-complexity-threshold = 15`
+  Enable: `cargo clippy -- -W clippy::cognitive_complexity`
 ```
 
 ### Do not recommend
