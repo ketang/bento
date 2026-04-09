@@ -63,6 +63,11 @@ Use runtime-scoped state rooted at:
 - `swarm-state/<session-or-thread-id>/` at repo root only when no safer
   runtime-local storage is available
 
+These state roots are for ephemeral continuation data, not for linked
+worktrees. Worktree creation should follow the project's shared worktree
+convention, defaulting to `~/.local/share/worktrees/<repo>/<branch>` when the
+repo does not document a different root.
+
 Inside that state root, keep the files minimal and role-specific:
 
 - `continue.txt` for remaining task IDs only

@@ -75,6 +75,24 @@ The root script `scripts/build-plugins` regenerates:
 Do not hand-edit generated plugin directories or the generated marketplace
 manifest.
 
+## Cross-Agent Worktree Policy
+
+When a Bento skill creates a linked worktree and the project does not define a
+different root, the default location is:
+
+```text
+~/.local/share/worktrees/<repo>/<branch>
+```
+
+This policy is shared across agent runtimes. It keeps linked worktrees:
+
+- persistent across reboots
+- outside `/tmp`, which is reserved for disposable scratch data
+- outside the checked-out repository, which avoids nested working-copy clutter
+
+Repo-specific docs may override this root when they have a stronger local
+convention, but runtime-specific skills should not invent different defaults.
+
 ## Skill implementation pattern
 
 Canonical skills should keep the reusable capability contract in `SKILL.md` and

@@ -29,6 +29,8 @@ safely.
 - The active issue or approved change scope
 - The repo's documented claim model, if any
 - The repo's documented branch and worktree conventions, if any
+  - When the repo does not override the worktree root, use the shared default
+    `~/.local/share/worktrees/<repo>/<branch>`
 
 ## Deterministic Helpers
 
@@ -57,6 +59,8 @@ target branch and worktree path are confirmed correct.
 3. If the repo requires claiming active work, inspect and claim it before
    implementation begins.
 4. Determine the target branch name and linked-worktree path from repo docs.
+   - If the repo does not define a different root, use
+     `~/.local/share/worktrees/<repo>/<branch>`.
 5. Preview the setup with:
 
 ```bash
@@ -87,6 +91,8 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 - Do not implement directly on the detected primary branch.
 - Do not implement from the primary checkout when the repo expects worktree
   isolation.
+- Do not place linked worktrees under `/tmp` unless the repo explicitly
+  documents that as safe and durable enough for the task.
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
 
 ## Stop Conditions
