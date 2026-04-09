@@ -37,6 +37,22 @@ The separation is intentional:
 Do not hand-edit generated plugin skill directories. Edit the canonical sources
 and rebuild the plugins.
 
+## Worktree convention
+
+When Bento skills need a linked worktree and the repository does not override
+the location, use this shared cross-agent default:
+
+```text
+~/.local/share/worktrees/<repo>/<branch>
+```
+
+This root is for durable linked worktrees across agent runtimes. Do not create
+linked worktrees under `/tmp` or inside the checked-out repository unless the
+project explicitly documents a different convention.
+
+Use `/tmp` only for ephemeral scratch data or continuation state that can be
+recomputed after a reboot or context reset.
+
 ## Current target platforms
 
 Today, `bento` emits plugins in Claude Code's marketplace format and Codex's
