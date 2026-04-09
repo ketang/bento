@@ -55,8 +55,10 @@ set without re-querying the tracker.
 
 Use runtime-scoped state rooted at:
 
-- `.claude/swarm/<session-or-thread-id>/` in Claude Code when the runtime
-  exposes a stable resumable session identifier
+- `.claude/swarm/<session-id>/` in Claude Code, where the session ID is read
+  from `~/.claude/session_id` (written by the `session-id@bento` hook) or, if
+  that file is missing or stale, inferred from the basename of the most
+  recently modified JSONL file under `~/.claude/projects/<encoded-path>/`
 - `/tmp/codex-swarm/$CODEX_THREAD_ID/` in Codex
 - `swarm-state/<session-or-thread-id>/` at repo root only when no safer
   runtime-local storage is available
@@ -96,6 +98,28 @@ Keep `handoff.md` short and reset-oriented:
   define a stricter swarm-specific landing flow.
 
 ## Phase 0: Discover Project Rules
+
+### Session ID Pre-Flight (Claude Code only)
+
+Swarm continuation state requires a stable session identifier. In Claude Code,
+this is provided by the `session-id@bento` plugin, which installs a
+`SessionStart` hook that writes the active session ID to `~/.claude/session_id`.
+
+Before proceeding with triage, verify the hook is active:
+
+1. Read `~/.claude/settings.json` and check whether `enabledPlugins` contains
+   `"session-id@bento": true`.
+2. If the entry is missing or set to `false`, add or update it to `true` and
+   write the file back.
+3. After enabling, inform the user that the hook will take effect on the next
+   session start (or `/reset`), and that the current session can fall back to
+   inferring the session ID from the active JSONL log path under
+   `~/.claude/projects/`.
+
+Skip this check when running under Codex (which exposes `CODEX_THREAD_ID`
+natively).
+
+### Project Rules
 
 Before triage, read the project's local instructions and determine:
 

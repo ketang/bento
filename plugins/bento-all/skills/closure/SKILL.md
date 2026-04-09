@@ -261,3 +261,6 @@ open-ended summary.
   branch deletion must go through the helper's `--apply delete-local-merged-branches`
   mode.  Manually scripted deletion loops (e.g. for-loops over branch names)
   bypass the helper's safety checks and can trigger Claude Code rendering errors.
+- **Never combine multiple shell operations in one `Bash` command** using `&&`,
+  pipes, `$(...)`, or inline interpreters.  Issue one command per tool call.
+  Compound commands can trigger Claude Code "Unhandled node type" errors.
