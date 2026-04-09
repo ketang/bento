@@ -91,10 +91,12 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("vulture",     "Python", ["whitelist.py"], "vulture .", False),
     ("radon",       "Python", [], "radon cc . --min B -s", True),
     # ── Rust ────────────────────────────────────────────────────────────────
-    ("clippy",          "Rust", [], "cargo clippy -- -D warnings", True),
-    ("cargo-audit",     "Rust", [], "cargo audit", True),
-    ("rustfmt",         "Rust", [".rustfmt.toml", "rustfmt.toml"], "cargo fmt --check", False),
-    ("cargo-tarpaulin", "Rust", [], "cargo tarpaulin", True),
+    ("clippy",                    "Rust", [], "cargo clippy -- -D warnings", True),
+    ("clippy-cognitive-complexity","Rust", ["clippy.toml", ".clippy.toml"],
+     "cargo clippy -- -W clippy::cognitive_complexity", False),
+    ("cargo-audit",               "Rust", [], "cargo audit", True),
+    ("rustfmt",                   "Rust", [".rustfmt.toml", "rustfmt.toml"], "cargo fmt --check", False),
+    ("cargo-tarpaulin",           "Rust", [], "cargo tarpaulin", True),
     # ── Cross-language: secrets ─────────────────────────────────────────────
     ("gitleaks",       None, [".gitleaks.toml", ".gitleaks.json", ".gitleaksignore"],
      "gitleaks detect --source . --verbose", False),
@@ -120,10 +122,11 @@ TOOL_ALTERNATIVE_GROUPS: dict[tuple[str | None, str], list[str]] = {
     ("JavaScript", "dead_code"): ["knip"],
     ("Python",     "type"):        ["mypy"],
     ("TypeScript", "type"):        ["tsc"],
-    ("Go",         "duplication"): ["dupl"],
-    ("TypeScript", "duplication"): ["jscpd"],
-    ("JavaScript", "duplication"): ["jscpd"],
-    (None,         "secrets"):     ["gitleaks", "trufflehog", "detect-secrets"],
+    ("Go",         "duplication"):  ["dupl"],
+    ("TypeScript", "duplication"):  ["jscpd"],
+    ("JavaScript", "duplication"):  ["jscpd"],
+    ("Rust",       "complexity"):   ["clippy-cognitive-complexity"],
+    (None,         "secrets"):      ["gitleaks", "trufflehog", "detect-secrets"],
 }
 
 
