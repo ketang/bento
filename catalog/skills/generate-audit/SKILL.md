@@ -40,8 +40,10 @@ Use the JSON output as the starting point for:
 - project shape and detected languages
 - build, test, lint, and typecheck command candidates
 - source-of-truth docs and workflow docs
+- documentation buckets, documented command candidates, and command-consistency signals
 - interface and drift surfaces
 - workflow surfaces such as CI, task runners, tracker hints, and memory files
+- disabled or bypassed automated-test signals across code, CI, config, and docs
 - path-based risk hotspots worth deeper review
 
 Then fill in only the gaps that the helper cannot infer from file structure
@@ -68,31 +70,49 @@ Choose one of these outputs based on the user's request:
    - contributor instructions
    - architecture or product docs
    - API, protocol, schema, or migration docs
-4. Identify interface and drift surfaces:
+   - agent-oriented instructions such as `AGENTS.md`
+   - install, setup, and quickstart docs that claim a user can accomplish real work
+4. Critically review documentation, not just its existence:
+   - design and architecture docs for correctness, omissions, drift, and weak assumptions
+   - in-code and code-adjacent docs for stale contracts, misleading comments, and undocumented constraints
+   - agent-facing docs for whether they drive high-quality behavior or merely restate obvious mechanics
+   - all docs for utility: flag content that is correct but irrelevant, obvious, redundant, or too shallow to help a contributor, operator, or agent succeed
+5. Identify interface and drift surfaces:
    - API schemas
    - protocol types
    - generated code
    - config and env var contracts
    - CLI commands and flags
-5. Identify workflow surfaces:
+6. Identify workflow surfaces:
    - issue tracker or task system
    - branch and merge conventions
    - release or closeout scripts
    - memory or knowledge files if the repo uses them
-6. Identify risk-heavy areas:
+7. Perform a dedicated critical review of automated test health:
+   - inspect `test_automation_health.disabled_signals` from the helper output
+   - look for disabled, skipped, quarantined, muted, or bypassed tests in code, CI, task runners, and docs
+   - treat these as findings candidates when they reduce confidence, leave coverage gaps, or normalize broken test workflows
+   - explain what risk each disabled path leaves untested
+8. Identify risk-heavy areas:
    - auth and permissions
    - routers and input validation
    - persistence and migrations
    - external network calls
    - background jobs
    - secrets and token handling
-7. Static analysis surface — read `generate-audit/references/static-analysis-tools.md`:
+9. Validate documentation truthfulness with command checks:
+   - inspect `documentation_analysis.commands` and `documentation_analysis.command_consistency`
+   - prioritize install, setup, quickstart, run, build, and test commands
+   - execute documented commands when they are safe, local, and relevant to the audit
+   - treat failing, drifting, misleading, or prerequisite-free assumptions as findings, not just notes
+   - report whether docs help a real contributor or operator accomplish work, or merely describe the obvious
+10. Static analysis surface — read `generate-audit/references/static-analysis-tools.md`:
    - Cross-reference `static_analysis.detected_tools` from the helper output
    - Note all gaps from `missing_by_language` and `missing_cross_language`
    - Read the config file of each detected tool and note any disabled rules,
      raised thresholds, or excluded paths — these are findings if they weaken
      the analysis
-8. Quality standards binding — read `generate-audit/references/quality-standards.md`:
+11. Quality standards binding — read `generate-audit/references/quality-standards.md`:
    - This governs the code quality audit phase
    - Sampling target: files in `risk_surfaces` first, then highest-churn files
      from `git log --format='' --name-only | sort | uniq -c | sort -rn | head -20`,
@@ -112,6 +132,7 @@ Include only the modules that fit the discovered repo. The usual set is:
 - test coverage (gap analysis against risk surfaces; no blanket % target)
 - documentation coverage (exported/public symbol coverage)
 - docs truthfulness
+- documentation utility
 - issue hygiene
 - foundation review
 - security review
@@ -131,7 +152,7 @@ for a backend-only service, or a migration section for a repo with no database.
 - Keep the generated audit concise enough to be used repeatedly.
 - Separate generic audit structure from repo-specific bindings.
 - Mark expensive or optional phases clearly.
-- Default to observation only. Put follow-up actions in a separate section.
+- Default to critical evaluation. Follow-up actions should be concrete and prioritized in a separate section.
 - For each detected tool: emit a concrete run block with command, output
   interpretation instructions, and severity mapping (see `static-analysis-tools.md`).
 - For each missing tool: emit a recommendations block with install instructions.
@@ -142,6 +163,10 @@ for a backend-only service, or a migration section for a repo with no database.
   quality phase, not a fallback footnote.
 - Coverage thresholds must not be hardcoded — surface gaps in risk surfaces only;
   never mandate a specific percentage target.
+- Treat disabled or bypassed automated tests as explicit findings candidates when they weaken confidence.
+- Treat broken or misleading install and quickstart commands as findings, especially when they block onboarding or verification.
+- Treat correct-but-low-utility documentation as a documentation-quality problem when it wastes reader attention or omits the information needed to act.
+- Prefer remediation guidance that distinguishes immediate fixes, medium-term improvements, and structural investments.
 
 When drafting a repo-local `audit` skill, structure it as:
 
@@ -165,6 +190,9 @@ When drafting a repo-local `audit` skill, structure it as:
 - Secrets scan is always included; it is never optional regardless of stack.
 - If a tool's config file disables or weakens rules, flag it as a finding, not
   merely a note.
+- Do not mistake documentation presence for documentation quality; utility and correctness both matter.
+- Do not reward docs that are merely verbose, obvious, or duplicative.
+- Do not execute destructive or environment-mutating commands just because they appear in docs; prefer safe local verification first.
 
 ## Recommended Output Shape
 
@@ -173,6 +201,7 @@ The generated plan or skill should usually include:
 - an executive summary section
 - phase-by-phase checks with concrete commands or files
 - a severity model for findings
+- concrete remediation guidance tied to the findings
 - a final consolidated action list
 
 For a draft skill, keep the first version lean. It is better to generate a
