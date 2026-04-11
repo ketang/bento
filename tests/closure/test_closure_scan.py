@@ -1,5 +1,6 @@
 import importlib.util
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -22,12 +23,23 @@ def _load_module():
     return mod
 
 
-def run(cmd: list[str], cwd: Path) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True)
+def run(
+    cmd: list[str],
+    cwd: Path,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    merged_env = os.environ.copy()
+    if env:
+        merged_env.update(env)
+    return subprocess.run(cmd, cwd=cwd, check=True, capture_output=True, text=True, env=merged_env)
 
 
 def git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
     return run(["git", *args], cwd)
+
+
+def git_with_env(cwd: Path, env: dict[str, str], *args: str) -> subprocess.CompletedProcess[str]:
+    return run(["git", *args], cwd, env=env)
 
 
 def write_file(path: Path, content: str) -> None:
@@ -185,6 +197,23 @@ class MergedCheckedOutTest(unittest.TestCase):
         git(self.repo, "commit", "-m", message)
         return git(self.repo, "rev-parse", "HEAD").stdout.strip()
 
+    def commit_file_with_old_date(self, relative_path: str, content: str, message: str) -> str:
+        path = self.repo / relative_path
+        path.write_text(content, encoding="utf-8")
+        git(self.repo, "add", relative_path)
+        old_date = "2020-01-01T12:00:00+00:00"
+        git_with_env(
+            self.repo,
+            {
+                "GIT_AUTHOR_DATE": old_date,
+                "GIT_COMMITTER_DATE": old_date,
+            },
+            "commit",
+            "-m",
+            message,
+        )
+        return git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
     def run_scan(self, *args: str) -> dict:
         return json.loads(run([str(SCRIPT), "--no-liveness", *args], self.repo).stdout)
 
@@ -251,6 +280,98 @@ class MergedCheckedOutTest(unittest.TestCase):
         linked = wt_records.get(str(worktree_path))
         self.assertIsNotNone(linked)
         self.assertTrue(linked["working_tree_dirty"])
+
+    def test_apply_removes_clean_stale_merged_worktree_then_branch(self) -> None:
+        git(self.repo, "checkout", "-b", "feature-done")
+        self.commit_file_with_old_date("done.txt", "done\n", "add done work")
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-done", "-m", "merge feature-done")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-done"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-done")
+
+        scan = json.loads(run([str(SCRIPT), "--apply", "delete-local-merged-branches"], self.repo).stdout)
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        self.assertIn(
+            {
+                "action": "delete_worktree",
+                "branch": "feature-done",
+                "worktree": str(worktree_path),
+            },
+            scan["applied_actions"],
+        )
+        self.assertIn(
+            {"action": "delete_local_branch", "branch": "feature-done"},
+            scan["applied_actions"],
+        )
+        self.assertFalse(worktree_path.exists())
+        self.assertNotIn("feature-done", branches)
+
+    def test_apply_keeps_recently_active_merged_worktree_and_branch(self) -> None:
+        git(self.repo, "checkout", "-b", "feature-recent")
+        self.commit_file("recent.txt", "recent\n", "add recent work")
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-recent", "-m", "merge feature-recent")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-recent"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-recent")
+
+        scan = json.loads(run([str(SCRIPT), "--apply", "delete-local-merged-branches"], self.repo).stdout)
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        self.assertIn(
+            {
+                "action": "delete_worktree",
+                "branch": "feature-recent",
+                "worktree": str(worktree_path),
+                "reason": "worktree liveness is recently_active",
+            },
+            scan["skipped_actions"],
+        )
+        self.assertIn(
+            {
+                "action": "delete_local_branch",
+                "branch": "feature-recent",
+                "reason": "branch still checked out in a retained worktree",
+            },
+            scan["skipped_actions"],
+        )
+        self.assertTrue(worktree_path.exists())
+        self.assertIn("feature-recent", branches)
+
+    def test_apply_keeps_dirty_merged_worktree_and_branch(self) -> None:
+        git(self.repo, "checkout", "-b", "feature-dirty-merged")
+        self.commit_file_with_old_date("dirty-merged.txt", "original\n", "add merged dirty file")
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-dirty-merged", "-m", "merge feature-dirty-merged")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-dirty-merged"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-dirty-merged")
+        (worktree_path / "dirty-merged.txt").write_text("modified\n", encoding="utf-8")
+
+        scan = json.loads(run([str(SCRIPT), "--apply", "delete-local-merged-branches"], self.repo).stdout)
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        self.assertIn(
+            {
+                "action": "delete_worktree",
+                "branch": "feature-dirty-merged",
+                "worktree": str(worktree_path),
+                "reason": "worktree has uncommitted changes",
+            },
+            scan["skipped_actions"],
+        )
+        self.assertIn(
+            {
+                "action": "delete_local_branch",
+                "branch": "feature-dirty-merged",
+                "reason": "branch still checked out in a retained worktree",
+            },
+            scan["skipped_actions"],
+        )
+        self.assertTrue(worktree_path.exists())
+        self.assertIn("feature-dirty-merged", branches)
 
 
 if __name__ == "__main__":

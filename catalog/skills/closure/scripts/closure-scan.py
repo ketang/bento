@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 APPLY_DELETE_LOCAL_MERGED = "delete-local-merged-branches"
+WORKTREE_SAFE_TO_REMOVE_LIVENESS = {"stale", "unknown"}
 
 # Hours during which agents are expected to be active.
 # Outside this window (11pm–8am) elapsed time is not counted toward recency.
@@ -646,8 +647,130 @@ def build_summary(
 # Apply mode
 # ---------------------------------------------------------------------------
 
+def removable_merged_worktree_reason(worktree: dict[str, object], current_checkout: Path) -> str | None:
+    path = Path(str(worktree["path"])).resolve()
+    if path == current_checkout.resolve():
+        return "worktree is the current checkout"
+    if worktree.get("detached"):
+        return "worktree is detached"
+    if worktree.get("working_tree_dirty"):
+        return "worktree has uncommitted changes"
+    liveness = worktree.get("liveness")
+    if not isinstance(liveness, dict):
+        return "liveness assessment unavailable"
+    verdict = liveness.get("verdict")
+    if verdict not in WORKTREE_SAFE_TO_REMOVE_LIVENESS:
+        return f"worktree liveness is {verdict}"
+    return None
+
+
+def apply_delete_merged_checked_out_worktrees(
+    branches: list[dict[str, object]],
+    worktrees: list[dict[str, object]],
+    cwd: Path,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    applied: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    branch_worktrees: dict[str, list[dict[str, object]]] = {}
+
+    for worktree in worktrees:
+        branch = worktree.get("branch")
+        if branch:
+            branch_worktrees.setdefault(str(branch), []).append(worktree)
+
+    for branch in branches:
+        if branch["classification"] != "merged_checked_out":
+            continue
+
+        branch_name = str(branch["name"])
+        checkout_records = branch_worktrees.get(branch_name, [])
+        if not checkout_records:
+            skipped.append(
+                {
+                    "action": "delete_local_branch",
+                    "branch": branch_name,
+                    "reason": "no registered worktree found for merged_checked_out branch",
+                }
+            )
+            continue
+
+        blocked = False
+        for worktree in checkout_records:
+            reason = removable_merged_worktree_reason(worktree, cwd)
+            if reason is None:
+                continue
+            blocked = True
+            skipped.append(
+                {
+                    "action": "delete_worktree",
+                    "branch": branch_name,
+                    "worktree": str(worktree["path"]),
+                    "reason": reason,
+                }
+            )
+
+        if blocked:
+            skipped.append(
+                {
+                    "action": "delete_local_branch",
+                    "branch": branch_name,
+                    "reason": "branch still checked out in a retained worktree",
+                }
+            )
+            continue
+
+        remove_failed = False
+        for worktree in checkout_records:
+            worktree_path = str(worktree["path"])
+            result = git("worktree", "remove", worktree_path, cwd=cwd, check=False)
+            if result.returncode == 0:
+                applied.append(
+                    {
+                        "action": "delete_worktree",
+                        "branch": branch_name,
+                        "worktree": worktree_path,
+                    }
+                )
+                continue
+
+            remove_failed = True
+            skipped.append(
+                {
+                    "action": "delete_worktree",
+                    "branch": branch_name,
+                    "worktree": worktree_path,
+                    "reason": result.stderr.strip() or "git worktree remove failed",
+                }
+            )
+
+        if remove_failed:
+            skipped.append(
+                {
+                    "action": "delete_local_branch",
+                    "branch": branch_name,
+                    "reason": "worktree removal failed",
+                }
+            )
+            continue
+
+        result = git("branch", "-d", branch_name, cwd=cwd, check=False)
+        if result.returncode == 0:
+            applied.append({"action": "delete_local_branch", "branch": branch_name})
+            continue
+
+        skipped.append(
+            {
+                "action": "delete_local_branch",
+                "branch": branch_name,
+                "reason": result.stderr.strip() or "git branch -d failed",
+            }
+        )
+
+    return applied, skipped
+
 def apply_delete_local_merged_branches(
     branches: list[dict[str, object]],
+    worktrees: list[dict[str, object]],
     cwd: Path,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     applied: list[dict[str, str]] = []
@@ -670,6 +793,10 @@ def apply_delete_local_merged_branches(
                 "reason": result.stderr.strip() or "git branch -d failed",
             }
         )
+
+    merged_applied, merged_skipped = apply_delete_merged_checked_out_worktrees(branches, worktrees, cwd)
+    applied.extend(merged_applied)
+    skipped.extend(merged_skipped)
 
     return applied, skipped
 
@@ -754,7 +881,11 @@ def main() -> int:
         skipped_actions: list[dict[str, str]] = []
 
         if args.apply == APPLY_DELETE_LOCAL_MERGED:
-            applied_actions, skipped_actions = apply_delete_local_merged_branches(branches, repo_root)
+            applied_actions, skipped_actions = apply_delete_local_merged_branches(
+                branches,
+                enriched_worktrees,
+                repo_root,
+            )
 
         output = {
             "repo_root": str(repo_root),

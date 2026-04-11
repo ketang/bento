@@ -61,8 +61,13 @@ If the user wants the clearly safe local branch cleanup applied, run:
 closure/scripts/closure-scan.py --apply delete-local-merged-branches
 ```
 
-This apply mode deletes only local branches whose classification is
-`safe_to_delete` (merged into primary AND not checked out in any worktree).
+This apply mode deletes:
+
+- local branches whose classification is `safe_to_delete`
+- linked worktrees attached to `merged_checked_out` branches when the worktree
+  is clean and its liveness verdict is `stale` or `unknown`, then deletes the
+  merged branch after the worktree removal succeeds
+
 Everything else remains review-driven.
 
 Add `--no-liveness` for a faster scan that skips session log scanning and
@@ -94,9 +99,9 @@ The `liveness.verdict` field on each worktree is one of:
 **Important limitation**: an agent blocked waiting for user input may show no
 file or commit activity for many hours while still running.  `confirmed_live`
 (live process detected) is the only signal that reliably distinguishes this
-case.  All other verdicts are probabilistic.  When `verdict` is `possibly_live`,
-`recently_active`, or `unknown`, present the evidence and ask the user rather
-than acting unilaterally.
+case.  All other verdicts are probabilistic.  Outside the helper's explicit
+apply mode, when `verdict` is `possibly_live`, `recently_active`, or `unknown`,
+present the evidence and ask the user rather than acting unilaterally.
 
 ### Recency Calculation
 

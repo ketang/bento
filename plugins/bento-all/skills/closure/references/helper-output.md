@@ -43,6 +43,7 @@ of cleanup:
 If liveness is unavailable, the worktree is dirty, or the verdict is
 `confirmed_live`, `possibly_live`, or `recently_active`, the helper skips that
 worktree and leaves the branch in place.
+
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware
