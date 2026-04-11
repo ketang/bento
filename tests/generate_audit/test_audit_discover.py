@@ -82,6 +82,8 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertIn("README.md", payload["source_of_truth_docs"])
         self.assertIn("AGENTS.md", payload["source_of_truth_docs"])
         self.assertIn("docs/ARCHITECTURE.md", payload["source_of_truth_docs"])
+        self.assertIn("docs/ARCHITECTURE.md", payload["documentation_analysis"]["design_docs"])
+        self.assertIn("AGENTS.md", payload["documentation_analysis"]["agent_docs"])
         self.assertIn("schema.graphql", payload["interface_surfaces"]["api_schema_files"])
         self.assertIn("proto/service.proto", payload["interface_surfaces"]["api_schema_files"])
         self.assertIn(".env.example", payload["interface_surfaces"]["config_contract_files"])
@@ -105,6 +107,107 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertIn("make build", payload["project_shape"]["commands"]["build"])
         self.assertIn("make verify", payload["project_shape"]["commands"]["test"])
         self.assertIn("make lint", payload["project_shape"]["commands"]["lint"])
+
+    def test_extracts_documented_commands_and_matches_repo_commands(self) -> None:
+        write(
+            self.repo / "README.md",
+            "\n".join(
+                [
+                    "# Test Repo",
+                    "## Quickstart",
+                    "```bash",
+                    "npm run test",
+                    "./scripts/bootstrap.sh",
+                    "```",
+                    "## Install",
+                    "```bash",
+                    "pip install -e .",
+                    "```",
+                ]
+            )
+            + "\n",
+        )
+        write(
+            self.repo / "package.json",
+            json.dumps({"scripts": {"test": "vitest run"}}),
+        )
+        write(self.repo / "scripts/bootstrap.sh", "#!/bin/sh\n")
+
+        payload = self.run_helper()
+
+        commands = payload["documentation_analysis"]["commands"]
+        command_text = [entry["command"] for entry in commands]
+        self.assertIn("npm run test", command_text)
+        self.assertIn("./scripts/bootstrap.sh", command_text)
+        self.assertIn("pip install -e .", command_text)
+
+        test_entry = next(entry for entry in commands if entry["command"] == "npm run test")
+        self.assertEqual(test_entry["category"], "test")
+        self.assertEqual(test_entry["section"], "Quickstart")
+
+        consistency = payload["documentation_analysis"]["command_consistency"]
+        matched = {entry["command"]: entry for entry in consistency["matched_commands"]}
+        unmatched = {entry["command"]: entry for entry in consistency["unmatched_commands"]}
+        self.assertEqual(matched["npm run test"]["status"], "exact")
+        self.assertEqual(matched["./scripts/bootstrap.sh"]["status"], "path_backed")
+        self.assertEqual(unmatched["pip install -e ."]["status"], "unmatched")
+
+    def test_detects_disabled_test_signals_across_code_and_ci(self) -> None:
+        write(
+            self.repo / "src/test_example.py",
+            "\n".join(
+                [
+                    "import pytest",
+                    "",
+                    "@pytest.mark.skip(reason='flaky')",
+                    "def test_example() -> None:",
+                    "    pass",
+                ]
+            )
+            + "\n",
+        )
+        write(
+            self.repo / ".github/workflows/ci.yml",
+            "\n".join(
+                [
+                    "jobs:",
+                    "  test:",
+                    "    if: false",
+                    "    runs-on: ubuntu-latest",
+                ]
+            )
+            + "\n",
+        )
+        write(
+            self.repo / "README.md",
+            "\n".join(
+                [
+                    "# Test Repo",
+                    "TODO: re-enable tests after stabilization",
+                ]
+            )
+            + "\n",
+        )
+
+        payload = self.run_helper()
+
+        signals = payload["test_automation_health"]["disabled_signals"]
+        signal_types = {(entry["path"], entry["signal"]) for entry in signals}
+        self.assertIn(("src/test_example.py", "pytest_skip"), signal_types)
+        self.assertIn((".github/workflows/ci.yml", "workflow_disabled"), signal_types)
+        self.assertIn(("README.md", "re_enable_todo"), signal_types)
+
+    def test_classifies_docs_for_design_contributor_and_install_utility_review(self) -> None:
+        write(self.repo / "DESIGN.md", "# Design\nArchitecture and tradeoffs.\n")
+        write(self.repo / "CONTRIBUTING.md", "# Contributing\nDevelopment workflow.\n")
+        write(self.repo / "docs/installing.md", "# Installing\nQuickstart setup.\n")
+
+        payload = self.run_helper()
+
+        docs = payload["documentation_analysis"]
+        self.assertIn("DESIGN.md", docs["design_docs"])
+        self.assertIn("CONTRIBUTING.md", docs["contributor_docs"])
+        self.assertIn("docs/installing.md", docs["install_quickstart_docs"])
 
 
     # ── Static analysis: Go ──────────────────────────────────────────────────

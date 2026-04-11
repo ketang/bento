@@ -4,9 +4,12 @@ from __future__ import annotations
 
 import json
 import os
+import re
+import shlex
 import subprocess
 import sys
 from pathlib import Path
+from difflib import SequenceMatcher
 
 
 SKIP_DIRS = {
@@ -32,6 +35,15 @@ DOC_BASENAMES = {
     "docs.md",
 }
 
+DOC_SECTION_KEYWORDS = {
+    "design_docs": ("design", "architecture", "adr", "decision", "system", "technical approach"),
+    "code_adjacent_docs": ("api", "schema", "protocol", "migration", "interface", "model", "codegen"),
+    "agent_docs": ("agent", "agents", "codex", "claude", "plugin", "skill", "prompt"),
+    "contributor_docs": ("contributing", "development", "dev setup", "workflow", "maintainer"),
+    "operations_docs": ("deploy", "release", "runbook", "operations", "incident", "oncall"),
+    "install_quickstart_docs": ("install", "installation", "quickstart", "getting started", "setup"),
+}
+
 TRACKER_HINTS = {
     "Beads": "Beads",
     "GitHub Issues": "GitHub Issues",
@@ -47,6 +59,45 @@ RISK_PATTERNS = {
     "background_jobs": ("job", "worker", "queue", "cron", "scheduler", "task"),
     "secrets_tokens": ("secret", "token", "credential", "apikey", "api_key", "oauth", "jwt"),
 }
+
+TEXT_FILE_SUFFIXES = {
+    ".md",
+    ".txt",
+    ".rst",
+    ".py",
+    ".ts",
+    ".tsx",
+    ".js",
+    ".jsx",
+    ".json",
+    ".yaml",
+    ".yml",
+    ".toml",
+    ".ini",
+    ".cfg",
+    ".conf",
+    ".sh",
+    ".go",
+    ".rs",
+    ".java",
+    ".kt",
+    ".swift",
+}
+
+DOC_COMMAND_LANGUAGES = {"bash", "sh", "shell", "zsh", "console", "shellscript"}
+
+DISABLED_TEST_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("js_skip", re.compile(r"\b(?:it|test|describe)\.skip\s*\(")),
+    ("js_todo", re.compile(r"\b(?:it|test)\.todo\s*\(")),
+    ("pytest_skip", re.compile(r"@pytest\.mark\.(?:skip|skipif|xfail)\b|pytest\.mark\.(?:skip|skipif|xfail)\b")),
+    ("unittest_skip", re.compile(r"@unittest\.skip\b|@skip\b|self\.skipTest\s*\(")),
+    ("go_skip", re.compile(r"\bt\.Skipf?\s*\(")),
+    ("junit_disabled", re.compile(r"@\s*Disabled\b")),
+    ("rust_ignore", re.compile(r"#\[\s*ignore(?:\s*=.+?)?\s*\]")),
+    ("workflow_disabled", re.compile(r"^\s*if:\s*(?:false|0)\s*$", re.MULTILINE)),
+    ("skip_flag", re.compile(r"--skip(?:[-_ ]?tests?)\b|--no-?test\b|-DskipTests\b")),
+    ("re_enable_todo", re.compile(r"(?:TODO|FIXME|HACK).{0,40}(?:re-?enable|restore).{0,40}test", re.IGNORECASE)),
+]
 
 # Each entry: (tool_name, language_or_None, config_candidates, run_command, zero_config)
 # language=None  — cross-language tool, checked regardless of detected languages
@@ -133,6 +184,25 @@ TOOL_ALTERNATIVE_GROUPS: dict[tuple[str | None, str], list[str]] = {
 def is_doc_like(path: str) -> bool:
     suffix = Path(path).suffix.lower()
     return suffix in {".md", ".txt", ".rst"}
+
+
+def is_text_like(path: str) -> bool:
+    name = Path(path).name
+    suffix = Path(path).suffix.lower()
+    return is_doc_like(path) or suffix in TEXT_FILE_SUFFIXES or name in {"Makefile", "Dockerfile", "Justfile"}
+
+
+def read_text_if_reasonable(path: Path) -> str | None:
+    try:
+        data = path.read_bytes()
+    except OSError:
+        return None
+    if b"\x00" in data:
+        return None
+    try:
+        return data.decode("utf-8")
+    except UnicodeDecodeError:
+        return data.decode("utf-8", errors="ignore")
 
 
 def git_stdout(*args: str, cwd: Path) -> str | None:
@@ -303,6 +373,248 @@ def detect_docs(files: list[str]) -> list[str]:
     return unique_sorted(docs)
 
 
+def doc_bucket_for(path: str, content: str) -> set[str]:
+    buckets: set[str] = set()
+    lowered_path = path.lower()
+    lowered_content = content.lower()
+
+    for bucket, needles in DOC_SECTION_KEYWORDS.items():
+        if any(needle in lowered_path or needle in lowered_content for needle in needles):
+            buckets.add(bucket)
+
+    if path == "AGENTS.md" or "/agents/" in lowered_path:
+        buckets.add("agent_docs")
+    if path == "CONTRIBUTING.md":
+        buckets.add("contributor_docs")
+    if Path(path).name in {"DESIGN.md", "ARCHITECTURE.md"}:
+        buckets.add("design_docs")
+    if "install" in lowered_path or "quickstart" in lowered_path or "getting-started" in lowered_path:
+        buckets.add("install_quickstart_docs")
+
+    return buckets
+
+
+def classify_documentation(repo_root: Path, docs: list[str]) -> dict[str, list[str]]:
+    buckets: dict[str, list[str]] = {
+        "design_docs": [],
+        "code_adjacent_docs": [],
+        "agent_docs": [],
+        "contributor_docs": [],
+        "operations_docs": [],
+        "install_quickstart_docs": [],
+    }
+
+    for path in docs:
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        for bucket in doc_bucket_for(path, content):
+            buckets[bucket].append(path)
+
+    return {bucket: unique_sorted(paths) for bucket, paths in buckets.items()}
+
+
+def heading_title(line: str) -> str | None:
+    stripped = line.strip()
+    if not stripped.startswith("#"):
+        return None
+    title = stripped.lstrip("#").strip()
+    return title or None
+
+
+def looks_like_shell_command(line: str) -> bool:
+    stripped = line.strip()
+    if not stripped or stripped.startswith("#"):
+        return False
+    if stripped.startswith(("$ ", "> ")):
+        stripped = stripped[2:].strip()
+    if len(stripped) < 3 or " " not in stripped:
+        return bool(re.match(r"^[A-Za-z0-9_.:/-]+$", stripped))
+    return bool(re.match(r"^[A-Za-z0-9_./:-]+(?:\s|$)", stripped))
+
+
+def normalize_command(line: str) -> str:
+    stripped = line.strip()
+    if stripped.startswith(("$ ", "> ")):
+        stripped = stripped[2:].strip()
+    return stripped
+
+
+def command_category(command: str, section: str | None) -> str:
+    lowered_command = command.lower()
+    lowered = f"{section or ''} {command}".lower()
+    if any(token in lowered_command for token in ("test", "pytest", "vitest", "jest", "go test", "cargo test", "unittest")):
+        return "test"
+    if any(token in lowered_command for token in ("lint", "ruff", "eslint", "shellcheck")):
+        return "lint"
+    if any(token in lowered_command for token in ("typecheck", "tsc", "mypy")):
+        return "typecheck"
+    if any(token in lowered_command for token in ("build", "compile")):
+        return "build"
+    if any(token in lowered_command for token in ("run", "serve", "start", "dev")):
+        return "run"
+    if any(token in lowered for token in ("install", "pip install", "npm install", "pnpm add", "brew install", "apt install")):
+        return "install"
+    if any(token in lowered for token in ("quickstart", "getting started", "setup", "bootstrap")):
+        return "setup"
+    return "other"
+
+
+def extract_doc_commands(repo_root: Path, docs: list[str]) -> list[dict[str, str]]:
+    commands: list[dict[str, str]] = []
+    for path in docs:
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+
+        current_heading: str | None = None
+        in_fence = False
+        fence_language = ""
+
+        for line in content.splitlines():
+            title = heading_title(line)
+            if title:
+                current_heading = title
+
+            stripped = line.strip()
+            if stripped.startswith("```"):
+                if in_fence:
+                    in_fence = False
+                    fence_language = ""
+                else:
+                    in_fence = True
+                    fence_language = stripped.removeprefix("```").strip().lower()
+                continue
+
+            if not in_fence:
+                continue
+
+            if fence_language and fence_language not in DOC_COMMAND_LANGUAGES:
+                continue
+
+            if not looks_like_shell_command(line):
+                continue
+
+            command = normalize_command(line)
+            commands.append(
+                {
+                    "path": path,
+                    "section": current_heading or "",
+                    "category": command_category(command, current_heading),
+                    "command": command,
+                    "source": "fenced_block",
+                }
+            )
+
+    unique_commands: list[dict[str, str]] = []
+    seen: set[tuple[str, str, str]] = set()
+    for entry in commands:
+        key = (entry["path"], entry["section"], entry["command"])
+        if key in seen:
+            continue
+        seen.add(key)
+        unique_commands.append(entry)
+    return unique_commands
+
+
+def shell_tokens(command: str) -> list[str]:
+    try:
+        return shlex.split(command)
+    except ValueError:
+        return command.split()
+
+
+def known_repo_commands(
+    rel_files: list[str],
+    project_commands: dict[str, list[str]],
+    static_analysis: dict[str, object],
+) -> list[str]:
+    known = [
+        command
+        for commands in project_commands.values()
+        for command in commands
+    ]
+    known.extend(
+        entry["run"]
+        for entry in static_analysis["detected_tools"]
+        if isinstance(entry, dict) and isinstance(entry.get("run"), str)
+    )
+    known.extend(
+        path
+        for path in rel_files
+        if path.startswith(("scripts/", "bin/", "hooks/")) and Path(path).suffix in {"", ".sh", ".py"}
+    )
+    return unique_sorted(known)
+
+
+def best_command_match(command: str, known_commands: list[str], rel_files: list[str]) -> dict[str, str]:
+    command_tokens = shell_tokens(command)
+    first_token = command_tokens[0] if command_tokens else ""
+    exact_match = command if command in known_commands else None
+    if exact_match:
+        return {"status": "exact", "match": exact_match}
+
+    for known in known_commands:
+        if command.startswith(known) or known.startswith(command):
+            return {"status": "prefix", "match": known}
+
+    for token in command_tokens:
+        normalized = token.removeprefix("./")
+        if normalized in rel_files:
+            return {"status": "path_backed", "match": normalized}
+
+    scored = [
+        (SequenceMatcher(None, command, candidate).ratio(), candidate)
+        for candidate in known_commands
+    ]
+    best_score, best_candidate = max(scored, default=(0.0, ""))
+    if best_score >= 0.6:
+        return {"status": "similar", "match": best_candidate}
+    if first_token and any(Path(path).name == first_token for path in rel_files):
+        return {"status": "entrypoint_name", "match": first_token}
+    return {"status": "unmatched", "match": ""}
+
+
+def evaluate_doc_commands(
+    doc_commands: list[dict[str, str]],
+    known_commands: list[str],
+    rel_files: list[str],
+) -> dict[str, list[dict[str, str]]]:
+    matched: list[dict[str, str]] = []
+    unmatched: list[dict[str, str]] = []
+    for entry in doc_commands:
+        result = best_command_match(entry["command"], known_commands, rel_files)
+        evaluated = {**entry, **result}
+        if result["status"] == "unmatched":
+            unmatched.append(evaluated)
+        else:
+            matched.append(evaluated)
+    return {"matched_commands": matched, "unmatched_commands": unmatched}
+
+
+def disabled_test_signals(repo_root: Path, rel_files: list[str]) -> list[dict[str, str]]:
+    signals: list[dict[str, str]] = []
+    for path in rel_files:
+        if not is_text_like(path):
+            continue
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        for signal_type, pattern in DISABLED_TEST_PATTERNS:
+            for match in pattern.finditer(content):
+                line_number = content.count("\n", 0, match.start()) + 1
+                line = content.splitlines()[line_number - 1].strip() if content.splitlines() else ""
+                signals.append(
+                    {
+                        "path": path,
+                        "line": str(line_number),
+                        "signal": signal_type,
+                        "excerpt": line[:200],
+                    }
+                )
+    return signals
+
+
 def interface_surfaces(files: list[str]) -> dict[str, list[str]]:
     api_schema_files = []
     generated_code_paths = []
@@ -451,6 +763,16 @@ def main() -> int:
     docs = detect_docs(rel_files)
     languages = detect_languages(file_set)
     static_analysis = detect_static_analysis_tools(repo_root, file_set, languages)
+    doc_buckets = classify_documentation(repo_root, docs)
+    project_commands = {
+        "build": build_commands,
+        "test": test_commands,
+        "lint": lint_commands,
+        "typecheck": typecheck_commands,
+    }
+    doc_commands = extract_doc_commands(repo_root, docs)
+    repo_commands = known_repo_commands(rel_files, project_commands, static_analysis)
+    doc_command_consistency = evaluate_doc_commands(doc_commands, repo_commands, rel_files)
 
     payload = {
         "repo_root": str(repo_root),
@@ -466,17 +788,20 @@ def main() -> int:
                     if Path(path).name in {"package.json", "pnpm-lock.yaml", "package-lock.json", "yarn.lock", "Cargo.toml", "go.mod", "pyproject.toml", "Makefile"}
                 ]
             ),
-            "commands": {
-                "build": build_commands,
-                "test": test_commands,
-                "lint": lint_commands,
-                "typecheck": typecheck_commands,
-            },
+            "commands": project_commands,
         },
         "source_of_truth_docs": docs,
+        "documentation_analysis": {
+            **doc_buckets,
+            "commands": doc_commands,
+            "command_consistency": doc_command_consistency,
+        },
         "interface_surfaces": interface_surfaces(rel_files),
         "workflow_surfaces": workflow_surfaces(repo_root, rel_files, docs, primary_branch),
         "risk_surfaces": detect_risk_surfaces(rel_files),
+        "test_automation_health": {
+            "disabled_signals": disabled_test_signals(repo_root, rel_files),
+        },
         "static_analysis": static_analysis,
         "warnings": warnings,
     }
