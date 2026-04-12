@@ -52,3 +52,28 @@ class CompressDiscoverTest(unittest.TestCase):
     def test_helper_runs_and_emits_json(self) -> None:
         data = self.run_helper()
         self.assertIsInstance(data, dict)
+
+    def test_tier_1_includes_top_level_agent_docs_and_nested_claude_md(self) -> None:
+        write(self.repo / "CLAUDE.md", "# project claude\n")
+        write(self.repo / "AGENTS.md", "# agents\n")
+        write(self.repo / "GEMINI.md", "# gemini\n")
+        write(self.repo / "subdir/CLAUDE.md", "# nested\n")
+        write(self.repo / "unrelated.md", "# not in tier 1\n")
+
+        data = self.run_helper()
+
+        tier_1_paths = sorted(
+            entry["path"] for entry in data["scope"] if entry["tier"] == 1
+        )
+        self.assertEqual(
+            tier_1_paths,
+            sorted(
+                str(self.repo / name)
+                for name in ["AGENTS.md", "CLAUDE.md", "GEMINI.md", "subdir/CLAUDE.md"]
+            ),
+        )
+        for entry in data["scope"]:
+            if entry["tier"] == 1:
+                self.assertIn("bytes", entry)
+                self.assertIn("lines", entry)
+                self.assertIn("tokens_char4", entry)
