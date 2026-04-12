@@ -223,3 +223,20 @@ class CompressDiscoverTest(unittest.TestCase):
             data["orphans"],
             [str(self.repo / "unreferenced/CLAUDE.md")],
         )
+
+    def test_token_baseline_reports_per_file_per_tier_and_total(self) -> None:
+        write(self.repo / "CLAUDE.md", "a" * 400)
+        write(self.repo / "AGENTS.md", "b" * 200)
+
+        fake_home = Path(self.temp_dir.name) / "empty_home_baseline"
+        fake_home.mkdir()
+        data = self.run_helper(env_overrides={"HOME": str(fake_home)})
+        baseline = data["token_baseline"]
+
+        claude_path = str(self.repo / "CLAUDE.md")
+        agents_path = str(self.repo / "AGENTS.md")
+        self.assertEqual(baseline["per_file"][claude_path], 100)
+        self.assertEqual(baseline["per_file"][agents_path], 50)
+        self.assertEqual(baseline["per_tier"]["1"], 150)
+        self.assertEqual(baseline["total"], 150)
+
