@@ -1,10 +1,6 @@
 ---
 name: go-pgx-goose
-description: |
-  Use when working in Go projects that use pgx and Goose migrations. Starts by
-  discovering the repo's actual Go quality gates, migration commands, DSN or
-  env conventions, and any query or codegen workflow before applying stack
-  conventions.
+description: Use in Go projects using pgx and Goose migrations — discover repo quality gates and migration/codegen commands before applying stack conventions.
 recommended_model: mid
 ---
 

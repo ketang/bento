@@ -1,9 +1,6 @@
 ---
 name: github-issue-flow
-description: |
-  Use when a repo uses GitHub Issues as its canonical tracker. Covers listing
-  and inspecting issues, following the repo's documented active-claim
-  mechanism, and closing or updating issues only after verified landing.
+description: Use when the repo uses GitHub Issues as its tracker — list, claim, and close issues only after verified landing.
 recommended_model: low
 ---
 

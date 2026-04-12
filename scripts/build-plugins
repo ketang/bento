@@ -67,6 +67,7 @@ PLUGIN_DEFS = {
             "build-vs-buy",
             "generate-audit",
             "project-memory",
+            "compress-docs",
             "beads-issue-flow",
             "github-issue-flow",
             "go-pgx-goose",

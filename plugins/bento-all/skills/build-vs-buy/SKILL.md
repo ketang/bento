@@ -1,9 +1,6 @@
 ---
 name: build-vs-buy
-description: |
-  Use before building substantial new functionality. Runs a deterministic repo
-  scan to surface incumbent tools and constraints, then researches libraries or
-  services and compares them against a build baseline before implementation.
+description: Use before building substantial new functionality — scan for incumbents, research libraries or services, compare against a build baseline.
 recommended_model: high
 ---
 

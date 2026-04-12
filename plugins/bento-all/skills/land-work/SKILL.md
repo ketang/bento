@@ -1,10 +1,6 @@
 ---
 name: land-work
-description: |
-  Use when approved implementation work is ready to land and the repo permits a
-  command-line landing flow. Verifies feature-branch preconditions, checks the
-  landing lease deterministically, guides compare-and-set merges, then closes
-  tracker work only after the landing succeeds.
+description: Use when approved work is ready to land via command line — verify preconditions, check the landing lease, merge, and close tracker work after landing.
 recommended_model: high
 ---
 

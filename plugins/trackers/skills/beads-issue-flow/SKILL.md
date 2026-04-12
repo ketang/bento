@@ -1,9 +1,6 @@
 ---
 name: beads-issue-flow
-description: |
-  Use when a repo uses Beads as its canonical tracker. Covers reading issues,
-  finding ready work, following the repo's documented active-work status model,
-  and closing or updating issues at the correct stage of the landing lifecycle.
+description: Use when the repo uses Beads as its tracker — read, claim, update, and close issues at the correct landing-lifecycle stage.
 recommended_model: low
 ---
 

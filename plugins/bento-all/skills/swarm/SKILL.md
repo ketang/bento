@@ -1,9 +1,6 @@
 ---
 name: swarm
-description: |
-  Use when multiple ready tasks can be worked in parallel. Triages tasks,
-  batches non-overlapping work, launches isolated worktrees, reviews teammate
-  plans, lands branches safely, and runs final quality checks.
+description: Use when multiple ready tasks can be worked in parallel — triage, batch non-overlapping work, launch isolated worktrees, review plans, land safely.
 recommended_model: high
 ---
 
@@ -11,11 +8,8 @@ recommended_model: high
 
 ## Model Guidance
 
-Recommended model: high.
-
-Use a high-capability model for autonomous execution. This skill requires task
-triage, overlap prediction, teammate coordination, and safe landing across
-multiple branches or worktrees.
+Recommended model: high — triage, overlap prediction, and multi-teammate
+coordination degrade sharply on smaller models.
 
 Use this skill when a project has multiple ready tasks that can be worked in
 parallel with good isolation.
@@ -29,70 +23,29 @@ parallel with good isolation.
 
 ## Deterministic Helpers
 
-This skill includes local helper scripts under `swarm/scripts/` for the parts
-of the workflow that benefit from stable, repeatable checks:
+This skill includes local helper scripts under `swarm/scripts/`:
 
-- `swarm/scripts/swarm-discover.py` to emit git-derived defaults plus any
-  structured swarm config the repo exposes
-- `swarm/scripts/swarm-triage.py --input <json>` to batch normalized task
-  data into the currently unblocked frontier, wait queues, and skips
-- `swarm/scripts/swarm-worktree-verify.py` to verify the current checkout is
+- `swarm/scripts/swarm-discover.py` — git-derived defaults plus any structured
+  swarm config the repo exposes
+- `swarm/scripts/swarm-triage.py --input <json>` — batch normalized task data
+  into unblocked frontier, wait queues, and skips. Run `--help` for the input
+  schema and output category enum.
+- `swarm/scripts/swarm-worktree-verify.py` — verify the current checkout is
   the expected linked worktree on the expected branch
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script. They require `python3` on `PATH`. If `python3` is
-unavailable on the machine, fall back to the prose workflow in this skill and
-perform the checks manually.
+unavailable, fall back to the prose workflow and perform checks manually.
 
 Keep tracker fetching outside these helpers. Use the project's tracker workflow
 to gather tasks, then normalize them into the triage input format.
 
 ## Continuation State
 
-When a batch overflows the current run, persist the remaining task IDs in
-runtime-local continuation state so a later invocation can resume the same task
-set without re-querying the tracker.
-
-Use runtime-scoped state rooted at:
-
-- `.claude/swarm/<session-id>/` in Claude Code, where the session ID is read
-  from `~/.claude/session_id` (written by the `session-id@bento` hook) or, if
-  that file is missing or stale, inferred from the basename of the most
-  recently modified JSONL file under `~/.claude/projects/<encoded-path>/`
-- `/tmp/codex-swarm/$CODEX_THREAD_ID/` in Codex
-- `swarm-state/<session-or-thread-id>/` at repo root only when no safer
-  runtime-local storage is available
-
-These state roots are for ephemeral continuation data, not for linked
-worktrees. Worktree creation should follow the project's shared worktree
-convention, defaulting to `~/.local/share/worktrees/<repo>/<branch>` when the
-repo does not document a different root.
-
-Inside that state root, keep the files minimal and role-specific:
-
-- `continue.txt` for remaining task IDs only
-- `handoff.md` for the compact narrative needed after a context reset
-
-Keep `continue.txt` tracker-agnostic:
-
-- one task ID per non-empty line
-- ignore blank lines and lines beginning with `#`
-- do not store tracker metadata, priorities, or prose
-- do not share one runtime's continuation state with another runtime unless the
-  handoff is intentional
-- if explicit task IDs are supplied on a later invocation, they supersede the
-  continuation state for the current runtime
-- once `continue.txt` has been fully consumed, delete it for the current
-  runtime
-
-Keep `handoff.md` short and reset-oriented:
-
-- record only the last landed or deferred task plus what the next invocation
-  needs to know
-- include branch, worktree, verification, and any newly unblocked follow-up
-  tasks when relevant
-- treat this state as ephemeral; if the runtime-local directory disappears,
-  recompute from tracker and repo state rather than treating it as a fatal error
+If a batch overflows the current run, persist remaining task IDs in
+runtime-local state so a later invocation can resume without re-querying the
+tracker. See `swarm/references/continuation-state.md` for runtime state roots,
+`continue.txt`/`handoff.md` formats, and the Claude Code session-ID pre-flight.
 
 ## Companion Skills
 
@@ -104,34 +57,10 @@ Keep `handoff.md` short and reset-oriented:
 
 ## Phase 0: Discover Project Rules
 
-### Session ID Pre-Flight (Claude Code only)
-
-Swarm continuation state requires a stable session identifier. In Claude Code,
-this is provided by the `session-id@bento` plugin, which installs a
-`SessionStart` hook that writes the active session ID to `~/.claude/session_id`.
-
-Before proceeding with triage, verify the hook is active:
-
-1. Read `~/.claude/settings.json` and check whether `enabledPlugins` contains
-   `"session-id@bento": true`.
-2. If the entry is missing or set to `false`, add or update it to `true` and
-   write the file back.
-3. After enabling, inform the user that the hook will take effect on the next
-   session start (or `/reset`), and that the current session can fall back to
-   inferring the session ID from the active JSONL log path under
-   `~/.claude/projects/`.
-
-Skip this check when running under Codex (which exposes `CODEX_THREAD_ID`
-natively).
-
-### Project Rules
-
 Before triage, read the project's local instructions and determine:
 
-- how to list and inspect ready tasks
-- how active work is claimed
-- which agent runtime is orchestrating the swarm and which teammate launch
-  model it requires
+- how to list, inspect, and claim ready tasks
+- which agent runtime is orchestrating the swarm and its teammate launch model
 - how branches and worktrees are named
 - which quality gates apply per task and after all merges
 - whether a pre-completion checklist or skill is required
@@ -143,20 +72,12 @@ When the project exposes a structured swarm config, run the discovery helper
 for the current runtime:
 
 ```bash
-swarm/scripts/swarm-discover.py --runtime claude
-```
-
-or:
-
-```bash
-swarm/scripts/swarm-discover.py --runtime codex
+swarm/scripts/swarm-discover.py --runtime claude   # or --runtime codex
 ```
 
 This loads the matching runtime-specific config if present and otherwise falls
-back to the shared `swarm-config.json` at the repo root.
-
-Use the output as the deterministic base layer, then fill any remaining gaps
-from repo docs.
+back to the shared `swarm-config.json` at the repo root. Use the output as the
+deterministic base layer, then fill remaining gaps from repo docs.
 
 If the project does not document these items clearly enough to swarm safely,
 stop and ask the user to narrow the scope or clarify the workflow.
@@ -167,93 +88,47 @@ stop and ask the user to narrow the scope or clarify the workflow.
    tracker's ready-work query.
 2. Inspect each task closely enough to understand scope, likely files, and
    whether it is small enough for one teammate.
-3. Identify tasks already in progress and do not pick them up.
-4. Predict likely file overlap across the candidate tasks and with any active
-   work already underway.
-5. Batch only tasks that appear meaningfully isolated from one another.
-6. Sequence tasks that touch shared hotspots such as:
-   - central schemas
-   - shared configuration or type definitions
-   - generated outputs
-   - high-churn framework entrypoints
-7. If the project tracker exposes explicit dependencies, do not treat the work
-   as a flat queue. Spawn only the currently unblocked frontier, then recompute
-   readiness after each landed batch.
-8. Skip tasks that are too large, ambiguous, or coupled for parallel execution.
-9. Present the triage plan and wait for approval before spawning teammates.
+3. Skip tasks already in progress, too large, ambiguous, or coupled for
+   parallel execution.
+4. Predict file overlap across candidates and with any active work. Batch only
+   tasks that appear meaningfully isolated. Sequence tasks that touch shared
+   hotspots (central schemas, shared config/types, generated outputs,
+   high-churn framework entrypoints).
+5. If the tracker exposes explicit dependencies, spawn only the currently
+   unblocked frontier, then recompute readiness after each landed batch — not
+   a flat queue.
+6. When a teammate finishes and a slot opens, re-triage the remaining
+   candidates against current active paths, hotspots, landed IDs, and newly
+   unblocked dependencies before backfilling. Do not refill if every remaining
+   task is still blocked or conflicting.
+7. Present the triage plan and wait for approval before spawning teammates.
 
-When the project can supply normalized task data, prefer using:
+When the project can supply normalized task data, prefer:
 
 ```bash
 swarm/scripts/swarm-triage.py --input triage.json
 ```
 
-Expected input shape:
-
-```json
-{
-  "tasks": [
-    {
-      "id": "task-123",
-      "title": "Implement feature",
-      "priority": 10,
-      "paths": ["pkg/a", "pkg/b/file.go"],
-      "dependencies": ["task-100"],
-      "in_progress": false,
-      "too_large": false,
-      "ambiguous": false
-    }
-  ],
-  "landed_task_ids": ["task-100"],
-  "active_paths": ["shared/schema.graphql"],
-  "hotspots": ["shared/schema.graphql"],
-  "max_parallel": 4,
-  "batch_limit": 20
-}
-```
-
-The normalized triage contract should separate tasks into these categories:
-
-- `parallel_batch`: tasks that are ready to launch now, subject to the
-  concurrency cap
-- `wait_queue`: tasks that are eligible but not launched yet because the batch
-  is full or they overlap with tasks already selected for the current batch
-- `overflow`: tasks that are still eligible but were cut off by the batch limit
-- `skipped`: tasks that are not launchable because they are already in
-  progress, too large, or too ambiguous for one teammate
-- `deferred_due_to_dependencies`: tasks that are blocked until their declared
-  dependencies have landed
-- `deferred_due_to_active_overlap`: tasks that are blocked because their
-  predicted paths overlap active work or hotspot paths
-
-The script stays tracker-agnostic. Tracker-specific skills are responsible for
-collecting tasks and converting them into this format.
+Run `swarm-triage.py --help` for the input schema and the output categories
+(`parallel_batch`, `wait_queue`, `overflow`, `skipped`,
+`deferred_due_to_dependencies`, `deferred_due_to_active_overlap`). The script
+is tracker-agnostic; tracker-specific skills convert tasks into this format.
 
 ## Phase 2: Teammate Launch
 
-Launch teammates through the runtime's managed multi-agent flow rather than
-ad hoc background workers:
+Use the runtime's managed multi-agent flow, not ad hoc background workers:
 
-- In Claude Code, create a team with `TeamCreate`, create one task per approved
-  work item with `TaskCreate`, and launch each teammate via `Agent` with both
-  `team_name` and a descriptive `name` set.
-- In Codex, create one teammate per approved work item with `spawn_agent`, then
-  coordinate plan review, implementation, and completion through the native
-  agent lifecycle tools such as `send_input`, `wait_agent`, and `close_agent`.
-- Do not use standalone `run_in_background` agents as a substitute for either
-  runtime's managed teammate flow.
+- Claude Code: `TeamCreate` + one `TaskCreate` per approved item + `Agent`
+  with both `team_name` and a descriptive `name` set.
+- Codex: `spawn_agent` per approved item, then `send_input` / `wait_agent` /
+  `close_agent` for lifecycle.
 
-For each approved task:
+For each approved task: exactly one branch, exactly one worktree, and the
+prompt must include task details, expected scope, overlap risks, and required
+quality gates. Require the teammate to stop and report back if the task is
+broader or more coupled than expected.
 
-1. Create exactly one branch and exactly one worktree for that task.
-2. Require the teammate to do implementation only from that worktree.
-3. Include the task details, expected scope, likely overlap risks, and required
-   quality gates in the prompt.
-4. Require the teammate to stop and report back if the task is broader or more
-   coupled than expected.
-
-The teammate must verify both working directory and branch before doing any
-implementation:
+The teammate must verify working directory and branch before any edits:
 
 ```bash
 swarm/scripts/swarm-worktree-verify.py --require-linked-worktree
@@ -262,72 +137,35 @@ swarm/scripts/swarm-worktree-verify.py --require-linked-worktree
 Reject any teammate setup that cannot show they are inside the intended
 worktree on the intended branch.
 
-## Backfill On Completion
-
-When a teammate finishes and a slot opens, recompute the remaining candidate
-set against the current active paths, hotspot paths, landed task IDs, and any
-newly completed dependencies.
-
-Backfill should be conservative and deterministic:
-
-1. Prefer the highest-priority task that is still eligible and does not
-   conflict with the active paths already in flight.
-2. Recheck dependencies and overlap before launching the replacement task.
-3. Do not refill the slot if every remaining task is still blocked, ambiguous,
-   too large, or path-conflicting.
-4. Treat overflow tasks as candidates only after they are re-triaged against
-   the current state.
-
 ## Phase 3: Plan Review
 
-Review each teammate plan for:
-
-- correct scope with no opportunistic extras
-- explicit worktree path and branch verification
-- correct quality gates for the files they expect to change
-- test coverage appropriate to the task
-- no unresolved overlap with active teammates
-- any required pre-completion checklist or review step
-
-Reject plans that reference the primary checkout instead of a dedicated
-worktree, or that do not explain how the task will be verified.
+Review each teammate plan for correct scope (no opportunistic extras), explicit
+worktree+branch verification, correct quality gates, test coverage appropriate
+to the task, no unresolved overlap with active teammates, and any required
+pre-completion step. Reject plans that reference the primary checkout or do
+not explain how the task will be verified.
 
 ## Phase 4: Monitor and Land
 
-As teammates finish:
+Land one completed branch at a time using the project's documented landing
+workflow (see `land-work` unless project docs define a stricter flow):
 
-1. Verify the promised quality gates actually ran and passed.
-2. Verify any required pre-completion step was completed.
-3. Land one completed branch at a time using the project's documented landing
-   workflow.
-4. If conflicts arise, either resolve them carefully or send the task back for
-   rebase.
-5. Run any documented post-land hooks before considering the task complete.
-6. Close or update the tracker item only after the verified landing succeeds.
-7. Shut down or close the teammate for that task only after the work is safely
-   landed or explicitly deferred.
-8. Clean up the task branch and worktree only after the work is safely landed.
+1. Verify the promised quality gates actually ran and passed, plus any
+   required pre-completion step.
+2. Land the branch; resolve conflicts carefully or send back for rebase.
+3. Run any documented post-land hooks.
+4. Close or update the tracker item only after the verified landing.
+5. Close the teammate and clean up branch + worktree only after the work is
+   safely landed or explicitly deferred. Never discard a teammate's work
+   before then.
 
 When the last Claude Code teammate in the batch is done, delete the team. In
-Codex, close each spawned agent once its task is landed or explicitly deferred
-so idle agents do not linger.
-
-Never shut down or discard a teammate's work before it is either landed or
-explicitly deferred.
+Codex, close each spawned agent when its task is landed or deferred.
 
 ## Phase 5: Final Validation
 
 After all approved tasks are landed:
 
 1. Run the project's full aggregate quality gate.
-2. Confirm any generated assets, schemas, or walkthrough artifacts are updated.
+2. Confirm generated assets, schemas, or walkthrough artifacts are updated.
 3. Summarize what landed, what was deferred, and any follow-up risks.
-
-## Non-Negotiable Rules
-
-- Do not implement directly on the primary branch.
-- Do not treat tracker-specific commands as universal; follow project docs.
-- Do not parallelize tasks with likely overlap just to maximize throughput.
-- Do not close tracker work before the landing is verified.
-- Do not silently improvise repo-specific policy that the project has not
-  documented.

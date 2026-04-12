@@ -1,10 +1,6 @@
 ---
 name: graphql-gqlgen-gql-tada
-description: |
-  Use when working in projects that pair gqlgen on the backend with gql.tada on
-  the frontend. Starts by discovering the repo's actual schema locations,
-  gqlgen and schema-sync commands, generated artifact policy, and verification
-  workflow before applying stack conventions.
+description: Use in projects pairing gqlgen (backend) with gql.tada (frontend) — discover schema paths and codegen workflow before applying stack conventions.
 recommended_model: mid
 ---
 
