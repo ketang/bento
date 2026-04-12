@@ -77,3 +77,42 @@ class CompressDiscoverTest(unittest.TestCase):
                 self.assertIn("bytes", entry)
                 self.assertIn("lines", entry)
                 self.assertIn("tokens_char4", entry)
+
+    def test_tier_2_follows_markdown_links_and_backticked_paths_up_to_depth_3(self) -> None:
+        write(
+            self.repo / "CLAUDE.md",
+            "See [guide](docs/guide.md) and `docs/reference.md` for details.\n",
+        )
+        write(self.repo / "docs/guide.md", "Linked from root. See [deep](deep/a.md).\n")
+        write(self.repo / "docs/reference.md", "Backticked from root.\n")
+        write(self.repo / "docs/deep/a.md", "Depth 2. See [next](b.md).\n")
+        write(self.repo / "docs/deep/b.md", "Depth 3. See [too-far](c.md).\n")
+        write(self.repo / "docs/deep/c.md", "Depth 4 — excluded.\n")
+        write(self.repo / "docs/unreferenced.md", "Not linked from anywhere.\n")
+
+        data = self.run_helper()
+
+        tier_2_paths = sorted(
+            entry["path"] for entry in data["scope"] if entry["tier"] == 2
+        )
+        self.assertEqual(
+            tier_2_paths,
+            sorted(
+                str(self.repo / rel)
+                for rel in [
+                    "docs/guide.md",
+                    "docs/reference.md",
+                    "docs/deep/a.md",
+                    "docs/deep/b.md",
+                ]
+            ),
+        )
+
+    def test_tier_2_excludes_references_outside_repo(self) -> None:
+        write(
+            self.repo / "CLAUDE.md",
+            "See `/etc/passwd` and [external](../outside.md).\n",
+        )
+        data = self.run_helper()
+        tier_2_paths = [entry["path"] for entry in data["scope"] if entry["tier"] == 2]
+        self.assertEqual(tier_2_paths, [])
