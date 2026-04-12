@@ -240,3 +240,43 @@ class CompressDiscoverTest(unittest.TestCase):
         self.assertEqual(baseline["per_tier"]["1"], 150)
         self.assertEqual(baseline["total"], 150)
 
+    def test_end_to_end_discovery_across_all_signals(self) -> None:
+        fake_home = Path(self.temp_dir.name) / "home"
+        (fake_home / ".claude").mkdir(parents=True)
+        write(
+            fake_home / ".claude/CLAUDE.md",
+            "# global\nRun `missing-binary` before work.\n",
+        )
+        write(
+            self.repo / "CLAUDE.md",
+            (
+                "# project\n"
+                "See [guide](docs/guide.md).\n"
+                "Also run `scripts/ghost.sh`.\n"
+                "\n"
+                "## Plan Mode\n"
+                "Enter plan mode for non-trivial tasks.\n"
+                "Re-plan when things go sideways.\n"
+            ),
+        )
+        write(
+            self.repo / "AGENTS.md",
+            (
+                "## Plan Mode\n"
+                "Enter plan mode for non-trivial tasks.\n"
+                "Re-plan when things go sideways.\n"
+            ),
+        )
+        write(self.repo / "docs/guide.md", "# guide\n")
+
+        data = self.run_helper(env_overrides={"HOME": str(fake_home)})
+
+        tiers = {entry["tier"] for entry in data["scope"]}
+        self.assertEqual(tiers, {1, 2, 3})
+        dead_refs = {e["reference"] for e in data["dead_references"]}
+        self.assertIn("scripts/ghost.sh", dead_refs)
+        self.assertIn("missing-binary", dead_refs)
+        self.assertEqual(len(data["duplicate_blocks"]), 1)
+        self.assertGreater(data["token_baseline"]["total"], 0)
+        self.assertIn("1", data["token_baseline"]["per_tier"])
+
