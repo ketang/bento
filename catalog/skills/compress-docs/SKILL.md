@@ -131,3 +131,110 @@ After writing the plan, tell the user:
 > any file section you want to exclude, then tell me to apply it."
 
 Do not apply anything yet. Wait for explicit approval.
+
+## Phase 3: Review gate
+
+Wait for the user to say "apply" (or similar) after editing the plan.
+When they do, re-read the plan file to capture any edits — the user may
+have ticked checkboxes, added `<!-- skip -->` markers, or edited
+individual file sections.
+
+## Phase 4: Apply
+
+### Step 1: Parse approval state
+
+Read the plan file. For each tier heading, find the corresponding
+checkbox in the Approval section:
+
+- `- [x] Apply Tier N` → tier N is approved
+- `- [ ] Apply Tier N` → tier N is skipped entirely
+
+Within each approved tier, for each `### /abs/path/...` file heading,
+check whether `<!-- skip -->` appears on or immediately after the
+heading line. If so, skip that file.
+
+### Step 2: Pre-flight drift check
+
+For every DELETE and REWRITE in the approved, non-skipped file sections,
+verify the "before" text from the diff still matches the current file
+content exactly. Any mismatch aborts the entire run.
+
+If any file has drifted, report:
+
+> "Apply aborted: the following files were edited after the plan was
+> written and no longer match the proposed changes. Regenerate the plan
+> to pick up the new content:
+> - <file 1>
+> - <file 2>
+> ..."
+
+Do not apply anything partially.
+
+### Step 3: Apply tier by tier
+
+Process tiers in order 1 → 2 → 3 → 4. Within each tier, process files
+in path-sorted order. For each file:
+
+1. For each DELETE or REWRITE in the file section, apply it using the
+   Edit tool with the diff's "before" as `old_string` and the diff's
+   "after" as `new_string` (empty string for DELETEs).
+2. After all single-file edits land, measure the new token count.
+   Compare against the plan's projection. If the actual count differs
+   by more than ±5%, record a soft warning for the post-apply report.
+3. MERGE operations run last within the tier. For each MERGE, insert
+   the content into the target file at the specified location, then
+   delete the content from the source file. If the target file is in a
+   higher tier, defer the merge to when that tier runs.
+
+### Step 4: Conditional backups
+
+For every file touched in any tier, run:
+
+```bash
+git -C <file_parent_dir> ls-files --error-unmatch <file_basename>
+```
+
+If exit code is 0, the file is tracked by some git repo — skip the
+backup. If exit code is non-zero, the file is not under version control;
+before applying any edits to it, copy it to
+`<file>.pre-compress-<timestamp>.bak` where `<timestamp>` is
+`YYYYMMDD-HHMMSS` in UTC.
+
+This check runs per-file, not per-tier. Backups are created before any
+edit lands on a given file, so the user has a restore path for
+non-versioned files.
+
+### Step 5: Write the post-apply report
+
+After all approved tiers finish, write
+`docs/specs/YYYY-MM-DD-compress-docs-report.md` containing:
+
+- Actual baseline token count (from the plan)
+- Actual post-apply token count (re-measured from disk)
+- Total delta and percentage
+- Per-file table: planned delta vs. actual delta
+- Any ±5% soft warnings
+- Any tiers that were skipped
+- Any files that were skipped via `<!-- skip -->`
+- Paths of any backup files written
+- Any drift aborts (if partial progress was made, though the skill
+  should not make partial progress)
+
+Tell the user:
+
+> "Applied. Report written to `<path>`. Review the diff with your
+> normal git workflow and commit when you're satisfied. Non-versioned
+> files have backups at `<path>.pre-compress-<timestamp>.bak` — delete
+> those once you've verified the edits."
+
+### Hard rules
+
+1. Never commit, stage, or push. The skill leaves the working tree
+   dirty.
+2. Never touch files outside the discovered scope.
+3. Never rewrite source code files or non-markdown content.
+4. Never apply without an explicit user "apply" signal after the plan
+   is written.
+5. Never skip the drift check.
+6. Never apply tier 3 or tier 4 edits without running the per-file
+   backup check first.
