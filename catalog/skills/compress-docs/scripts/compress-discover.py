@@ -12,6 +12,7 @@ import argparse
 import json
 import os
 import re
+import shutil
 import sys
 from pathlib import Path
 
@@ -121,6 +122,73 @@ def discover_tier_4(home: Path, repo_root: Path) -> list[Path]:
     return sorted(p.resolve() for p in memory_dir.glob("*.md") if p.is_file())
 
 
+COMMAND_NAME_RE = re.compile(r"^[a-zA-Z][a-zA-Z0-9_.-]*$")
+
+
+def classify_backtick_content(content: str) -> str:
+    if "/" in content or content.endswith(".md") or content.endswith(".py"):
+        return "path"
+    if COMMAND_NAME_RE.match(content):
+        return "command"
+    return "other"
+
+
+def iter_references_with_lines(text: str) -> list[tuple[int, str, str]]:
+    results: list[tuple[int, str, str]] = []
+    for lineno, line in enumerate(text.splitlines(), start=1):
+        for match in MARKDOWN_LINK_RE.finditer(line):
+            results.append((lineno, match.group(1), "path"))
+        for match in BACKTICK_PATH_RE.finditer(line):
+            content = match.group(1).strip()
+            kind = classify_backtick_content(content)
+            if kind == "other":
+                continue
+            results.append((lineno, content, kind))
+    return results
+
+
+def detect_dead_references(
+    scope: list[dict], repo_root: Path
+) -> list[dict]:
+    dead: list[dict] = []
+    for entry in scope:
+        path = Path(entry["path"])
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for lineno, ref, kind in iter_references_with_lines(text):
+            if ref.startswith(("http://", "https://", "mailto:", "#")):
+                continue
+            resolution = "present"
+            if kind == "path":
+                ref_clean = ref.split("#", 1)[0].split("?", 1)[0]
+                if not ref_clean:
+                    continue
+                candidate = (path.parent / ref_clean).resolve()
+                try:
+                    candidate.relative_to(repo_root)
+                except ValueError:
+                    resolution = "external"
+                else:
+                    if not candidate.exists():
+                        resolution = "missing"
+            elif kind == "command":
+                if shutil.which(ref) is None and not (repo_root / "scripts" / ref).exists():
+                    resolution = "missing"
+            if resolution == "missing":
+                dead.append(
+                    {
+                        "source": str(path),
+                        "line": lineno,
+                        "reference": ref,
+                        "kind": kind,
+                        "resolution": "missing",
+                    }
+                )
+    return dead
+
+
 def build_scope_entries(paths: list[Path], tier: int) -> list[dict]:
     entries: list[dict] = []
     for path in paths:
@@ -165,7 +233,7 @@ def main(argv: list[str]) -> int:
 
     output = {
         "scope": scope,
-        "dead_references": [],
+        "dead_references": detect_dead_references(scope, repo_root),
         "duplicate_blocks": [],
         "orphans": [],
         "token_baseline": {

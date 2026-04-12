@@ -154,3 +154,34 @@ class CompressDiscoverTest(unittest.TestCase):
         tiers = {entry["tier"] for entry in data["scope"]}
         self.assertNotIn(3, tiers)
         self.assertNotIn(4, tiers)
+
+    def test_dead_references_flags_missing_paths_and_commands(self) -> None:
+        write(
+            self.repo / "CLAUDE.md",
+            (
+                "Run `scripts/old-tool.sh` to verify.\n"
+                "Also `scripts/build-plugins` is fine.\n"
+                "Use `definitely-not-a-command` for deploys.\n"
+                "See [missing](docs/missing.md) and [present](docs/present.md).\n"
+            ),
+        )
+        write(self.repo / "scripts/build-plugins", "#!/bin/sh\n")
+        (self.repo / "scripts/build-plugins").chmod(0o755)
+        write(self.repo / "docs/present.md", "I exist.\n")
+
+        data = self.run_helper()
+
+        missing_refs = {
+            entry["reference"]
+            for entry in data["dead_references"]
+            if entry["resolution"] == "missing"
+        }
+        self.assertIn("scripts/old-tool.sh", missing_refs)
+        self.assertIn("docs/missing.md", missing_refs)
+        self.assertIn("definitely-not-a-command", missing_refs)
+        self.assertNotIn("scripts/build-plugins", missing_refs)
+        self.assertNotIn("docs/present.md", missing_refs)
+        for entry in data["dead_references"]:
+            self.assertIn("source", entry)
+            self.assertIn("line", entry)
+            self.assertIn("kind", entry)
