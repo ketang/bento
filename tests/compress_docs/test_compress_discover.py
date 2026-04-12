@@ -212,3 +212,14 @@ class CompressDiscoverTest(unittest.TestCase):
 
         data = self.run_helper()
         self.assertEqual(data["duplicate_blocks"], [])
+
+    def test_orphans_flag_nested_claude_md_not_referenced_from_anywhere(self) -> None:
+        write(self.repo / "CLAUDE.md", "See [nested](subdir/CLAUDE.md).\n")
+        write(self.repo / "subdir/CLAUDE.md", "# referenced nested\n")
+        write(self.repo / "unreferenced/CLAUDE.md", "# orphan nested\n")
+
+        data = self.run_helper()
+        self.assertEqual(
+            data["orphans"],
+            [str(self.repo / "unreferenced/CLAUDE.md")],
+        )

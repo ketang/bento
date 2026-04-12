@@ -237,6 +237,25 @@ def detect_duplicate_blocks(scope: list[dict]) -> list[dict]:
     return blocks
 
 
+def detect_orphans(tier_1_paths: list[Path], repo_root: Path) -> list[str]:
+    top_level = {repo_root / name for name in TIER_1_TOP_LEVEL_NAMES}
+    top_level = {p.resolve() for p in top_level if p.is_file()}
+    nested = [p for p in tier_1_paths if p not in top_level]
+    if not nested:
+        return []
+    referenced: set[Path] = set()
+    for source in tier_1_paths:
+        try:
+            text = source.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for ref in extract_references(text):
+            resolved = resolve_reference(ref, source, repo_root)
+            if resolved is not None:
+                referenced.add(resolved)
+    return sorted(str(p) for p in nested if p not in referenced)
+
+
 def build_scope_entries(paths: list[Path], tier: int) -> list[dict]:
     entries: list[dict] = []
     for path in paths:
@@ -283,7 +302,7 @@ def main(argv: list[str]) -> int:
         "scope": scope,
         "dead_references": detect_dead_references(scope, repo_root),
         "duplicate_blocks": detect_duplicate_blocks(scope),
-        "orphans": [],
+        "orphans": detect_orphans(tier_1_paths, repo_root),
         "token_baseline": {
             "per_file": {entry["path"]: entry["tokens_char4"] for entry in scope},
             "per_tier": per_tier,
