@@ -9,6 +9,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import re
@@ -189,6 +190,53 @@ def detect_dead_references(
     return dead
 
 
+def normalize_paragraph(lines: list[str]) -> str:
+    return "\n".join(" ".join(line.split()) for line in lines)
+
+
+def iter_paragraphs(text: str) -> list[tuple[int, int, list[str]]]:
+    paragraphs: list[tuple[int, int, list[str]]] = []
+    current: list[str] = []
+    start_line = 0
+    for lineno, raw_line in enumerate(text.splitlines(), start=1):
+        if raw_line.strip() == "":
+            if current:
+                paragraphs.append((start_line, lineno - 1, current))
+                current = []
+            start_line = 0
+        else:
+            if not current:
+                start_line = lineno
+            current.append(raw_line)
+    if current:
+        paragraphs.append((start_line, start_line + len(current) - 1, current))
+    return paragraphs
+
+
+def detect_duplicate_blocks(scope: list[dict]) -> list[dict]:
+    hash_to_occurrences: dict[str, list[dict]] = {}
+    for entry in scope:
+        path = Path(entry["path"])
+        try:
+            text = path.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+        for start, end, lines in iter_paragraphs(text):
+            if len(lines) < MIN_DUPLICATE_BLOCK_LINES:
+                continue
+            normalized = normalize_paragraph(lines)
+            digest = hashlib.sha1(normalized.encode("utf-8")).hexdigest()
+            hash_to_occurrences.setdefault(digest, []).append(
+                {"path": str(path), "start": start, "end": end}
+            )
+    blocks: list[dict] = []
+    for digest, occurrences in hash_to_occurrences.items():
+        if len(occurrences) < 2:
+            continue
+        blocks.append({"hash": digest, "occurrences": occurrences})
+    return blocks
+
+
 def build_scope_entries(paths: list[Path], tier: int) -> list[dict]:
     entries: list[dict] = []
     for path in paths:
@@ -234,7 +282,7 @@ def main(argv: list[str]) -> int:
     output = {
         "scope": scope,
         "dead_references": detect_dead_references(scope, repo_root),
-        "duplicate_blocks": [],
+        "duplicate_blocks": detect_duplicate_blocks(scope),
         "orphans": [],
         "token_baseline": {
             "per_file": {entry["path"]: entry["tokens_char4"] for entry in scope},

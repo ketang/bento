@@ -185,3 +185,30 @@ class CompressDiscoverTest(unittest.TestCase):
             self.assertIn("source", entry)
             self.assertIn("line", entry)
             self.assertIn("kind", entry)
+
+    def test_duplicate_blocks_flag_identical_paragraphs_across_files(self) -> None:
+        shared = (
+            "## Plan Mode Default\n"
+            "Enter plan mode for any non-trivial task.\n"
+            "Re-plan if something goes sideways.\n"
+        )
+        write(self.repo / "CLAUDE.md", shared + "\nUnique to CLAUDE.md.\n")
+        write(self.repo / "AGENTS.md", "Unique to AGENTS.md.\n\n" + shared)
+
+        data = self.run_helper()
+
+        self.assertEqual(len(data["duplicate_blocks"]), 1)
+        block = data["duplicate_blocks"][0]
+        occurrence_paths = sorted(occ["path"] for occ in block["occurrences"])
+        self.assertEqual(
+            occurrence_paths,
+            sorted(str(self.repo / name) for name in ["AGENTS.md", "CLAUDE.md"]),
+        )
+
+    def test_duplicate_blocks_ignore_short_paragraphs(self) -> None:
+        short_block = "short.\nshort.\n"
+        write(self.repo / "CLAUDE.md", short_block + "\nother\n")
+        write(self.repo / "AGENTS.md", short_block + "\nstuff\n")
+
+        data = self.run_helper()
+        self.assertEqual(data["duplicate_blocks"], [])
