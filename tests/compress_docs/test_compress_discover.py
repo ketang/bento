@@ -116,3 +116,41 @@ class CompressDiscoverTest(unittest.TestCase):
         data = self.run_helper()
         tier_2_paths = [entry["path"] for entry in data["scope"] if entry["tier"] == 2]
         self.assertEqual(tier_2_paths, [])
+
+    def test_tier_3_uses_user_claude_md_from_home(self) -> None:
+        fake_home = Path(self.temp_dir.name) / "home"
+        (fake_home / ".claude").mkdir(parents=True)
+        write(fake_home / ".claude/CLAUDE.md", "# global\n")
+
+        data = self.run_helper(env_overrides={"HOME": str(fake_home)})
+
+        tier_3_paths = [entry["path"] for entry in data["scope"] if entry["tier"] == 3]
+        self.assertEqual(tier_3_paths, [str(fake_home / ".claude/CLAUDE.md")])
+
+    def test_tier_4_reads_memory_files_under_project_slug(self) -> None:
+        fake_home = Path(self.temp_dir.name) / "home"
+        slug = str(self.repo).replace("/", "-").lstrip("-")
+        memory_dir = fake_home / ".claude/projects" / slug / "memory"
+        memory_dir.mkdir(parents=True)
+        write(memory_dir / "MEMORY.md", "# memory index\n")
+        write(memory_dir / "user_profile.md", "# user\n")
+
+        data = self.run_helper(env_overrides={"HOME": str(fake_home)})
+
+        tier_4_paths = sorted(
+            entry["path"] for entry in data["scope"] if entry["tier"] == 4
+        )
+        self.assertEqual(
+            tier_4_paths,
+            sorted(
+                str(memory_dir / name) for name in ["MEMORY.md", "user_profile.md"]
+            ),
+        )
+
+    def test_missing_tier_3_and_tier_4_does_not_crash(self) -> None:
+        fake_home = Path(self.temp_dir.name) / "empty_home"
+        fake_home.mkdir()
+        data = self.run_helper(env_overrides={"HOME": str(fake_home)})
+        tiers = {entry["tier"] for entry in data["scope"]}
+        self.assertNotIn(3, tiers)
+        self.assertNotIn(4, tiers)

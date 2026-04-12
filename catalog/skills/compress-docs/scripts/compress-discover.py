@@ -97,6 +97,30 @@ def discover_tier_2(tier_1_paths: list[Path], repo_root: Path) -> list[Path]:
     return sorted(tier_2)
 
 
+TIER_3_USER_GLOBAL = ".claude/CLAUDE.md"
+TIER_4_MEMORY_DIR = ".claude/projects"
+TIER_4_MEMORY_SUBDIR = "memory"
+
+
+def discover_tier_3(home: Path) -> list[Path]:
+    candidate = home / TIER_3_USER_GLOBAL
+    if candidate.is_file():
+        return [candidate.resolve()]
+    return []
+
+
+def project_memory_slug(repo_root: Path) -> str:
+    return str(repo_root).replace("/", "-").lstrip("-")
+
+
+def discover_tier_4(home: Path, repo_root: Path) -> list[Path]:
+    slug = project_memory_slug(repo_root)
+    memory_dir = home / TIER_4_MEMORY_DIR / slug / TIER_4_MEMORY_SUBDIR
+    if not memory_dir.is_dir():
+        return []
+    return sorted(p.resolve() for p in memory_dir.glob("*.md") if p.is_file())
+
+
 def build_scope_entries(paths: list[Path], tier: int) -> list[dict]:
     entries: list[dict] = []
     for path in paths:
@@ -122,9 +146,17 @@ def main(argv: list[str]) -> int:
 
     repo_root = Path(args.repo_root).resolve()
 
+    home = Path(os.environ.get("HOME", str(Path.home()))).resolve()
     tier_1_paths = discover_tier_1(repo_root)
     tier_2_paths = discover_tier_2(tier_1_paths, repo_root)
-    scope = build_scope_entries(tier_1_paths, tier=1) + build_scope_entries(tier_2_paths, tier=2)
+    tier_3_paths = discover_tier_3(home)
+    tier_4_paths = discover_tier_4(home, repo_root)
+    scope = (
+        build_scope_entries(tier_1_paths, tier=1)
+        + build_scope_entries(tier_2_paths, tier=2)
+        + build_scope_entries(tier_3_paths, tier=3)
+        + build_scope_entries(tier_4_paths, tier=4)
+    )
 
     per_tier: dict[str, int] = {}
     for entry in scope:
