@@ -1,13 +1,6 @@
 ---
 name: launch-work
-description: |
-  Use when you anticipate editing any file in the repo. Hard triggers that
-  override judgment: invoke this skill before running any Edit, Write, or
-  file-modifying Bash command; if the working tree is already dirty from changes
-  made in the current session, halt immediately and apply this skill before doing
-  anything else. Claims tracker-backed work when required, creates a dedicated
-  branch and linked worktree, verifies the working location deterministically,
-  and bootstraps the environment before coding.
+description: Hard trigger — invoke BEFORE any Edit, Write, or file-modifying Bash command; if the tree is already dirty, halt and apply this first. Claims work, creates branch+worktree, bootstraps env.
 recommended_model: mid
 ---
 

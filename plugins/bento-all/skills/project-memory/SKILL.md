@@ -1,10 +1,6 @@
 ---
 name: project-memory
-description: |
-  Use when a repo maintains durable knowledge files for future sessions.
-  Captures factual and procedural knowledge, logs deterministic and
-  infrastructure errors appropriately, and keeps the repo's documented memory
-  structure clean over time.
+description: Use when a repo maintains durable knowledge files for future sessions — capture facts, log errors, keep the documented memory structure clean.
 recommended_model: low
 ---
 

@@ -9,6 +9,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 STATE_SCRIPT = REPO_ROOT / "catalog/skills/swarm/scripts/swarm-state.py"
+STATE_ROOT = REPO_ROOT / ".agent-state" / "swarm" / "codex"
 CODEX_TIMEOUT_SECONDS = 45
 
 
@@ -71,7 +72,7 @@ class SwarmCodexIntegrationTest(unittest.TestCase):
                 text=True,
             ).stdout
         )
-        self.assertEqual(state_payload["state_root"], f"/tmp/codex-swarm/{thread_id}")
+        self.assertEqual(state_payload["state_root"], str(STATE_ROOT / thread_id))
 
         resumed = self.run_codex(
             "exec",

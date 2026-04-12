@@ -6,8 +6,12 @@ import os
 import sys
 from pathlib import Path
 
+from git_state import detect_checkout_root
 
-CODEX_STATE_ROOT = Path("/tmp/codex-swarm")
+
+SWARM_STATE_DIR = ".agent-state"
+SWARM_SKILL_DIR = "swarm"
+CODEX_RUNTIME_DIR = "codex"
 
 
 def parse_args() -> argparse.Namespace:
@@ -33,13 +37,15 @@ def codex_thread_id(args: argparse.Namespace) -> str:
 
 
 def codex_state(thread_id: str) -> dict[str, object]:
-    state_root = CODEX_STATE_ROOT / thread_id
+    checkout_root = detect_checkout_root(Path.cwd())
+    state_root = checkout_root / SWARM_STATE_DIR / SWARM_SKILL_DIR / CODEX_RUNTIME_DIR / thread_id
     continue_file = state_root / "continue.txt"
     handoff_file = state_root / "handoff.md"
     state_found = state_root.exists()
     return {
         "runtime": "codex",
         "thread_id": thread_id,
+        "checkout_root": str(checkout_root),
         "state_root": str(state_root),
         "continue_file": str(continue_file),
         "handoff_file": str(handoff_file),

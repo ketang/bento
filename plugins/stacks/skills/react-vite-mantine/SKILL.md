@@ -1,10 +1,6 @@
 ---
 name: react-vite-mantine
-description: |
-  Use when working in React/TypeScript/Vite projects that use Mantine. Starts
-  by discovering the repo's actual frontend verification commands, component
-  organization, theme conventions, and test helpers before applying stack
-  conventions.
+description: Use in React/TypeScript/Vite + Mantine projects — discover repo verification commands, component organization, and theme conventions before edits.
 recommended_model: mid
 ---
 
