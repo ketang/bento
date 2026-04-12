@@ -1,11 +1,13 @@
 import json
 import os
 import subprocess
+import tempfile
 import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "catalog/skills/swarm/scripts/swarm-state.py"
+STATE_ROOT = REPO_ROOT / ".agent-state" / "swarm" / "codex"
 
 
 class SwarmStateTest(unittest.TestCase):
@@ -14,10 +16,11 @@ class SwarmStateTest(unittest.TestCase):
         *args: str,
         env: dict[str, str] | None = None,
         check: bool = True,
+        cwd: Path | None = None,
     ):
         return subprocess.run(
             [str(SCRIPT), *args],
-            cwd=REPO_ROOT,
+            cwd=cwd or REPO_ROOT,
             check=check,
             capture_output=True,
             text=True,
@@ -34,9 +37,10 @@ class SwarmStateTest(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["thread_id"], thread_id)
-        self.assertEqual(payload["state_root"], f"/tmp/codex-swarm/{thread_id}")
-        self.assertEqual(payload["continue_file"], f"/tmp/codex-swarm/{thread_id}/continue.txt")
-        self.assertEqual(payload["handoff_file"], f"/tmp/codex-swarm/{thread_id}/handoff.md")
+        self.assertEqual(payload["checkout_root"], str(REPO_ROOT))
+        self.assertEqual(payload["state_root"], str(STATE_ROOT / thread_id))
+        self.assertEqual(payload["continue_file"], str(STATE_ROOT / thread_id / "continue.txt"))
+        self.assertEqual(payload["handoff_file"], str(STATE_ROOT / thread_id / "handoff.md"))
         self.assertTrue(payload["ephemeral"])
         self.assertFalse(payload["state_found"])
         self.assertTrue(payload["recompute_required"])
@@ -47,19 +51,34 @@ class SwarmStateTest(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["thread_id"], "override-thread")
-        self.assertEqual(payload["state_root"], "/tmp/codex-swarm/override-thread")
+        self.assertEqual(payload["state_root"], str(STATE_ROOT / "override-thread"))
 
-    def test_codex_state_reports_existing_tmp_state(self) -> None:
+    def test_codex_state_reports_existing_repo_state(self) -> None:
         thread_id = "existing-thread"
-        state_root = Path("/tmp/codex-swarm") / thread_id
-        state_root.mkdir(parents=True, exist_ok=True)
-        try:
-            result = self.run_state("--runtime", "codex", "--thread-id", thread_id)
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_repo = Path(temp_dir_name) / "repo"
+            temp_repo.mkdir()
+            subprocess.run(
+                ["git", "init", "-b", "main"],
+                cwd=temp_repo,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            state_root = temp_repo / ".agent-state" / "swarm" / "codex" / thread_id
+            state_root.mkdir(parents=True, exist_ok=True)
+            result = self.run_state(
+                "--runtime",
+                "codex",
+                "--thread-id",
+                thread_id,
+                cwd=temp_repo,
+            )
             payload = json.loads(result.stdout)
-        finally:
-            state_root.rmdir()
 
         self.assertTrue(payload["ok"])
+        self.assertEqual(payload["checkout_root"], str(temp_repo))
+        self.assertEqual(payload["state_root"], str(state_root))
         self.assertTrue(payload["state_found"])
         self.assertFalse(payload["recompute_required"])
 
