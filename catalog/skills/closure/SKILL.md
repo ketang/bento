@@ -150,6 +150,8 @@ tracked file with uncommitted changes.  Untracked files are excluded.
     to the tracker workflow skill, or leave everything unchanged. If only one
     action is justified, present that recommendation and ask for explicit
     confirmation before applying it.
+11. End at the repository root on the detected primary branch rather than in a
+    feature-branch worktree.
 
 ## Handoffs
 
@@ -173,7 +175,8 @@ review. Tracker-specific skills own the actual mutation.
 Produce output progressively while scanning and cleaning. Narrate findings by
 phase and ground recommendations in the helper output rather than vague git
 intuition. When the scan remains in dry-run mode, end with a concise, explicit
-next-step choice over an open-ended summary.
+next-step choice over an open-ended summary. Confirm the final repo-root,
+primary-branch shell state.
 
 ## Safety
 
