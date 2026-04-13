@@ -54,6 +54,12 @@ target branch and worktree path are confirmed correct.
 4. Determine the target branch name and linked-worktree path from repo docs.
    - If the repo does not define a different root, use
      `~/.local/share/worktrees/<repo>/<branch>`.
+   - Treat that root as the default because it is durable, user-scoped, and
+     outside both the checkout and common clutter zones.
+   - Do not improvise a location under `/tmp`, `~`, the project parent, or the
+     checked-out repository.
+   - If repo docs override the root, prefer another dedicated durable worktree
+     directory, not an ad hoc "nearby" folder.
 5. Preview the setup with:
 
 ```bash
@@ -86,6 +92,9 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
   isolation.
 - Do not place linked worktrees under `/tmp` unless the repo explicitly
   documents that as safe and durable enough for the task.
+- Do not place linked worktrees directly under the user's home directory, the
+  project parent directory, or inside the checked-out repository unless the
+  repo explicitly documents that convention.
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
 
 ## Stop Conditions

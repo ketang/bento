@@ -88,10 +88,14 @@ This policy is shared across agent runtimes. It keeps linked worktrees:
 
 - persistent across reboots
 - outside `/tmp`, which is reserved for disposable scratch data
+- outside the top level of the user's home directory or the project parent,
+  which avoids noisy ad hoc checkouts
 - outside the checked-out repository, which avoids nested working-copy clutter
 
 Repo-specific docs may override this root when they have a stronger local
 convention, but runtime-specific skills should not invent different defaults.
+Those overrides should still use a dedicated, durable, user-scoped worktree
+root rather than an arbitrary nearby directory.
 
 ## Skill implementation pattern
 

@@ -47,8 +47,12 @@ the location, use this shared cross-agent default:
 ```
 
 This root is for durable linked worktrees across agent runtimes. Do not create
-linked worktrees under `/tmp` or inside the checked-out repository unless the
-project explicitly documents a different convention.
+linked worktrees under `/tmp`, at the top level of the user's home directory,
+inside the checked-out repository, or as siblings directly under the project
+folder unless the project explicitly documents a different convention.
+
+When a project overrides this root, it should still point to a dedicated,
+durable, user-scoped worktree directory rather than an ad hoc convenient path.
 
 Use `/tmp` only for ephemeral scratch data or continuation state that can be
 recomputed after a reboot or context reset.
