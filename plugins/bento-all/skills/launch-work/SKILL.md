@@ -80,7 +80,11 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 
 8. Confirm implementation will happen in that linked worktree, not in the
    primary checkout.
-9. If the fresh worktree cannot resolve dependencies, run the repo's documented
+9. Before editing implementation code for a behavioral change with feasible
+   automated coverage, identify the relevant verification target and write or
+   update a test so it fails against the current behavior. Then implement the
+   change, make the test pass, and run the relevant verification gates.
+10. If the fresh worktree cannot resolve dependencies, run the repo's documented
    install/bootstrap step before debugging build failures.
 
 ## Non-Negotiable Rules
@@ -90,12 +94,17 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 - Do not implement directly on the detected primary branch.
 - Do not implement from the primary checkout when the repo expects worktree
   isolation.
+- For behavioral changes with feasible automated coverage, use a red/green
+  workflow: write or update a test that fails before implementing the change,
+  then make it pass.
 - Do not place linked worktrees under `/tmp` unless the repo explicitly
   documents that as safe and durable enough for the task.
 - Do not place linked worktrees directly under the user's home directory, the
   project parent directory, or inside the checked-out repository unless the
   repo explicitly documents that convention.
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
+- If automated coverage is not feasible, state that explicitly and use the
+  closest available verification path.
 
 ## Stop Conditions
 

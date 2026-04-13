@@ -28,7 +28,7 @@
     {
       "name": "stacks",
       "description": "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL",
-      "version": "1.0.2",
+      "version": "1.0.3",
       "source": "./plugins/stacks",
       "author": {
         "name": "Ketan Gangatirkar"
