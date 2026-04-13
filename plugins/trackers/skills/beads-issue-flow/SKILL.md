@@ -52,7 +52,8 @@ Use this skill only when the project documents Beads as the issue tracker.
 
 If the tracker keeps repository-local state, run Beads commands from the
 primary checkout rather than from a linked worktree unless the project
-explicitly documents worktree-safe usage.
+explicitly documents worktree-safe usage. This tracker-state mutation does not
+by itself count as implementation work or require a feature branch.
 
 ## Common Commands
 

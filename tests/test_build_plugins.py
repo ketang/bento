@@ -81,7 +81,7 @@ class BuildPluginsTest(unittest.TestCase):
 
         claude_marketplace = json.loads((self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         self.assertEqual(claude_marketplace["plugins"][1]["name"], "trackers")
-        self.assertEqual(claude_marketplace["plugins"][1]["version"], "1.0.2")
+        self.assertEqual(claude_marketplace["plugins"][1]["version"], versions["trackers"])
         self.assertEqual(claude_marketplace["plugins"][2]["source"], "./plugins/stacks")
         self.assertEqual(claude_marketplace["plugins"][3]["name"], "session-id")
 

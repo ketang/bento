@@ -1,6 +1,6 @@
 ---
 name: launch-work
-description: Hard trigger — invoke BEFORE any Edit, Write, or file-modifying Bash command; if the tree is already dirty, halt and apply this first. Claims work, creates branch+worktree, bootstraps env.
+description: Hard trigger — invoke before implementation edits or file-modifying Bash commands that change code or repo-managed artifacts. Do not use this skill for tracker-only mutations such as creating, claiming, updating, or closing issues. If the tree is already dirty from implementation work in the current session, halt and apply this first. Claims work, creates branch+worktree, bootstraps env.
 recommended_model: mid
 ---
 
@@ -15,7 +15,8 @@ is only partially documented or spans multiple tools.
 
 Use this skill when a task has been approved for implementation and the repo's
 branch, worktree, and claim rules are documented clearly enough to start work
-safely.
+safely. Do not invoke it for tracker-only administration with no planned code
+or repo-artifact edits.
 
 ## Inputs
 
@@ -49,9 +50,12 @@ target branch and worktree path are confirmed correct.
    - If the repo uses Beads, use the `beads-issue-flow` skill.
    - If the repo uses GitHub Issues, use the `github-issue-flow` skill.
    - If the work is not tracker-backed, record that explicitly and continue.
-3. If the repo requires claiming active work, inspect and claim it before
+3. If the current task is only to create, inspect, claim, update, or close a
+   tracker item, follow the tracker skill directly and do not create a branch
+   or linked worktree unless the repo explicitly requires that workflow.
+4. If the repo requires claiming active work, inspect and claim it before
    implementation begins.
-4. Determine the target branch name and linked-worktree path from repo docs.
+5. Determine the target branch name and linked-worktree path from repo docs.
    - If the repo does not define a different root, use
      `~/.local/share/worktrees/<repo>/<branch>`.
    - Treat that root as the default because it is durable, user-scoped, and
@@ -60,32 +64,32 @@ target branch and worktree path are confirmed correct.
      checked-out repository.
    - If repo docs override the root, prefer another dedicated durable worktree
      directory, not an ad hoc "nearby" folder.
-5. Preview the setup with:
+6. Preview the setup with:
 
 ```bash
 launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path>
 ```
 
-6. If the preview is correct, create the linked worktree with:
+7. If the preview is correct, create the linked worktree with:
 
 ```bash
 launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path> --apply
 ```
 
-7. Enter the linked worktree and verify both location and branch:
+8. Enter the linked worktree and verify both location and branch:
 
 ```bash
 launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree
 ```
 
-8. Confirm implementation will happen in that linked worktree, not in the
+9. Confirm implementation will happen in that linked worktree, not in the
    primary checkout.
-9. Before editing implementation code for a behavioral change with feasible
-   automated coverage, identify the relevant verification target and write or
-   update a test so it fails against the current behavior. Then implement the
-   change, make the test pass, and run the relevant verification gates.
-10. If the fresh worktree cannot resolve dependencies, run the repo's documented
-   install/bootstrap step before debugging build failures.
+10. Before editing implementation code for a behavioral change with feasible
+    automated coverage, identify the relevant verification target and write or
+    update a test so it fails against the current behavior. Then implement the
+    change, make the test pass, and run the relevant verification gates.
+11. If the fresh worktree cannot resolve dependencies, run the repo's documented
+    install/bootstrap step before debugging build failures.
 
 ## Non-Negotiable Rules
 
@@ -94,6 +98,8 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 - Do not implement directly on the detected primary branch.
 - Do not implement from the primary checkout when the repo expects worktree
   isolation.
+- Tracker-only mutations are not implementation and do not require
+  branch/worktree setup unless the repo explicitly requires it.
 - For behavioral changes with feasible automated coverage, use a red/green
   workflow: write or update a test that fails before implementing the change,
   then make it pass.
