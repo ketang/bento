@@ -70,6 +70,10 @@ golangci-lint run
 Run migration verification or database integration tests against a real database
 when the change touches schema, queries, fixtures, or database behavior.
 
+For behavioral changes with feasible automated coverage, write or update the
+relevant test so it fails before implementing the change, then make it pass
+before running the broader verification gates.
+
 ## Guardrails
 
 - Do not invent new Postgres env var or DSN names when the repo already has a
@@ -79,3 +83,5 @@ when the change touches schema, queries, fixtures, or database behavior.
   directly; check the repo's wrappers first.
 - Do not land schema changes without matching fixture, seed, or test updates
   when the repo depends on them.
+- If automated coverage is not feasible, state that explicitly and use the
+  closest available verification path.

@@ -43,7 +43,8 @@ commands in this skill as a fallback, not as the default source of truth.
 ## Testing
 
 - Maintain the repo's frontend coverage expectations when they exist
-- Add or update component tests when behavior changes
+- For behavioral changes with feasible automated coverage, write or update a
+  component test so it fails before implementing the change, then make it pass
 - Use the repo's shared render helpers when the component depends on Mantine,
   routing, state, or app-level providers
 - If the repo uses visual, snapshot, or accessibility checks, keep those in the
@@ -71,3 +72,5 @@ component behavior, state flow, or typed props.
   is already organized.
 - Do not skip provider-aware tests when the component depends on theme, routing,
   or app state.
+- If automated frontend coverage is not feasible, state that explicitly and use
+  the closest available verification path.
