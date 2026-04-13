@@ -40,7 +40,10 @@ Use runtime-scoped state rooted at:
 These state roots are for ephemeral continuation data, not for linked
 worktrees. Worktree creation should follow the project's shared worktree
 convention, defaulting to `~/.local/share/worktrees/<repo>/<branch>` when the
-repo does not document a different root.
+repo does not document a different root. Do not place linked worktrees under
+`/tmp`, at the top level of the user's home directory, in the project parent,
+or inside the checked-out repository unless the project explicitly documents a
+different durable location.
 
 ## File Formats
 

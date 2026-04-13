@@ -62,6 +62,9 @@ Before triage, read the project's local instructions and determine:
 - how to list, inspect, and claim ready tasks
 - which agent runtime is orchestrating the swarm and its teammate launch model
 - how branches and worktrees are named
+- where linked worktrees should live; default to
+  `~/.local/share/worktrees/<repo>/<branch>` when the repo does not document a
+  different durable root
 - which quality gates apply per task and after all merges
 - whether a pre-completion checklist or skill is required
 - whether the tracker exposes explicit task dependencies
@@ -127,6 +130,12 @@ For each approved task: exactly one branch, exactly one worktree, and the
 prompt must include task details, expected scope, overlap risks, and required
 quality gates. Require the teammate to stop and report back if the task is
 broader or more coupled than expected.
+
+Teammate instructions must treat worktree placement as part of setup, not an
+implementation detail. Require a durable dedicated root and reject placements
+under `/tmp`, the top level of the user's home directory, the project parent,
+or inside the checked-out repository unless the project explicitly documents
+one of those locations.
 
 The teammate must verify working directory and branch before any edits:
 
