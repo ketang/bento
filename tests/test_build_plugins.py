@@ -81,7 +81,7 @@ class BuildPluginsTest(unittest.TestCase):
 
         claude_marketplace = json.loads((self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         self.assertEqual(claude_marketplace["plugins"][1]["name"], "trackers")
-        self.assertEqual(claude_marketplace["plugins"][1]["version"], versions["trackers"])
+        self.assertEqual(claude_marketplace["plugins"][1]["version"], "1.0.2")
         self.assertEqual(claude_marketplace["plugins"][2]["source"], "./plugins/stacks")
         self.assertEqual(claude_marketplace["plugins"][3]["name"], "session-id")
 
@@ -108,8 +108,7 @@ class BuildPluginsTest(unittest.TestCase):
         # codex manifest has no "skills" field
         codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertNotIn("skills", codex_manifest)
-        versions = json.loads((REPO_ROOT / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
-        self.assertEqual(codex_manifest["version"], versions["session-id"])
+        self.assertEqual(codex_manifest["version"], "1.0.1")
 
     def test_build_repo_prunes_stale_generated_plugin_directories(self) -> None:
         stale_dir = self.root / "plugins" / "obsolete-pack"
