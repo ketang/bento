@@ -68,6 +68,8 @@ land-work/scripts/land-work-prepare.py
 3. Re-run or verify the required quality gates for the repo.
 4. Rebase onto the preferred primary-branch base reported by the helper, usually
    `origin/<primary-branch>` when available.
+   If you are preparing to merge into local `main`, rebase against local
+   `main` before attempting the merge.
 5. Push the feature branch with `--force-with-lease` if rebasing changed
    history.
 6. Prefer the repo's documented merge helper if one exists.
