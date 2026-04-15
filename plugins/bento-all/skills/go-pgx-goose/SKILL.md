@@ -70,9 +70,9 @@ golangci-lint run
 Run migration verification or database integration tests against a real database
 when the change touches schema, queries, fixtures, or database behavior.
 
-For behavioral changes with feasible automated coverage, write or update the
-relevant test so it fails before implementing the change, then make it pass
-before running the broader verification gates.
+For new work and behavioral changes with feasible automated coverage, write or
+update the relevant test so it fails before implementing the change, then make
+it pass before running the broader verification gates.
 
 ## Guardrails
 

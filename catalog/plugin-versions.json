@@ -1,6 +1,6 @@
 {
-  "bento-all": "1.0.16",
+  "bento-all": "1.0.17",
   "trackers": "1.0.3",
-  "stacks": "1.0.3",
+  "stacks": "1.0.4",
   "session-id": "1.0.1"
 }

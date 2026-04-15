@@ -84,10 +84,11 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 
 9. Confirm implementation will happen in that linked worktree, not in the
    primary checkout.
-10. Before editing implementation code for a behavioral change with feasible
-    automated coverage, identify the relevant verification target and write or
-    update a test so it fails against the current behavior. Then implement the
-    change, make the test pass, and run the relevant verification gates.
+10. Before editing implementation code for new work or a behavioral change with
+    feasible automated coverage, identify the relevant verification target and
+    write or update the smallest relevant test so it fails against the current
+    or missing behavior. Then implement the change, make the test pass, and run
+    the relevant verification gates.
 11. If the fresh worktree cannot resolve dependencies, run the repo's documented
     install/bootstrap step before debugging build failures.
 
@@ -100,9 +101,9 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
   isolation.
 - Tracker-only mutations are not implementation and do not require
   branch/worktree setup unless the repo explicitly requires it.
-- For behavioral changes with feasible automated coverage, use a red/green
-  workflow: write or update a test that fails before implementing the change,
-  then make it pass.
+- For new work and behavioral changes with feasible automated coverage, use a
+  red/green workflow: write or update the smallest relevant test so it fails
+  before implementing the change, then make it pass.
 - Do not place linked worktrees under `/tmp` unless the repo explicitly
   documents that as safe and durable enough for the task.
 - Do not place linked worktrees directly under the user's home directory, the
