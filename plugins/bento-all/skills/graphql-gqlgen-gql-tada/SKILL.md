@@ -58,9 +58,9 @@ sync.
 
 ## Verification
 
-For behavioral changes with feasible automated coverage, write or update the
-relevant backend or frontend test so it fails before implementing the change,
-then make it pass.
+For new work and behavioral changes with feasible automated coverage, write or
+update the relevant backend or frontend test so it fails before implementing
+the change, then make it pass.
 
 After GraphQL changes, run the repo's actual build, lint, test, and typecheck
 commands for the affected backend and frontend surfaces.

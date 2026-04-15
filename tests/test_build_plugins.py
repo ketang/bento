@@ -2,6 +2,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import re
 import shutil
 import tempfile
 import unittest
@@ -109,6 +110,22 @@ class BuildPluginsTest(unittest.TestCase):
         codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertNotIn("skills", codex_manifest)
         self.assertEqual(codex_manifest["version"], "1.0.1")
+
+    def test_build_repo_copies_red_green_tdd_guidance_into_generated_skills(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        plugin_dir = self.root / "plugins" / "bento-all" / "skills"
+        expected_phrases = {
+            "launch-work": "For new work and behavioral changes with feasible automated coverage, use a red/green workflow",
+            "react-vite-mantine": "write or update a component test so it fails before implementing the change",
+            "go-pgx-goose": "write or update the relevant test so it fails before implementing the change",
+            "graphql-gqlgen-gql-tada": "write or update the relevant backend or frontend test so it fails before implementing the change",
+        }
+
+        for skill_name, expected_phrase in expected_phrases.items():
+            skill_text = (plugin_dir / skill_name / "SKILL.md").read_text(encoding="utf-8")
+            normalized_skill_text = re.sub(r"\s+", " ", skill_text)
+            self.assertIn(expected_phrase, normalized_skill_text)
 
     def test_build_repo_prunes_stale_generated_plugin_directories(self) -> None:
         stale_dir = self.root / "plugins" / "obsolete-pack"

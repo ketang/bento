@@ -43,8 +43,9 @@ commands in this skill as a fallback, not as the default source of truth.
 ## Testing
 
 - Maintain the repo's frontend coverage expectations when they exist
-- For behavioral changes with feasible automated coverage, write or update a
-  component test so it fails before implementing the change, then make it pass
+- For new work and behavioral changes with feasible automated coverage, write
+  or update a component test so it fails before implementing the change, then
+  make it pass
 - Use the repo's shared render helpers when the component depends on Mantine,
   routing, state, or app-level providers
 - If the repo uses visual, snapshot, or accessibility checks, keep those in the
