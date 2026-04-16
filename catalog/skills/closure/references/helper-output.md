@@ -26,9 +26,13 @@ The `liveness.verdict` field on each worktree is one of:
 **Important limitation:** an agent blocked waiting for user input may show no
 file or commit activity for many hours while still running. `confirmed_live`
 (live process detected) is the only signal that reliably distinguishes this
-case. All other verdicts are probabilistic. When `verdict` is `possibly_live`,
-`recently_active`, or `unknown`, present the evidence and ask the user rather
-than acting unilaterally.
+case. All other verdicts are probabilistic.
+
+For manual cleanup outside the helper's apply mode, treat `possibly_live`,
+`recently_active`, and `unknown` as review-driven and ask the user before
+acting. The helper's `--apply delete-local-merged-branches` mode is narrower:
+it may automatically remove a clean linked worktree only when the branch is
+`merged_checked_out` and the liveness verdict is `stale` or `unknown`.
 
 ## Apply Mode Behavior
 
@@ -39,6 +43,8 @@ of cleanup:
 - remove a linked worktree for a `merged_checked_out` branch, then delete that
   merged branch, but only when the worktree is clean and its
   `liveness.verdict` is `stale` or `unknown`
+- example: `merged_checked_out` + clean worktree + `unknown` liveness verdict
+  is eligible for helper-driven removal in apply mode
 
 If liveness is unavailable, the worktree is dirty, or the verdict is
 `confirmed_live`, `possibly_live`, or `recently_active`, the helper skips that
