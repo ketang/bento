@@ -127,6 +127,37 @@ class BuildPluginsTest(unittest.TestCase):
             normalized_skill_text = re.sub(r"\s+", " ", skill_text)
             self.assertIn(expected_phrase, normalized_skill_text)
 
+    def test_external_plugins_appear_in_marketplace_with_github_source(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        marketplace = json.loads(
+            (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        plugin_names = [p["name"] for p in marketplace["plugins"]]
+        self.assertIn("bugshot", plugin_names)
+
+        bugshot = next(p for p in marketplace["plugins"] if p["name"] == "bugshot")
+        self.assertEqual(bugshot["source"], {"source": "github", "repo": "ketang/bugshot"})
+        self.assertNotIn("version", bugshot)
+
+    def test_external_plugins_have_ref_field(self) -> None:
+        for ext in self.module.EXTERNAL_PLUGINS:
+            self.assertIn("ref", ext, f"External plugin {ext['name']} missing 'ref' field")
+
+    def test_external_plugins_are_not_built_locally(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        self.assertFalse((self.root / "plugins" / "bugshot").exists())
+
+    def test_external_plugin_dirs_not_pruned(self) -> None:
+        ext_dir = self.root / "plugins" / "bugshot"
+        ext_dir.mkdir(parents=True)
+        (ext_dir / "marker.txt").write_text("external\n", encoding="utf-8")
+
+        self.module.build_repo(run_verification=False)
+
+        self.assertTrue(ext_dir.exists())
+
     def test_build_repo_prunes_stale_generated_plugin_directories(self) -> None:
         stale_dir = self.root / "plugins" / "obsolete-pack"
         stale_dir.mkdir(parents=True)

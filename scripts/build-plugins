@@ -32,6 +32,18 @@ PLUGIN_ORDER = [
     "session-id",
 ]
 
+EXTERNAL_PLUGINS = [
+    {
+        "name": "bugshot",
+        "description": (
+            "File issues from screenshots with a local gallery server, "
+            "inline comments, duplicate detection, and issue-flow skill delegation"
+        ),
+        "repo": "ketang/bugshot",
+        "ref": "main",
+    },
+]
+
 
 PLUGIN_DEFS = {
     "bento-all": {
@@ -461,6 +473,32 @@ def build_plugin(plugin: str) -> None:
 
 
 def write_claude_marketplace() -> None:
+    local_entries = [
+        {
+            "name": plugin,
+            "description": PLUGIN_DEFS[plugin]["description"],
+            "version": plugin_version(plugin),
+            "source": f"./plugins/{plugin}",
+            "author": {
+                "name": OWNER_NAME,
+            },
+        }
+        for plugin in PLUGIN_ORDER
+    ]
+    external_entries = [
+        {
+            "name": ext["name"],
+            "description": ext["description"],
+            "source": {
+                "source": "github",
+                "repo": ext["repo"],
+            },
+            "author": {
+                "name": OWNER_NAME,
+            },
+        }
+        for ext in EXTERNAL_PLUGINS
+    ]
     payload = {
         "name": "bento",
         "owner": {
@@ -469,25 +507,14 @@ def write_claude_marketplace() -> None:
         "metadata": {
             "description": "Reusable coding-agent plugins packaged for Claude Code",
         },
-        "plugins": [
-            {
-                "name": plugin,
-                "description": PLUGIN_DEFS[plugin]["description"],
-                "version": plugin_version(plugin),
-                "source": f"./plugins/{plugin}",
-                "author": {
-                    "name": OWNER_NAME,
-                },
-            }
-            for plugin in PLUGIN_ORDER
-        ],
+        "plugins": local_entries + external_entries,
     }
     json_dump(CLAUDE_MARKETPLACE_FILE, payload)
 
 
 def prune_generated_plugin_dirs() -> None:
     PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
-    valid = set(PLUGIN_ORDER)
+    valid = set(PLUGIN_ORDER) | {ext["name"] for ext in EXTERNAL_PLUGINS}
     for child in PLUGINS_DIR.iterdir():
         if child.is_dir() and child.name not in valid:
             shutil.rmtree(child)
