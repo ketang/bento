@@ -60,7 +60,8 @@ This apply mode deletes:
   is clean and its liveness verdict is `stale` or `unknown`, then deletes the
   merged branch after the worktree removal succeeds
 
-Everything else remains review-driven.
+For merged, clean, stale-or-unknown linked worktrees, this helper apply mode is
+the approved automatic cleanup path. Everything else remains review-driven.
 
 Add `--no-liveness` for a faster scan that skips session log scanning and
 process detection, returning git state only.
@@ -89,11 +90,15 @@ The `liveness.verdict` field on each worktree is one of:
 | `unknown` | No session evidence, no process — only git/file timestamps |
 
 **Important limitation**: an agent blocked waiting for user input may show no
-file or commit activity for many hours while still running.  `confirmed_live`
+file or commit activity for many hours while still running. `confirmed_live`
 (live process detected) is the only signal that reliably distinguishes this
-case.  All other verdicts are probabilistic.  Outside the helper's explicit
-apply mode, when `verdict` is `possibly_live`, `recently_active`, or `unknown`,
-present the evidence and ask the user rather than acting unilaterally.
+case. All other verdicts are probabilistic.
+
+Outside the helper's explicit apply mode, treat `possibly_live`,
+`recently_active`, and `unknown` as review-driven: present the evidence and ask
+the user before manual cleanup. Inside
+`--apply delete-local-merged-branches`, `unknown` is eligible for automatic
+cleanup only when the branch is `merged_checked_out` and the worktree is clean.
 
 ### Recency Calculation
 
@@ -182,7 +187,10 @@ primary-branch shell state.
 
 - Always start with dry-run output from the helper.
 - Do not force-push or rebase the primary branch without explicit approval.
-- Do not auto-delete worktrees, stashes, or patch-equivalent branches.
+- Do not auto-delete stashes or patch-equivalent branches.
+- Do not delete worktrees except through the helper's
+  `--apply delete-local-merged-branches` mode for clean
+  `merged_checked_out` worktrees that satisfy the helper's liveness gate.
 - Do not delete unmerged work or close tracker items without presenting
   evidence and the proposed action first.
 - Do not treat absence of a live process or recent activity as proof that a

@@ -66,14 +66,21 @@ land-work/scripts/land-work-prepare.py
 2. Confirm the current branch is the intended landing branch and that the helper
    reports a clean feature-branch checkout.
 3. Re-run or verify the required quality gates for the repo.
-4. Rebase onto the preferred primary-branch base reported by the helper, usually
+4. Review the landing diff for design concerns mechanical checks miss:
+   - Optional capabilities that crash instead of degrading on missing resources.
+   - Committed artifacts diverging from workspace state (see
+     `references/artifact-verification.md` when binary or LFS files are in
+     the diff).
+   - Container build inputs that differ between local and remote platforms.
+   Use `requesting-code-review` for this step if available.
+5. Rebase onto the preferred primary-branch base reported by the helper, usually
    `origin/<primary-branch>` when available.
    If you are preparing to merge into local `main`, rebase against local
    `main` before attempting the merge.
-5. Push the feature branch with `--force-with-lease` if rebasing changed
+6. Push the feature branch with `--force-with-lease` if rebasing changed
    history.
-6. Prefer the repo's documented merge helper if one exists.
-7. Otherwise, perform a compare-and-set merge flow as separate commands, not
+7. Prefer the repo's documented merge helper if one exists.
+8. Otherwise, perform a compare-and-set merge flow as separate commands, not
    one compound command string:
    - refresh the primary-branch ref you intend to lease
    - capture its SHA
@@ -87,9 +94,9 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 
    - abort if the lease changed
    - commit and push only if the lease still matches
-8. After the landing succeeds, close or update the tracker item through the
+9. After the landing succeeds, close or update the tracker item through the
    repo's tracker workflow.
-9. Clean up local branch and worktree state using the repo's documented process.
+10. Clean up local branch and worktree state using the repo's documented process.
 
 ## Non-Negotiable Rules
 
@@ -100,6 +107,8 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 - Do not land from a dirty feature-branch checkout.
 - Do not change the repository's configured Git transport just because auth
   fails.
+- Do not land changes that include deploy-critical artifacts without verifying
+  the committed blob content matches what was tested locally.
 
 ## Tracker Handoff
 
