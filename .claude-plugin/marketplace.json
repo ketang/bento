@@ -44,12 +44,12 @@
       }
     },
     {
-      "name": "bugshots",
+      "name": "bugshot",
       "description": "File issues from screenshots with a local gallery server, inline comments, duplicate detection, and issue-flow skill delegation",
-      "version": "0.1.0",
+      "version": "0.1.1",
       "source": {
         "source": "github",
-        "repo": "ketang/bugshots"
+        "repo": "ketang/bugshot"
       },
       "author": {
         "name": "Ketan Gangatirkar"
