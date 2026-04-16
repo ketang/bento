@@ -42,6 +42,18 @@
       "author": {
         "name": "Ketan Gangatirkar"
       }
+    },
+    {
+      "name": "bugshots",
+      "description": "File issues from screenshots with a local gallery server, inline comments, duplicate detection, and issue-flow skill delegation",
+      "version": "0.1.0",
+      "source": {
+        "source": "github",
+        "repo": "ketang/bugshots"
+      },
+      "author": {
+        "name": "Ketan Gangatirkar"
+      }
     }
   ]
 }
