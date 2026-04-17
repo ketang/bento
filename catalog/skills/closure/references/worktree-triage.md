@@ -16,7 +16,9 @@ failed run, or an agent that wrote files and then died all leave dirty trees.
 - `stale` or `unknown` with a `merged_checked_out` branch → the useful work is
   already in primary; recommend removing the worktree. If the worktree is also
   clean, the helper apply mode may remove that linked worktree and then delete
-  the merged branch.
+  the merged branch. This order matches
+  `../../land-work/references/workflow-invariants.md` and avoids detached
+  `HEAD` orphans.
 - `stale` or `unknown` with an unmerged branch → investigate commits and diff
   vs. primary; classify as `incomplete but valuable`, `superseded`,
   `conflicted`, or `unknown`; recommend `land-work` if appropriate.

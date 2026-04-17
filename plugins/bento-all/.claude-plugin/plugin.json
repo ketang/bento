@@ -1,7 +1,7 @@
 {
   "name": "bento-all",
   "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "author": {
     "name": "Ketan Gangatirkar"
   }

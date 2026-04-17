@@ -16,6 +16,10 @@ failure cost because it coordinates verification, lease checks, and landing.
 Use this skill when implementation is complete, the branch is ready to land,
 and the repo's merge policy is documented clearly enough to execute safely.
 
+Open `references/workflow-invariants.md` before landing when you need the
+shared rules for primary-branch terminology, tracker mutation timing, or
+linked-worktree cleanup order.
+
 ## Preconditions
 
 - The work is committed on the feature branch.
@@ -95,8 +99,13 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
    - abort if the lease changed
    - commit and push only if the lease still matches
 9. After the landing succeeds, close or update the tracker item through the
-   repo's tracker workflow.
-10. Clean up local branch and worktree state using the repo's documented process.
+   repo's tracker workflow. Follow `references/workflow-invariants.md`:
+   mutate tracker state only after the work is verified as landed on the
+   detected primary branch.
+10. Clean up local branch and worktree state using the repo's documented
+    process. Follow `references/workflow-invariants.md`: if the merged
+    feature branch is still checked out in a linked worktree, remove the
+    linked worktree before deleting the branch.
 
 ## Non-Negotiable Rules
 
@@ -105,6 +114,7 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
   explicitly requires it.
 - Do not merge if the leased primary-branch ref moved after verification.
 - Do not land from a dirty feature-branch checkout.
+- Do not delete a merged feature branch before removing its linked worktree.
 - Do not change the repository's configured Git transport just because auth
   fails.
 - Do not land changes that include deploy-critical artifacts without verifying
