@@ -24,6 +24,8 @@ Keep this skill generic. If the repo config or local conventions indicate a
 specific tracker or primary-branch workflow, open the matching companion doc
 before acting:
 
+- `../land-work/references/workflow-invariants.md` for shared primary-branch wording,
+  tracker mutation timing, and linked-worktree cleanup order
 - `references/beads.md` for Beads tracker correlation and closure
 - `references/github-issues.md` for GitHub Issues correlation and closure
 - `references/primary-branch-sync.md` for repos that explicitly want local
@@ -45,7 +47,8 @@ The helper emits a JSON object with the detected primary branch, per-branch
 classification, per-worktree liveness assessment (overnight-aware activity
 timing, session log evidence, live-process detection), stashes, and
 working-tree changes. See `closure/references/helper-output.md` for the
-branch-classification enum, liveness-verdict enum, and recency calculation.
+branch-classification enum, liveness-verdict enum, apply-mode cleanup order,
+and recency calculation.
 
 If the user wants the clearly safe local branch cleanup applied:
 
@@ -142,8 +145,10 @@ tracked file with uncommitted changes.  Untracked files are excluded.
 7. If a tracker item appears complete because its work is already landed,
    present the evidence and hand off to the repo's tracker workflow skill
    (`beads-issue-flow` or `github-issue-flow`) to close or update it rather
-   than mutating tracker state directly inside `closure`. If the tracker
-   workflow is unclear, stop at evidence and proposed action instead of
+   than mutating tracker state directly inside `closure`. Follow
+   `../land-work/references/workflow-invariants.md`: mutate tracker state only
+   after the work is verified as landed on the detected primary branch. If the
+   tracker workflow is unclear, stop at evidence and proposed action instead of
    guessing.
 8. Present evidence before any destructive step that falls outside the
    helper's explicit apply mode.
@@ -191,6 +196,7 @@ primary-branch shell state.
 - Do not delete worktrees except through the helper's
   `--apply delete-local-merged-branches` mode for clean
   `merged_checked_out` worktrees that satisfy the helper's liveness gate.
+- Do not delete a merged branch before removing its linked worktree.
 - Do not delete unmerged work or close tracker items without presenting
   evidence and the proposed action first.
 - Do not treat absence of a live process or recent activity as proof that a

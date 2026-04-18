@@ -46,6 +46,10 @@ of cleanup:
 - example: `merged_checked_out` + clean worktree + `unknown` liveness verdict
   is eligible for helper-driven removal in apply mode
 
+This worktree-before-branch order matches the shared invariant in
+`../../land-work/references/workflow-invariants.md` and avoids leaving
+orphaned linked worktrees in detached `HEAD` state.
+
 If liveness is unavailable, the worktree is dirty, or the verdict is
 `confirmed_live`, `possibly_live`, or `recently_active`, the helper skips that
 worktree and leaves the branch in place.

@@ -91,20 +91,40 @@ stop and ask the user to narrow the scope or clarify the workflow.
    tracker's ready-work query.
 2. Inspect each task closely enough to understand scope, likely files, and
    whether it is small enough for one teammate.
-3. Skip tasks already in progress, too large, ambiguous, or coupled for
+3. For every task that remains eligible, capture a concise human-readable
+   summary. Do not present only the tracker key or task ID when a short
+   description can be derived from the issue title or body.
+4. Present the proposed work items in a numbered table so each row can be
+   referenced unambiguously during launch and follow-up. Include at minimum:
+   row number, task ID, title, concise summary, predicted scope or paths, and
+   any risk notes that affect batching.
+5. Separate clearly launchable work from tasks that need extra handling.
+6. Skip tasks already in progress, too large, ambiguous, or coupled for
    parallel execution.
-4. Predict file overlap across candidates and with any active work. Batch only
+7. Predict file overlap across candidates and with any active work. Batch only
    tasks that appear meaningfully isolated. Sequence tasks that touch shared
    hotspots (central schemas, shared config/types, generated outputs,
    high-churn framework entrypoints).
-5. If the tracker exposes explicit dependencies, spawn only the currently
+8. If the tracker exposes explicit dependencies, spawn only the currently
    unblocked frontier, then recompute readiness after each landed batch — not
    a flat queue.
-6. When a teammate finishes and a slot opens, re-triage the remaining
+9. When a teammate finishes and a slot opens, re-triage the remaining
    candidates against current active paths, hotspots, landed IDs, and newly
    unblocked dependencies before backfilling. Do not refill if every remaining
    task is still blocked or conflicting.
-7. Present the triage plan and wait for approval before spawning teammates.
+10. Seek user approval before spawning teammates only when the proposed batch
+   has material complications, for example:
+   - one or more tasks are too large for one teammate
+   - issue scope or expected behavior is ambiguous
+   - overlap, dependencies, or active-work conflicts make the launch order
+     non-obvious
+   - the tracker data is too thin to produce reliable summaries or scope
+     estimates
+   - the overall batch looks risky enough that autonomous launch would be hard
+     to defend
+11. If the selected batch is routine and the risks are well bounded, do not
+   stop for approval. Summarize the numbered work-item table, note any skipped
+   or deferred tasks, and proceed directly to teammate launch.
 
 When the project can supply normalized task data, prefer:
 
@@ -126,10 +146,10 @@ Use the runtime's managed multi-agent flow, not ad hoc background workers:
 - Codex: `spawn_agent` per approved item, then `send_input` / `wait_agent` /
   `close_agent` for lifecycle.
 
-For each approved task: exactly one branch, exactly one worktree, and the
-prompt must include task details, expected scope, overlap risks, and required
-quality gates. Require the teammate to stop and report back if the task is
-broader or more coupled than expected.
+For each launched task: exactly one branch, exactly one worktree, and the
+prompt must include task details, expected scope, overlap risks, required
+quality gates, and the row number from the triage table. Require the teammate
+to stop and report back if the task is broader or more coupled than expected.
 
 Teammate instructions must treat worktree placement as part of setup, not an
 implementation detail. Require a durable dedicated root and reject placements
