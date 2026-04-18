@@ -26,7 +26,7 @@ installable plugin directories under `plugins/` with `scripts/build-plugins`.
 
 This supports both:
 
-- coarse-grained installs such as `bento-all`
+- coarse-grained installs such as `bento`
 - narrower installs such as `trackers` and `stacks`
 
 The separation is intentional:

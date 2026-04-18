@@ -42,7 +42,7 @@ class BuildPluginsTest(unittest.TestCase):
     def test_build_repo_generates_manifests_assets_and_claude_marketplace(self) -> None:
         self.module.build_repo(run_verification=False)
 
-        plugin_dir = self.root / "plugins" / "bento-all"
+        plugin_dir = self.root / "plugins" / "bento"
         executable_helpers = [
             plugin_dir / "skills" / "build-vs-buy" / "scripts" / "build-vs-buy-discover.py",
             plugin_dir / "skills" / "closure" / "scripts" / "closure-scan.py",
@@ -66,7 +66,7 @@ class BuildPluginsTest(unittest.TestCase):
 
         versions = json.loads((REPO_ROOT / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
         codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(codex_manifest["version"], versions["bento-all"])
+        self.assertEqual(codex_manifest["version"], versions["bento"])
         self.assertEqual(codex_manifest["skills"], "./skills/")
         self.assertEqual(codex_manifest["interface"]["displayName"], "Bento All")
         self.assertEqual(len(codex_manifest["interface"]["defaultPrompt"]), 3)
@@ -114,7 +114,7 @@ class BuildPluginsTest(unittest.TestCase):
     def test_build_repo_copies_red_green_tdd_guidance_into_generated_skills(self) -> None:
         self.module.build_repo(run_verification=False)
 
-        plugin_dir = self.root / "plugins" / "bento-all" / "skills"
+        plugin_dir = self.root / "plugins" / "bento" / "skills"
         expected_phrases = {
             "launch-work": "For new work and behavioral changes with feasible automated coverage, use a red/green workflow",
             "react-vite-mantine": "write or update a component test so it fails before implementing the change",

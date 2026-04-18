@@ -945,7 +945,7 @@ Expected: exits 0. The script copies the updated canonical skill files into `plu
 - [ ] **Step 2: Confirm the reference files appear in the generated plugin**
 
 ```bash
-ls plugins/bento-all/skills/generate-audit/references/
+ls plugins/bento/skills/generate-audit/references/
 ```
 
 Expected output:

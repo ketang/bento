@@ -31,7 +31,7 @@ The Claude Code plugin system has native support for skills (via marketplace reg
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
 | Issue tracking | GitHub Issues | Matches the repository host and the included tracker workflow skills |
 | Skill source model | Canonical skills in `catalog/skills/`; generated installable plugins in `plugins/` | Supports both broad and narrow install options without maintaining duplicate skill content |
-| Initial plugin set | `bento-all`, `trackers`, `stacks` | Keeps installation overhead low while still allowing narrower opt-in installs |
+| Initial plugin set | `bento`, `trackers`, `stacks` | Keeps installation overhead low while still allowing narrower opt-in installs |
 
 ## Registration
 
