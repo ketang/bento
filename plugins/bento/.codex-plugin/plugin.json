@@ -1,6 +1,6 @@
 {
   "name": "bento",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
   "author": {
     "name": "Ketan Gangatirkar",
@@ -19,9 +19,9 @@
   ],
   "skills": "./skills/",
   "interface": {
-    "displayName": "Bento All",
+    "displayName": "Bento",
     "shortDescription": "Complete coding-agent workflow pack",
-    "longDescription": "Bento All bundles the full Bento marketplace into one Codex-ready plugin: workflow launch and landing guidance, repo cleanup, research support, tracker flows, and stack-specific implementation skills.",
+    "longDescription": "Bento bundles the full Bento marketplace into one Codex-ready plugin: workflow launch and landing guidance, repo cleanup, research support, tracker flows, and stack-specific implementation skills.",
     "developerName": "Ketan Gangatirkar",
     "category": "Coding",
     "capabilities": [

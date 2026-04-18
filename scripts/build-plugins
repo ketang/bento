@@ -48,10 +48,10 @@ EXTERNAL_PLUGINS = [
 PLUGIN_DEFS = {
     "bento": {
         "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
-        "display_name": "Bento All",
+        "display_name": "Bento",
         "short_description": "Complete coding-agent workflow pack",
         "long_description": (
-            "Bento All bundles the full Bento marketplace into one Codex-ready plugin: "
+            "Bento bundles the full Bento marketplace into one Codex-ready plugin: "
             "workflow launch and landing guidance, repo cleanup, research support, tracker "
             "flows, and stack-specific implementation skills."
         ),
