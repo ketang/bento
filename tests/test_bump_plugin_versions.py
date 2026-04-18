@@ -53,7 +53,7 @@ class BumpPluginVersionsTest(unittest.TestCase):
 
     def test_bumps_only_plugins_affected_by_changed_skill(self) -> None:
         versions_before = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
-        bento_before = versions_before["bento-all"]
+        bento_before = versions_before["bento"]
         major, minor, patch = bento_before.split(".")
         bento_after = f"{major}.{minor}.{int(patch) + 1}"
 
@@ -64,8 +64,8 @@ class BumpPluginVersionsTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         versions = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
 
-        self.assertEqual(payload["bumps"], {"bento-all": {"from": bento_before, "to": bento_after}})
-        self.assertEqual(versions["bento-all"], bento_after)
+        self.assertEqual(payload["bumps"], {"bento": {"from": bento_before, "to": bento_after}})
+        self.assertEqual(versions["bento"], bento_after)
         self.assertEqual(versions["trackers"], versions_before["trackers"])
         self.assertEqual(versions["stacks"], versions_before["stacks"])
 

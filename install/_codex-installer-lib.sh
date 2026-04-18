@@ -6,7 +6,7 @@ REPO_NAME="${BENTO_REPO_NAME:-bento}"
 REPO_REF="${BENTO_REPO_REF:-main}"
 ARCHIVE_URL="${BENTO_ARCHIVE_URL:-https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_REF}}"
 
-PLUGIN_NAMES=("bento-all" "trackers" "stacks")
+PLUGIN_NAMES=("bento" "trackers" "stacks")
 declare -A EXTERNAL_PLUGIN_REPOS=(["bugshot"]="ketang/bugshot")
 declare -A EXTERNAL_PLUGIN_REFS=(["bugshot"]="main")
 INSTALL_SCOPE="${BENTO_INSTALL_SCOPE:?BENTO_INSTALL_SCOPE must be set to home or project}"
@@ -116,7 +116,7 @@ repo_root = Path(sys.argv[1])
 target_path = Path(sys.argv[2])
 plugin_root = Path(sys.argv[3])
 
-local_names = ("bento-all", "trackers", "stacks")
+local_names = ("bento", "trackers", "stacks")
 external_names = ("bugshot",)
 bento_names = set(local_names) | set(external_names)
 

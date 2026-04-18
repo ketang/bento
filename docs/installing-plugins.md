@@ -33,11 +33,11 @@ its plugins. Adding the marketplace does not install any plugins by itself.
 
 The marketplace currently publishes these plugins:
 
-- `bento-all` for the full Bento skill pack
+- `bento` for the full Bento skill pack
 - `trackers` for tracker-oriented workflows such as Beads and GitHub Issues
 - `stacks` for stack-specific engineering skills
 
-If you are unsure, start with `bento-all`.
+If you are unsure, start with `bento`.
 
 ## Step 3: Install a plugin in Claude Code
 
@@ -46,7 +46,7 @@ After adding the marketplace, use Claude Code's plugin install command.
 Examples:
 
 ```text
-/plugin install bento-all@bento
+/plugin install bento@bento
 /plugin install trackers@bento
 /plugin install stacks@bento
 ```
@@ -138,7 +138,7 @@ If your Claude Code setup does not expose a dedicated update command, reinstall
 the plugin by name:
 
 ```text
-/plugin install bento-all@bento
+/plugin install bento@bento
 ```
 
 Use the same pattern for `trackers` or `stacks`.
@@ -151,7 +151,7 @@ If Claude Code expects an explicit marketplace-qualified plugin identifier, use
 the same `<plugin-name>@bento` name you used during installation:
 
 ```text
-/plugin uninstall bento-all@bento
+/plugin uninstall bento@bento
 ```
 
 ## Hooks are separate

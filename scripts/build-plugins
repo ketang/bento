@@ -26,7 +26,7 @@ CLAUDE_VALIDATE_CMD = ["claude", "plugin", "validate", "."]
 
 
 PLUGIN_ORDER = [
-    "bento-all",
+    "bento",
     "trackers",
     "stacks",
     "session-id",
@@ -46,7 +46,7 @@ EXTERNAL_PLUGINS = [
 
 
 PLUGIN_DEFS = {
-    "bento-all": {
+    "bento": {
         "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
         "display_name": "Bento All",
         "short_description": "Complete coding-agent workflow pack",

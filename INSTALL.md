@@ -9,7 +9,7 @@ Install the Bento marketplace in Claude Code:
 Then install one or more plugins:
 
 ```text
-/plugin install bento-all@bento
+/plugin install bento@bento
 /plugin install trackers@bento
 /plugin install stacks@bento
 ```
@@ -20,7 +20,7 @@ Reload plugins in the current session:
 /reload-plugins
 ```
 
-If you are unsure, start with `bento-all`.
+If you are unsure, start with `bento`.
 
 For Codex:
 
