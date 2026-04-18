@@ -91,6 +91,9 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     the relevant verification gates.
 11. If the fresh worktree cannot resolve dependencies, run the repo's documented
     install/bootstrap step before debugging build failures.
+12. In the final task summary, include a brief note describing any additions or
+    expansions made to the automated test suite. If test coverage did not
+    change, say so explicitly.
 
 ## Non-Negotiable Rules
 
@@ -104,6 +107,8 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 - For new work and behavioral changes with feasible automated coverage, use a
   red/green workflow: write or update the smallest relevant test so it fails
   before implementing the change, then make it pass.
+- Final task summaries should call out any automated test-suite additions or
+  expansions, or explicitly state that test coverage was unchanged.
 - Do not place linked worktrees under `/tmp` unless the repo explicitly
   documents that as safe and durable enough for the task.
 - Do not place linked worktrees directly under the user's home directory, the
