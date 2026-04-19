@@ -73,6 +73,7 @@ PLUGIN_DEFS = {
             "launch-work",
             "land-work",
             "swarm",
+            "expedition-work",
             "build-vs-buy",
             "generate-audit",
             "project-memory",
