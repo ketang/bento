@@ -27,6 +27,11 @@ def parse_args() -> argparse.Namespace:
         action="store_true",
         help="fail if the current checkout is the primary checkout",
     )
+    parser.add_argument(
+        "--require-up-to-date",
+        action="store_true",
+        help="fail if the current branch is behind the primary branch",
+    )
     return parser.parse_args()
 
 
@@ -56,6 +61,8 @@ def main() -> int:
         errors.append("working tree is dirty")
     if ahead_primary == 0:
         errors.append("current branch has no commits ahead of the primary branch")
+    if args.require_up_to_date and behind_primary != 0:
+        errors.append(f"current branch is behind the primary branch by {behind_primary} commit(s)")
 
     payload = {
         "cwd": str(cwd),
@@ -71,6 +78,7 @@ def main() -> int:
         "behind_primary": behind_primary,
         "expected_branch_match": args.expected_branch is None or branch == args.expected_branch,
         "require_linked_worktree_satisfied": not args.require_linked_worktree or linked_worktree,
+        "require_up_to_date_satisfied": not args.require_up_to_date or behind_primary == 0,
         "ok": not errors,
         "warnings": warnings,
         "errors": errors,

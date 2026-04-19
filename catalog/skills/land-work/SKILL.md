@@ -33,15 +33,22 @@ This skill includes helper scripts under `land-work/scripts/` for the risky
 state checks that should not rely on ad hoc prose reconstruction:
 
 - `land-work/scripts/land-work-prepare.py` to verify the current checkout is a
-  clean feature-branch worktree with something to land
+  clean feature-branch worktree with something to land and, when requested,
+  that it is not stale relative to the primary branch
+- `land-work/scripts/land-work-create-preview.py` to materialize the exact
+  merge candidate from the leased primary-branch base into a preview checkout
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
+- `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
+  verify the landed primary-branch ref still matches the verified candidate
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script.
 
-Run the prepare helper from the feature-branch worktree first. Use the lease
-helper whenever you capture or re-check the compare-and-set merge lease.
+Run the prepare helper from the feature-branch worktree first. Use the preview
+helper to create the exact candidate you will verify, the lease helper whenever
+you capture or re-check the compare-and-set merge lease, and the landing
+verifier after merge before closing tracker work.
 
 ## Command Rule
 
@@ -64,12 +71,14 @@ Python.
 1. Run the prepare helper from the feature-branch worktree:
 
 ```bash
-land-work/scripts/land-work-prepare.py
+land-work/scripts/land-work-prepare.py --require-up-to-date
 ```
 
 2. Confirm the current branch is the intended landing branch and that the helper
    reports a clean feature-branch checkout.
-3. Re-run or verify the required quality gates for the repo.
+3. Treat any verification that ran before a rebase, merge, cherry-pick, or
+   manual conflict resolution as stale evidence only. It does not authorize a
+   landing after the candidate changes.
 4. Review the landing diff for design concerns mechanical checks miss:
    - Optional capabilities that crash instead of degrading on missing resources.
    - Committed artifacts diverging from workspace state (see
@@ -81,15 +90,27 @@ land-work/scripts/land-work-prepare.py
    `origin/<primary-branch>` when available.
    If you are preparing to merge into local `main`, rebase against local
    `main` before attempting the merge.
+   If the rebase or preview merge requires manual conflict resolution, require
+   a fresh full-quality-gate run and an explicit review checkpoint on the
+   resolved candidate before landing.
 6. Push the feature branch with `--force-with-lease` if rebasing changed
    history.
-7. Prefer the repo's documented merge helper if one exists.
+7. Prefer the repo's documented merge helper if one exists only when it can
+   prove or preserve the same exact candidate you verified. If the helper
+   cannot expose equivalent candidate evidence, fall back to the explicit
+   compare-and-set flow below.
 8. Otherwise, perform a compare-and-set merge flow as separate commands, not
    one compound command string:
    - refresh the primary-branch ref you intend to lease
    - capture its SHA
-   - create the merge preview the repo expects
-   - run the required verification gate against that exact preview
+   - create the merge preview the repo expects with:
+
+```bash
+land-work/scripts/land-work-create-preview.py --base-ref <sha>
+```
+
+   - run the full required verification gate against that exact preview only;
+     do not reuse pre-rebase or pre-conflict results
    - re-check the lease with:
 
 ```bash
@@ -98,6 +119,11 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 
    - abort if the lease changed
    - commit and push only if the lease still matches
+   - verify the landed primary-branch ref still matches the verified preview:
+
+```bash
+land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
+```
 9. After the landing succeeds, close or update the tracker item through the
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the
@@ -112,11 +138,16 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 - Do not close the issue before the verified merge succeeds.
 - Do not fast-forward feature branches into the primary branch unless the repo
   explicitly requires it.
+- Do not treat pre-rebase, pre-merge, or pre-conflict verification as valid
+  for a changed landing candidate.
 - Do not merge if the leased primary-branch ref moved after verification.
 - Do not land from a dirty feature-branch checkout.
 - Do not delete a merged feature branch before removing its linked worktree.
 - Do not change the repository's configured Git transport just because auth
   fails.
+- Do not bypass exact-candidate verification after manual conflict resolution.
+- Do not use a repo-specific merge helper autonomously unless it can prove the
+  landed candidate matches the verified preview.
 - Do not land changes that include deploy-critical artifacts without verifying
   the committed blob content matches what was tested locally.
 
