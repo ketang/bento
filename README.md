@@ -228,6 +228,11 @@ release boundary for plugin artifacts: the bump script compares the current tree
 to the last commit that updated those versions and advances only the plugins
 whose canonical shipped inputs changed.
 
+If you increment a plugin version, do not stop at `catalog/plugin-versions.json`.
+The surfaced Claude and Codex versions come from the generated artifacts, so you
+must run `scripts/build-plugins` and commit the regenerated manifests together
+with the version file update.
+
 ## Hooks
 
 1. Create `hooks/<event-name>/<concern>.sh` such as `hooks/post-tool-use/log.sh`

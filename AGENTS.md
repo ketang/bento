@@ -72,6 +72,9 @@ workflow.  In brief:
 
 Do not bump manually — `scripts/bump-plugin-versions` handles the version
 arithmetic.  After bumping, run `scripts/build-plugins` and commit both together.
+Updating `catalog/plugin-versions.json` alone is incomplete: Claude and Codex
+see the versions from the generated plugin manifests, so a version increment
+must include the regenerated outputs from `scripts/build-plugins`.
 
 Pushes are independent of version bumps. Push eagerly and frequently for safety.
 
