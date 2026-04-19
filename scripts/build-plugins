@@ -35,10 +35,7 @@ PLUGIN_ORDER = [
 EXTERNAL_PLUGINS = [
     {
         "name": "bugshot",
-        "description": (
-            "File issues from screenshots with a local gallery server, "
-            "inline comments, duplicate detection, and issue-flow skill delegation"
-        ),
+        "description": "Ephemeral screenshot gallery for visual bug review and issue filing",
         "repo": "ketang/bugshot",
         "ref": "main",
     },

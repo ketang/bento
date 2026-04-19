@@ -138,6 +138,10 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertIn("bugshot", plugin_names)
 
         bugshot = next(p for p in marketplace["plugins"] if p["name"] == "bugshot")
+        self.assertEqual(
+            bugshot["description"],
+            "Ephemeral screenshot gallery for visual bug review and issue filing",
+        )
         self.assertEqual(bugshot["source"], {"source": "github", "repo": "ketang/bugshot"})
         self.assertNotIn("version", bugshot)
 
