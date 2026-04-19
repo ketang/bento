@@ -19,7 +19,7 @@
     {
       "name": "trackers",
       "description": "Tracker skills for Beads and GitHub Issues workflows",
-      "version": "1.0.5",
+      "version": "1.0.6",
       "source": "./plugins/trackers",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -28,7 +28,7 @@
     {
       "name": "stacks",
       "description": "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "source": "./plugins/stacks",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -37,7 +37,7 @@
     {
       "name": "session-id",
       "description": "SessionStart hook that writes the Claude Code session ID to ~/.claude/session_id",
-      "version": "1.0.3",
+      "version": "1.0.4",
       "source": "./plugins/session-id",
       "author": {
         "name": "Ketan Gangatirkar"
