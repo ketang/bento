@@ -29,6 +29,10 @@ def ref_exists(ref: str, cwd: Path) -> bool:
     return git("show-ref", "--verify", ref, cwd=cwd, check=False).returncode == 0
 
 
+def rev_exists(rev: str, cwd: Path) -> bool:
+    return git("rev-parse", "--verify", f"{rev}^{{commit}}", cwd=cwd, check=False).returncode == 0
+
+
 def resolve_git_path(raw_path: str, cwd: Path) -> Path:
     path = Path(raw_path)
     if path.is_absolute():
@@ -101,3 +105,7 @@ def current_branch(cwd: Path) -> str:
 
 def rev_parse(ref: str, cwd: Path) -> str:
     return git_stdout("rev-parse", ref, cwd=cwd)
+
+
+def tree_for_ref(ref: str, cwd: Path) -> str:
+    return git_stdout("rev-parse", f"{ref}^{{tree}}", cwd=cwd)
