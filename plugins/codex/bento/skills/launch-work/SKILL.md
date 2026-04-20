@@ -1,6 +1,6 @@
 ---
 name: launch-work
-description: Hard trigger — invoke before implementation edits or file-modifying Bash commands that change code or repo-managed artifacts. Do not use this skill for tracker-only mutations such as creating, claiming, updating, or closing issues. If the tree is already dirty from implementation work in the current session, halt and apply this first. Claims work, creates branch+worktree, bootstraps env.
+description: Hard trigger — always invoke before any code or file edits, even small ones. Creates branch+worktree. Never skip for small changes. Not for tracker-only mutations (create/claim/update/close issues).
 recommended_model: mid
 ---
 
