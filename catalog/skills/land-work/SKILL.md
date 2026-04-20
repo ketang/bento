@@ -138,6 +138,7 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
 - Do not close the issue before the verified merge succeeds.
 - Do not fast-forward feature branches into the primary branch unless the repo
   explicitly requires it.
+- Always use regular merge commits (`--no-ff`). Never squash.
 - Do not treat pre-rebase, pre-merge, or pre-conflict verification as valid
   for a changed landing candidate.
 - Do not merge if the leased primary-branch ref moved after verification.
