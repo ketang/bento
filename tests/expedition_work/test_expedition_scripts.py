@@ -8,12 +8,7 @@ from tests.script_test_utils import git, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-BOOTSTRAP_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition-bootstrap.py"
-DISCOVER_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition-discover.py"
-START_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition-start-task.py"
-VERIFY_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition-verify.py"
-CLOSE_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition-close-task.py"
-FINISH_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition-finish.py"
+EXPEDITION_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition.py"
 
 
 def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -37,22 +32,22 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def run_bootstrap(self, *args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run([str(BOOTSTRAP_SCRIPT), *args], cwd or self.repo, check=check)
+        return run([str(EXPEDITION_SCRIPT), "bootstrap", *args], cwd or self.repo, check=check)
 
     def run_discover(self, *args: str, cwd: Path | None = None, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run([str(DISCOVER_SCRIPT), *args], cwd or self.repo, check=check)
+        return run([str(EXPEDITION_SCRIPT), "discover", *args], cwd or self.repo, check=check)
 
     def run_start(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run([str(START_SCRIPT), *args], cwd, check=check)
+        return run([str(EXPEDITION_SCRIPT), "start-task", *args], cwd, check=check)
 
     def run_verify(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run([str(VERIFY_SCRIPT), *args], cwd, check=check)
+        return run([str(EXPEDITION_SCRIPT), "verify", *args], cwd, check=check)
 
     def run_close(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run([str(CLOSE_SCRIPT), *args], cwd, check=check)
+        return run([str(EXPEDITION_SCRIPT), "close-task", *args], cwd, check=check)
 
     def run_finish(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-        return run([str(FINISH_SCRIPT), *args], cwd, check=check)
+        return run([str(EXPEDITION_SCRIPT), "finish", *args], cwd, check=check)
 
     def bootstrap_expedition(self, expedition: str = "alpha-expedition") -> tuple[dict[str, object], Path]:
         worktree = Path(self.temp_dir.name) / expedition
