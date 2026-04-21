@@ -8,7 +8,7 @@ from tests.script_test_utils import git, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-EXPEDITION_SCRIPT = REPO_ROOT / "catalog/skills/expedition-work/scripts/expedition.py"
+EXPEDITION_SCRIPT = REPO_ROOT / "catalog/skills/expedition/scripts/expedition.py"
 
 
 def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -23,7 +23,7 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
 
         git(self.repo, "init", "-b", "main")
         git(self.repo, "config", "user.name", "Expedition Work Test")
-        git(self.repo, "config", "user.email", "expedition-work@example.com")
+        git(self.repo, "config", "user.email", "expedition@example.com")
         write(self.repo / "README.md", "root\n")
         git(self.repo, "add", "README.md")
         git(self.repo, "commit", "-m", "initial commit")

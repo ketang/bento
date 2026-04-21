@@ -46,7 +46,7 @@ class BuildPluginsTest(unittest.TestCase):
         executable_helpers = [
             plugin_dir / "skills" / "build-vs-buy" / "scripts" / "build-vs-buy-discover.py",
             plugin_dir / "skills" / "closure" / "scripts" / "closure-scan.py",
-            plugin_dir / "skills" / "expedition-work" / "scripts" / "expedition.py",
+            plugin_dir / "skills" / "expedition" / "scripts" / "expedition.py",
             plugin_dir / "skills" / "generate-audit" / "scripts" / "audit-discover.py",
             plugin_dir / "skills" / "land-work" / "scripts" / "land-work-create-preview.py",
             plugin_dir / "skills" / "land-work" / "scripts" / "land-work-prepare.py",
