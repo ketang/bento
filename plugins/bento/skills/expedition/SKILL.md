@@ -1,10 +1,10 @@
 ---
-name: expedition-work
+name: expedition
 description: Use when a large body of mostly interdependent work should run as a named expedition on its own long-lived base branch, with one meaningful task branch at a time, durable in-branch plan/log/handoff files, and preserved failed experiments.
 recommended_model: high
 ---
 
-# Expedition Work
+# Expedition
 
 ## Model Guidance
 
@@ -68,26 +68,27 @@ helper below.
 
 ## Deterministic Helpers
 
-This skill includes helper scripts under `expedition-work/scripts/`:
+This skill includes a single CLI at `expedition/scripts/expedition.py` with
+the following subcommands:
 
-- `expedition-work/scripts/expedition-discover.py`
+- `expedition/scripts/expedition.py discover`
   - scan linked worktrees for branch-local expedition state and handoff files
-- `expedition-work/scripts/expedition-bootstrap.py --expedition <name> --worktree <path>`
+- `expedition/scripts/expedition.py bootstrap --expedition <name> --worktree <path>`
   - preview or create the base branch/worktree plus initial expedition files
-- `expedition-work/scripts/expedition-start-task.py --expedition <name> --slug <slug>`
+- `expedition/scripts/expedition.py start-task --expedition <name> --slug <slug>`
   - preview or create the next serial task or experiment branch/worktree and
     update the expedition state
-- `expedition-work/scripts/expedition-verify.py --expedition <name>`
+- `expedition/scripts/expedition.py verify --expedition <name>`
   - verify that the current checkout matches the expedition base worktree or
     the currently active task worktree
-- `expedition-work/scripts/expedition-close-task.py --expedition <name> --outcome kept|failed-experiment`
+- `expedition/scripts/expedition.py close-task --expedition <name> --outcome kept|failed-experiment`
   - merge a kept task into the base branch, rebase the base onto the primary
     branch, or preserve a failed experiment and update the expedition state
-- `expedition-work/scripts/expedition-finish.py --expedition <name>`
+- `expedition/scripts/expedition.py finish --expedition <name>`
   - verify that the expedition is ready for final landing and remove the
     branch-local expedition files before the last linear merge to the primary branch
 
-Use the helpers by script path, not `python3 <script>`, so approvals stay
+Use the helper by script path, not `python3 <script>`, so approvals stay
 scoped to the script.
 
 ## Session Start Protocol
@@ -97,7 +98,7 @@ At the start of every fresh session:
 1. Run:
 
 ```bash
-expedition-work/scripts/expedition-discover.py
+expedition/scripts/expedition.py discover
 ```
 
 2. If the user named an expedition, select it.
@@ -109,7 +110,7 @@ expedition-work/scripts/expedition-discover.py
 6. Verify the current checkout with:
 
 ```bash
-expedition-work/scripts/expedition-verify.py --expedition <name>
+expedition/scripts/expedition.py verify --expedition <name>
 ```
 
 Do not ask the user to reconstruct prior context when the expedition handoff
@@ -139,7 +140,7 @@ When the last kept task is complete:
 4. Remove the expedition-local docs with:
 
 ```bash
-expedition-work/scripts/expedition-finish.py --expedition <name> --apply
+expedition/scripts/expedition.py finish --expedition <name> --apply
 ```
 
 5. Commit the expedition-doc removal on the rebased base branch.
@@ -164,5 +165,5 @@ expedition-work/scripts/expedition-finish.py --expedition <name> --apply
 
 ## Templates
 
-Use the reference templates under `expedition-work/references/templates/` when
+Use the reference templates under `expedition/references/templates/` when
 you need to inspect or rewrite the human-facing expedition docs manually.
