@@ -22,9 +22,9 @@ or repo-artifact edits.
 
 - The active issue or approved change scope
 - The repo's documented claim model, if any
-- The repo's documented branch and worktree conventions, if any
-  - When the repo does not override the worktree root, use the shared default
-    `~/.local/share/worktrees/<repo>/<branch>`
+- The repo's documented branch and worktree conventions, if any. For
+  linked-worktree placement, follow
+  `launch-work/references/worktree-location.md`.
 
 ## Deterministic Helpers
 
@@ -56,14 +56,8 @@ target branch and worktree path are confirmed correct.
 4. If the repo requires claiming active work, inspect and claim it before
    implementation begins.
 5. Determine the target branch name and linked-worktree path from repo docs.
-   - If the repo does not define a different root, use
-     `~/.local/share/worktrees/<repo>/<branch>`.
-   - Treat that root as the default because it is durable, user-scoped, and
-     outside both the checkout and common clutter zones.
-   - Do not improvise a location under `/tmp`, `~`, the project parent, or the
-     checked-out repository.
-   - If repo docs override the root, prefer another dedicated durable worktree
-     directory, not an ad hoc "nearby" folder.
+   Follow `launch-work/references/worktree-location.md` for the default root,
+   prohibited locations, and override guidance.
 6. Preview the setup with:
 
 ```bash
@@ -109,11 +103,8 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
   before implementing the change, then make it pass.
 - Final task summaries should call out any automated test-suite additions or
   expansions, or explicitly state that test coverage was unchanged.
-- Do not place linked worktrees under `/tmp` unless the repo explicitly
-  documents that as safe and durable enough for the task.
-- Do not place linked worktrees directly under the user's home directory, the
-  project parent directory, or inside the checked-out repository unless the
-  repo explicitly documents that convention.
+- Follow the placement prohibitions in
+  `launch-work/references/worktree-location.md`.
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
 - If automated coverage is not feasible, state that explicitly and use the
   closest available verification path.

@@ -28,6 +28,13 @@ Use this skill when the user wants an "expedition" rather than a one-off task:
 - The intended task decomposition, or enough context to write one
 - The repo's primary branch, if it differs from the detected default
 - The repo's verification gates
+- The linked-worktree location. Follow
+  `../launch-work/references/worktree-location.md`. The expedition base
+  worktree and all task and experiment worktrees must live under the same
+  durable root — task worktrees are created as siblings of the base worktree.
+  With the shared default, the base worktree is
+  `~/.local/share/worktrees/<repo>/<expedition>` and task worktrees land at
+  `~/.local/share/worktrees/<repo>/<task-branch>`.
 
 ## Workflow Model
 
