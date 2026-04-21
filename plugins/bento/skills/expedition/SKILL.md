@@ -83,7 +83,7 @@ the following subcommands:
     the currently active task worktree
 - `expedition/scripts/expedition.py close-task --expedition <name> --outcome kept|failed-experiment`
   - merge a kept task into the base branch, rebase the base onto the primary
-    branch, or preserve a failed experiment and update the expedition state
+  branch, or preserve a failed experiment and update the expedition state
 - `expedition/scripts/expedition.py finish --expedition <name>`
   - verify that the expedition is ready for final landing and remove the
     branch-local expedition files before the last linear merge to the primary branch

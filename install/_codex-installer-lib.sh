@@ -109,6 +109,7 @@ fi
 
 python3 - "$repo_root" "$MARKETPLACE_PATH" "$PLUGIN_ROOT" <<'PY'
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -120,6 +121,12 @@ local_names = ("bento", "trackers", "stacks")
 external_names = ("bugshot",)
 bento_names = set(local_names) | set(external_names)
 
+def local_source_path(name: str) -> str:
+    relative = Path(os.path.relpath(plugin_root / name, start=target_path.parent)).as_posix()
+    if relative.startswith("."):
+        return relative
+    return f"./{relative}"
+
 source_plugins = []
 for name in local_names:
     manifest_path = repo_root / "plugins" / name / ".codex-plugin" / "plugin.json"
@@ -130,7 +137,7 @@ for name in local_names:
             "name": name,
             "source": {
                 "source": "local",
-                "path": f"./plugins/{name}",
+                "path": local_source_path(name),
             },
             "policy": {
                 "installation": "AVAILABLE",
@@ -151,7 +158,7 @@ for name in external_names:
             "name": name,
             "source": {
                 "source": "local",
-                "path": f"./plugins/{name}",
+                "path": local_source_path(name),
             },
             "policy": {
                 "installation": "AVAILABLE",
