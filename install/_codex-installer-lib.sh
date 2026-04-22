@@ -105,7 +105,19 @@ done
 
 if [[ -n "$CODEX_PLUGIN_CACHE_ROOT" && -n "$CODEX_ENABLED_PLUGIN" ]]; then
   src="${PLUGIN_ROOT}/${CODEX_ENABLED_PLUGIN}"
-  dest="${CODEX_PLUGIN_CACHE_ROOT}/${CODEX_ENABLED_PLUGIN}"
+  cache_key="$(python3 - "$src" <<'PY'
+import hashlib
+import sys
+from pathlib import Path
+
+root = Path(sys.argv[1])
+manifest = root / ".codex-plugin" / "plugin.json"
+payload = manifest.read_bytes()
+print(hashlib.sha1(payload).hexdigest())
+PY
+)"
+  plugin_cache_dir="${CODEX_PLUGIN_CACHE_ROOT}/${CODEX_ENABLED_PLUGIN}"
+  dest="${plugin_cache_dir}/${cache_key}"
   staging="${CODEX_PLUGIN_CACHE_ROOT}/.${CODEX_ENABLED_PLUGIN}.tmp"
 
   if [[ ! -f "${src}/.codex-plugin/plugin.json" ]]; then
@@ -117,7 +129,8 @@ if [[ -n "$CODEX_PLUGIN_CACHE_ROOT" && -n "$CODEX_ENABLED_PLUGIN" ]]; then
   rm -rf "$staging"
   mkdir -p "$staging"
   cp -R "${src}/." "$staging/"
-  rm -rf "$dest"
+  rm -rf "$plugin_cache_dir"
+  mkdir -p "$plugin_cache_dir"
   mv "$staging" "$dest"
 fi
 
@@ -144,7 +157,7 @@ bento_names = set(local_names) | set(external_names)
 
 def local_source_path(name: str) -> str:
     relative = Path(os.path.relpath(plugin_root / name, start=target_path.parent)).as_posix()
-    if relative.startswith("."):
+    if relative.startswith("./"):
         return relative
     return f"./{relative}"
 
@@ -279,7 +292,7 @@ fi
 
 log "installed Bento plugins to ${PLUGIN_ROOT}"
 if [[ -n "$CODEX_PLUGIN_CACHE_ROOT" && -n "$CODEX_ENABLED_PLUGIN" ]]; then
-  log "installed ${CODEX_ENABLED_PLUGIN}@bento to Codex plugin cache at ${CODEX_PLUGIN_CACHE_ROOT}/${CODEX_ENABLED_PLUGIN}"
+  log "installed ${CODEX_ENABLED_PLUGIN}@bento to Codex plugin cache at ${CODEX_PLUGIN_CACHE_ROOT}/${CODEX_ENABLED_PLUGIN}/${cache_key}"
 fi
 log "updated Codex marketplace at ${MARKETPLACE_PATH}"
 if [[ -n "$CODEX_CONFIG_PATH" && -n "$CODEX_ENABLED_PLUGIN" ]]; then

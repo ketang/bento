@@ -47,18 +47,18 @@ class CodexInstallerTest(unittest.TestCase):
         self.assertEqual(
             actual_sources,
             {
-                "bento": "../../plugins/bento",
-                "trackers": "../../plugins/trackers",
-                "stacks": "../../plugins/stacks",
-                "bugshot": "../../plugins/bugshot",
+                "bento": "./../../plugins/bento",
+                "trackers": "./../../plugins/trackers",
+                "stacks": "./../../plugins/stacks",
+                "bugshot": "./../../plugins/bugshot",
             },
         )
         self.assertEqual((plugin_root / "bento" / "README.txt").read_text(encoding="utf-8"), "bento\n")
         self.assertEqual((plugin_root / "bugshot" / "README.txt").read_text(encoding="utf-8"), "bugshot\n")
-        self.assertEqual(
-            (codex_cache_root / "bento" / "README.txt").read_text(encoding="utf-8"),
-            "bento\n",
-        )
+        bento_cache_versions = list((codex_cache_root / "bento").iterdir())
+        self.assertEqual(len(bento_cache_versions), 1)
+        self.assertEqual((bento_cache_versions[0] / "README.txt").read_text(encoding="utf-8"), "bento\n")
+        self.assertTrue((bento_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse((codex_cache_root / "trackers").exists())
         self.assertIn('[plugins."bento@bento"]\nenabled = true', codex_config_path.read_text(encoding="utf-8"))
 
@@ -79,10 +79,10 @@ class CodexInstallerTest(unittest.TestCase):
         self.assertEqual(
             actual_sources,
             {
-                "bento": "../../plugins/bento",
-                "trackers": "../../plugins/trackers",
-                "stacks": "../../plugins/stacks",
-                "bugshot": "../../plugins/bugshot",
+                "bento": "./../../plugins/bento",
+                "trackers": "./../../plugins/trackers",
+                "stacks": "./../../plugins/stacks",
+                "bugshot": "./../../plugins/bugshot",
             },
         )
         self.assertTrue((plugin_root / "trackers" / ".codex-plugin" / "plugin.json").exists())
@@ -103,6 +103,24 @@ class CodexInstallerTest(unittest.TestCase):
         config_text = codex_config_path.read_text(encoding="utf-8")
         self.assertEqual(config_text.count('[plugins."bento@bento"]'), 1)
         self.assertEqual(config_text.count("enabled = true"), 2)
+
+    def test_home_install_removes_legacy_unkeyed_cache_layout(self) -> None:
+        install_root = self.root / "home-legacy-cache"
+        legacy_cache = install_root / ".codex" / "plugins" / "cache" / "bento" / "bento"
+        (legacy_cache / "skills").mkdir(parents=True, exist_ok=True)
+        (legacy_cache / ".codex-plugin").mkdir(parents=True, exist_ok=True)
+        (legacy_cache / "skills" / "stale.txt").write_text("stale\n", encoding="utf-8")
+
+        _plugin_root, _marketplace_path, codex_cache_root, _codex_config_path, _result = self.run_installer(
+            "home",
+            install_root,
+            enable_codex=True,
+        )
+
+        self.assertFalse((legacy_cache / "skills").exists())
+        bento_cache_versions = list((codex_cache_root / "bento").iterdir())
+        self.assertEqual(len(bento_cache_versions), 1)
+        self.assertTrue((bento_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
 
     def run_installer(
         self,
