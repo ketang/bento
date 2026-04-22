@@ -13,6 +13,9 @@ INSTALL_SCOPE="${BENTO_INSTALL_SCOPE:?BENTO_INSTALL_SCOPE must be set to home or
 INSTALL_ROOT="${BENTO_INSTALL_ROOT:?BENTO_INSTALL_ROOT must be set}"
 PLUGIN_ROOT="${BENTO_PLUGIN_ROOT:?BENTO_PLUGIN_ROOT must be set}"
 MARKETPLACE_PATH="${BENTO_MARKETPLACE_PATH:?BENTO_MARKETPLACE_PATH must be set}"
+CODEX_PLUGIN_CACHE_ROOT="${BENTO_CODEX_PLUGIN_CACHE_ROOT:-}"
+CODEX_CONFIG_PATH="${BENTO_CODEX_CONFIG_PATH:-}"
+CODEX_ENABLED_PLUGIN="${BENTO_CODEX_ENABLED_PLUGIN:-bento}"
 
 require_cmd() {
   if ! command -v "$1" >/dev/null 2>&1; then
@@ -99,6 +102,24 @@ for ext_name in "${!EXTERNAL_PLUGIN_REPOS[@]}"; do
   rm -rf "$dest"
   mv "$staging" "$dest"
 done
+
+if [[ -n "$CODEX_PLUGIN_CACHE_ROOT" && -n "$CODEX_ENABLED_PLUGIN" ]]; then
+  src="${PLUGIN_ROOT}/${CODEX_ENABLED_PLUGIN}"
+  dest="${CODEX_PLUGIN_CACHE_ROOT}/${CODEX_ENABLED_PLUGIN}"
+  staging="${CODEX_PLUGIN_CACHE_ROOT}/.${CODEX_ENABLED_PLUGIN}.tmp"
+
+  if [[ ! -f "${src}/.codex-plugin/plugin.json" ]]; then
+    echo "missing installed plugin bundle for Codex cache: ${CODEX_ENABLED_PLUGIN}" >&2
+    exit 1
+  fi
+
+  mkdir -p "$CODEX_PLUGIN_CACHE_ROOT"
+  rm -rf "$staging"
+  mkdir -p "$staging"
+  cp -R "${src}/." "$staging/"
+  rm -rf "$dest"
+  mv "$staging" "$dest"
+fi
 
 if [[ -f "$MARKETPLACE_PATH" ]]; then
   timestamp="$(date +%Y%m%d%H%M%S)"
@@ -202,6 +223,66 @@ target_path.parent.mkdir(parents=True, exist_ok=True)
 target_path.write_text(json.dumps(target, indent=2) + "\n", encoding="utf-8")
 PY
 
+if [[ -n "$CODEX_CONFIG_PATH" && -n "$CODEX_ENABLED_PLUGIN" ]]; then
+  plugin_id="${CODEX_ENABLED_PLUGIN}@bento"
+  mkdir -p "$(dirname "$CODEX_CONFIG_PATH")"
+  if [[ -f "$CODEX_CONFIG_PATH" ]]; then
+    timestamp="$(date +%Y%m%d%H%M%S)"
+    backup_path="${CODEX_CONFIG_PATH}.bak.${timestamp}"
+    cp "$CODEX_CONFIG_PATH" "$backup_path"
+    log "backed up existing Codex config to ${backup_path}"
+  fi
+
+  python3 - "$CODEX_CONFIG_PATH" "$plugin_id" <<'PY'
+import sys
+from pathlib import Path
+
+config_path = Path(sys.argv[1])
+plugin_id = sys.argv[2]
+section = f'[plugins."{plugin_id}"]'
+
+text = config_path.read_text(encoding="utf-8") if config_path.exists() else ""
+lines = text.splitlines()
+
+section_index = None
+for index, line in enumerate(lines):
+    if line.strip() == section:
+        section_index = index
+        break
+
+if section_index is None:
+    if lines and lines[-1].strip():
+        lines.append("")
+    lines.extend([section, "enabled = true"])
+else:
+    next_section = len(lines)
+    for index in range(section_index + 1, len(lines)):
+        stripped = lines[index].strip()
+        if stripped.startswith("[") and stripped.endswith("]"):
+            next_section = index
+            break
+
+    enabled_index = None
+    for index in range(section_index + 1, next_section):
+        if lines[index].split("=", 1)[0].strip() == "enabled":
+            enabled_index = index
+            break
+
+    if enabled_index is None:
+        lines.insert(section_index + 1, "enabled = true")
+    else:
+        lines[enabled_index] = "enabled = true"
+
+config_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+PY
+fi
+
 log "installed Bento plugins to ${PLUGIN_ROOT}"
+if [[ -n "$CODEX_PLUGIN_CACHE_ROOT" && -n "$CODEX_ENABLED_PLUGIN" ]]; then
+  log "installed ${CODEX_ENABLED_PLUGIN}@bento to Codex plugin cache at ${CODEX_PLUGIN_CACHE_ROOT}/${CODEX_ENABLED_PLUGIN}"
+fi
 log "updated Codex marketplace at ${MARKETPLACE_PATH}"
+if [[ -n "$CODEX_CONFIG_PATH" && -n "$CODEX_ENABLED_PLUGIN" ]]; then
+  log "enabled ${CODEX_ENABLED_PLUGIN}@bento in Codex config at ${CODEX_CONFIG_PATH}"
+fi
 log "restart Codex if it is already running"

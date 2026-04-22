@@ -29,9 +29,13 @@ class CodexInstallerTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_home_install_writes_paths_relative_to_marketplace_file(self) -> None:
+    def test_home_install_writes_paths_relative_to_marketplace_file_and_enables_bento(self) -> None:
         install_root = self.root / "home"
-        plugin_root, marketplace_path, _result = self.run_installer("home", install_root)
+        plugin_root, marketplace_path, codex_cache_root, codex_config_path, _result = self.run_installer(
+            "home",
+            install_root,
+            enable_codex=True,
+        )
 
         marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
         actual_sources = {
@@ -51,10 +55,19 @@ class CodexInstallerTest(unittest.TestCase):
         )
         self.assertEqual((plugin_root / "bento" / "README.txt").read_text(encoding="utf-8"), "bento\n")
         self.assertEqual((plugin_root / "bugshot" / "README.txt").read_text(encoding="utf-8"), "bugshot\n")
+        self.assertEqual(
+            (codex_cache_root / "bento" / "README.txt").read_text(encoding="utf-8"),
+            "bento\n",
+        )
+        self.assertFalse((codex_cache_root / "trackers").exists())
+        self.assertIn('[plugins."bento@bento"]\nenabled = true', codex_config_path.read_text(encoding="utf-8"))
 
     def test_project_install_writes_paths_relative_to_marketplace_file(self) -> None:
         install_root = self.root / "project"
-        plugin_root, marketplace_path, _result = self.run_installer("project", install_root)
+        plugin_root, marketplace_path, codex_cache_root, codex_config_path, _result = self.run_installer(
+            "project",
+            install_root,
+        )
 
         marketplace = json.loads(marketplace_path.read_text(encoding="utf-8"))
         actual_sources = {
@@ -74,11 +87,35 @@ class CodexInstallerTest(unittest.TestCase):
         )
         self.assertTrue((plugin_root / "trackers" / ".codex-plugin" / "plugin.json").exists())
         self.assertTrue((plugin_root / "stacks" / ".codex-plugin" / "plugin.json").exists())
+        self.assertFalse(codex_cache_root.exists())
+        self.assertFalse(codex_config_path.exists())
 
-    def run_installer(self, scope: str, install_root: Path) -> tuple[Path, Path, subprocess.CompletedProcess[str]]:
+    def test_codex_config_enablement_is_idempotent(self) -> None:
+        install_root = self.root / "home-idempotent"
+        _plugin_root, _marketplace_path, _codex_cache_root, codex_config_path, _result = self.run_installer(
+            "home",
+            install_root,
+            enable_codex=True,
+        )
+
+        self.run_installer("home", install_root, enable_codex=True)
+
+        config_text = codex_config_path.read_text(encoding="utf-8")
+        self.assertEqual(config_text.count('[plugins."bento@bento"]'), 1)
+        self.assertEqual(config_text.count("enabled = true"), 2)
+
+    def run_installer(
+        self,
+        scope: str,
+        install_root: Path,
+        *,
+        enable_codex: bool = False,
+    ) -> tuple[Path, Path, Path, Path, subprocess.CompletedProcess[str]]:
         install_root.mkdir(parents=True, exist_ok=True)
         plugin_root = install_root / "plugins"
         marketplace_path = install_root / ".agents" / "plugins" / "marketplace.json"
+        codex_cache_root = install_root / ".codex" / "plugins" / "cache" / "bento"
+        codex_config_path = install_root / ".codex" / "config.toml"
         marketplace_path.parent.mkdir(parents=True, exist_ok=True)
         marketplace_path.write_text(
             json.dumps(
@@ -98,6 +135,13 @@ class CodexInstallerTest(unittest.TestCase):
             + "\n",
             encoding="utf-8",
         )
+        if enable_codex and not codex_config_path.exists():
+            codex_config_path.parent.mkdir(parents=True, exist_ok=True)
+            codex_config_path.write_text(
+                '[plugins."github@openai-curated"]\n'
+                "enabled = true\n",
+                encoding="utf-8",
+            )
 
         env = os.environ.copy()
         env["PATH"] = f"{self.bin_dir}:{env.get('PATH', '')}"
@@ -108,6 +152,10 @@ class CodexInstallerTest(unittest.TestCase):
         env["BENTO_PLUGIN_ROOT"] = str(plugin_root)
         env["BENTO_MARKETPLACE_PATH"] = str(marketplace_path)
         env["BENTO_ARCHIVE_URL"] = "https://example.invalid/bento.tar.gz"
+        if enable_codex:
+            env["BENTO_CODEX_PLUGIN_CACHE_ROOT"] = str(codex_cache_root)
+            env["BENTO_CODEX_CONFIG_PATH"] = str(codex_config_path)
+            env["BENTO_CODEX_ENABLED_PLUGIN"] = "bento"
 
         result = subprocess.run(
             ["bash", str(INSTALLER)],
@@ -122,9 +170,12 @@ class CodexInstallerTest(unittest.TestCase):
         plugin_names = [entry["name"] for entry in updated_marketplace["plugins"]]
         self.assertIn("keep-me", plugin_names)
         backups = sorted(marketplace_path.parent.glob("marketplace.json.bak.*"))
-        self.assertEqual(len(backups), 1)
+        self.assertGreaterEqual(len(backups), 1)
+        if enable_codex:
+            config_backups = sorted(codex_config_path.parent.glob("config.toml.bak.*"))
+            self.assertGreaterEqual(len(config_backups), 1)
 
-        return plugin_root, marketplace_path, result
+        return plugin_root, marketplace_path, codex_cache_root, codex_config_path, result
 
     def _write_main_archive(self) -> None:
         source_root = self.root / "source" / "bento-main"
