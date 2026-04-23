@@ -274,5 +274,64 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertEqual(payload["expeditions"][0]["active_task_branch"], "alpha-expedition-02-legacy-slug")
 
 
+    def test_start_task_allows_second_task_in_parallel(self) -> None:
+        _, base_worktree = self.bootstrap_expedition()
+        self.run_start(
+            "--expedition", "alpha-expedition", "--slug", "first", "--apply",
+            cwd=base_worktree,
+        )
+        result = self.run_start(
+            "--expedition", "alpha-expedition", "--slug", "second", "--apply",
+            cwd=base_worktree,
+        )
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["created"])
+        state = self.read_state(base_worktree)
+        branches = [item["branch"] for item in state["active_branches"]]
+        self.assertIn("alpha-expedition-01-first", branches)
+        self.assertIn("alpha-expedition-02-second", branches)
+
+    def test_start_task_rejects_second_perf_experiment(self) -> None:
+        _, base_worktree = self.bootstrap_expedition()
+        self.run_start(
+            "--expedition", "alpha-expedition", "--kind", "perf-experiment",
+            "--slug", "first-perf", "--apply",
+            cwd=base_worktree,
+        )
+        result = self.run_start(
+            "--expedition", "alpha-expedition", "--kind", "perf-experiment",
+            "--slug", "second-perf", "--apply",
+            cwd=base_worktree, check=False,
+        )
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(any("perf-experiment" in err for err in payload["errors"]))
+
+    def test_start_task_perf_experiment_does_not_block_regular_task(self) -> None:
+        _, base_worktree = self.bootstrap_expedition()
+        self.run_start(
+            "--expedition", "alpha-expedition", "--kind", "perf-experiment",
+            "--slug", "probe", "--apply",
+            cwd=base_worktree,
+        )
+        result = self.run_start(
+            "--expedition", "alpha-expedition", "--slug", "unrelated-task", "--apply",
+            cwd=base_worktree,
+        )
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["created"])
+
+    def test_perf_experiment_branch_name_uses_perfexp_prefix(self) -> None:
+        _, base_worktree = self.bootstrap_expedition()
+        result = self.run_start(
+            "--expedition", "alpha-expedition", "--kind", "perf-experiment",
+            "--slug", "probe-a", "--apply",
+            cwd=base_worktree,
+        )
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["target_branch"], "alpha-expedition-perfexp-01-probe-a")
+        self.assertEqual(payload["kind"], "perf-experiment")
+
+
 if __name__ == "__main__":
     unittest.main()

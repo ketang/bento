@@ -179,10 +179,12 @@ def _start_task_evaluate(
     if not is_linked_worktree(cwd):
         errors.append("start-task requires the expedition base checkout to be a linked worktree")
     existing_active = state.get("active_branches") or []
-    if existing_active:
-        errors.append(
-            f"expedition already has an active branch: {existing_active[0]['branch']}"
-        )
+    if args.kind == "perf-experiment":
+        conflicting = [item for item in existing_active if item.get("kind") == "perf-experiment"]
+        if conflicting:
+            errors.append(
+                f"expedition already has an active perf-experiment: {conflicting[0]['branch']}"
+            )
     if not is_clean(cwd):
         errors.append("expedition base worktree is dirty; commit or stash changes before creating the next task")
     if ref_exists(f"refs/heads/{branch}", cwd=checkout_root):
@@ -235,8 +237,9 @@ def cmd_start_task(args: argparse.Namespace) -> int:
             return _emit(payload, worktree_result.returncode)
 
         created = True
+        task_number = int(state["next_task_number"])
         active_task = {
-            "number": int(state["next_task_number"]),
+            "number": task_number,
             "kind": str(result["kind"]),
             "slug": slugify(args.slug),
             "branch": branch,
@@ -245,6 +248,7 @@ def cmd_start_task(args: argparse.Namespace) -> int:
             "started_at": utc_now(),
         }
         state.setdefault("active_branches", []).append(active_task)
+        state["next_task_number"] = task_number + 1
         state["status"] = "task_in_progress"
         state["updated_at"] = utc_now()
         state["next_action"] = f"Complete work on `{branch}` in `{target_worktree}`."
@@ -374,7 +378,7 @@ def cmd_close_task(args: argparse.Namespace) -> int:
         state["active_branches"] = [item for item in active_list if item["branch"] != target["branch"]]
         if not state["active_branches"]:
             state["status"] = "ready_for_task"
-        state["next_task_number"] = int(target["number"]) + 1
+        state["next_task_number"] = max(int(state["next_task_number"]), int(target["number"]) + 1)
         state["updated_at"] = utc_now()
         state["next_action"] = (
             "Create the next task branch from the rebased expedition base branch."
@@ -513,8 +517,12 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("start-task", help="create the next serial task or experiment branch")
     p.add_argument("--expedition", required=True, help="expedition name")
     p.add_argument("--slug", required=True, help="meaningful task slug seed")
-    p.add_argument("--kind", choices=("task", "experiment"), default="task",
-                   help="whether the next branch is a normal task or an experiment")
+    p.add_argument(
+        "--kind",
+        choices=("task", "experiment", "perf-experiment"),
+        default="task",
+        help="whether the next branch is a normal task, a regular experiment, or a performance optimization experiment",
+    )
     p.add_argument("--apply", action="store_true", help="create the next task branch/worktree and update state")
     p.set_defaults(func=cmd_start_task)
 

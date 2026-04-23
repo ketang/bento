@@ -73,6 +73,8 @@ def slugify(raw: str) -> str:
 def next_branch_name(state: dict[str, object], kind: str, slug: str) -> str:
     number = int(state["next_task_number"])
     expedition = str(state["expedition"])
+    if kind == "perf-experiment":
+        return f"{expedition}-perfexp-{number:02d}-{slug}"
     if kind == "experiment":
         return f"{expedition}-exp-{number:02d}-{slug}"
     return f"{expedition}-{number:02d}-{slug}"
