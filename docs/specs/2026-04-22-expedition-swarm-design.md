@@ -75,20 +75,27 @@ Serial task execution is replaced with swarm-by-default.
   block them. Hardware contention across kinds is managed by the coordinator,
   not by this rule.
 
+**Quality bar.** Experiment branches — regular and performance optimization
+alike — are held to the same production-quality bar as task branches. An
+experiment is called an experiment because the hypothesis may not pan out,
+not because the coding standard is lower. No measurement scaffolding, debug
+prints, stubbed tests, or disabled logging are left behind. The implementing
+agent is not done until the branch is production-quality, whether the
+experiment is kept or failed.
+
 **Rebase rules.**
 
 - The expedition base branch rebases onto primary. Unchanged.
-- A task or regular experiment branch rebases exactly once, at land time,
-  onto the current base tip. This is the only exception to the previous
-  "branches never rebase" rule.
+- Any kept branch — task, regular experiment, or performance optimization
+  experiment — rebases exactly once, at land time, onto the current base tip.
+  This is the only exception to the previous "branches never rebase" rule.
 - In-flight branches are not proactively rebased when the base moves. They
   catch up at their own land time.
-- Performance optimization experiment branches do not rebase and do not
-  auto-merge. Their outcome is recorded in `state.json` and `log.md`. If the
-  changes should land, the coordinator carries them forward as a regular
-  task, not as a merge of the experiment branch.
+- Failed experiment branches (regular or performance optimization) do not
+  rebase. They are preserved as-is.
 
-**Landing cycle per kept task or regular experiment.**
+**Landing cycle per kept branch (task, regular experiment, or performance
+optimization experiment).**
 
 The expedition coordinator holds one landing lease per expedition, serial,
 enforced in `state.json`. For each completing branch:
