@@ -83,8 +83,13 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     write or update the smallest relevant test so it fails against the current
     or missing behavior. Then implement the change, make the test pass, and run
     the relevant verification gates.
-11. If the fresh worktree cannot resolve dependencies, run the repo's documented
-    install/bootstrap step before debugging build failures.
+11. Install build/runtime dependencies in the new worktree before the first
+    build, test, or typecheck. Prefer the repo's documented bootstrap command;
+    otherwise detect by lockfile per
+    `launch-work/references/dependency-bootstrap.md`, which also covers
+    disk-efficient choices on ext4 (pnpm store, shared module caches). Avoid
+    overriding global cache directories per worktree unless the repo documents
+    a reason to do so.
 12. In the final task summary, include a brief note describing any additions or
     expansions made to the automated test suite. If test coverage did not
     change, say so explicitly.
