@@ -332,6 +332,70 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertEqual(payload["target_branch"], "alpha-expedition-perfexp-01-probe-a")
         self.assertEqual(payload["kind"], "perf-experiment")
 
+    def test_close_task_rebases_task_branch_onto_current_base_tip(self) -> None:
+        # Launch two parallel tasks, advance base via closing the first,
+        # then close the second and verify it was rebased onto the advanced base.
+        _, base_worktree = self.bootstrap_expedition()
+
+        start_a = json.loads(
+            self.run_start(
+                "--expedition", "alpha-expedition", "--slug", "task-a", "--apply",
+                cwd=base_worktree,
+            ).stdout
+        )
+        start_b = json.loads(
+            self.run_start(
+                "--expedition", "alpha-expedition", "--slug", "task-b", "--apply",
+                cwd=base_worktree,
+            ).stdout
+        )
+        a_worktree = Path(start_a["target_worktree"])
+        b_worktree = Path(start_b["target_worktree"])
+
+        write(a_worktree / "a.txt", "a\n")
+        git(a_worktree, "add", "a.txt")
+        git(a_worktree, "commit", "-m", "add a")
+
+        write(b_worktree / "b.txt", "b\n")
+        git(b_worktree, "add", "b.txt")
+        git(b_worktree, "commit", "-m", "add b")
+
+        self.run_close(
+            "--expedition", "alpha-expedition", "--branch", start_a["target_branch"],
+            "--outcome", "kept", "--summary", "A", "--apply",
+            cwd=base_worktree,
+        )
+        self.run_close(
+            "--expedition", "alpha-expedition", "--branch", start_b["target_branch"],
+            "--outcome", "kept", "--summary", "B", "--apply",
+            cwd=base_worktree,
+        )
+
+        # After both land, both files exist on base.
+        self.assertTrue((base_worktree / "a.txt").exists())
+        self.assertTrue((base_worktree / "b.txt").exists())
+
+    def test_close_task_lease_is_recorded_and_released(self) -> None:
+        _, base_worktree = self.bootstrap_expedition()
+        start = json.loads(
+            self.run_start(
+                "--expedition", "alpha-expedition", "--slug", "only", "--apply",
+                cwd=base_worktree,
+            ).stdout
+        )
+        task_worktree = Path(start["target_worktree"])
+        write(task_worktree / "task.txt", "kept\n")
+        git(task_worktree, "add", "task.txt")
+        git(task_worktree, "commit", "-m", "add kept task result")
+
+        self.run_close(
+            "--expedition", "alpha-expedition", "--outcome", "kept",
+            "--summary", "done", "--apply",
+            cwd=base_worktree,
+        )
+        state = self.read_state(base_worktree)
+        self.assertIsNone(state["landing_lease"])
+
 
 if __name__ == "__main__":
     unittest.main()

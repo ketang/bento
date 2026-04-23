@@ -297,6 +297,11 @@ def _close_task_evaluate(
         errors.append("multiple active branches — pass --branch to select one")
     elif args.outcome == "failed-experiment" and target["kind"] != "experiment":
         errors.append("failed-experiment outcome is only valid for experiment branches")
+    existing_lease = state.get("landing_lease")
+    if existing_lease and target and existing_lease["held_by_branch"] != target["branch"]:
+        errors.append(
+            f"landing lease is held by {existing_lease['held_by_branch']}; close that branch first"
+        )
     if not is_clean(cwd):
         errors.append("expedition base worktree is dirty; close-task expects a clean base worktree before merge/rebase")
     if target and args.outcome == "kept":
@@ -345,18 +350,43 @@ def cmd_close_task(args: argparse.Namespace) -> int:
         task_branch = str(target["branch"])
         state_file = Path(str(result["state_file"]))
 
+        state["landing_lease"] = {"held_by_branch": target["branch"], "acquired_at": utc_now()}
+        write_state(state_file, state)
+        commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): acquire landing lease for {target['branch']}")
+
         if args.outcome == "kept":
+            target_worktree_path = Path(str(target["worktree"])).resolve()
+            rebase_task = git(
+                "rebase", str(state["base_branch"]),
+                cwd=target_worktree_path, check=False,
+            )
+            if rebase_task.returncode != 0:
+                state["landing_lease"] = None
+                write_state(state_file, state)
+                commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed rebase for {target['branch']}")
+                payload = {
+                    **result, "updated": False, "merged": False, "rebased": False,
+                    "errors": [f"failed to rebase {target['branch']} onto {state['base_branch']}: {rebase_task.stderr.strip()}"],
+                }
+                return _emit(payload, rebase_task.returncode)
+
             merge_result = git(
                 "merge", "--no-ff", task_branch, "-m", f"Merge branch '{task_branch}'",
                 cwd=cwd, check=False,
             )
             if merge_result.returncode != 0:
+                state["landing_lease"] = None
+                write_state(state_file, state)
+                commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed merge for {target['branch']}")
                 payload = {**result, "updated": False, "merged": False, "rebased": False, "errors": [merge_result.stderr.strip()]}
                 return _emit(payload, merge_result.returncode)
             merged = True
 
             rebase_result = git("rebase", str(state["primary_branch"]), cwd=cwd, check=False)
             if rebase_result.returncode != 0:
+                state["landing_lease"] = None
+                write_state(state_file, state)
+                commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed primary rebase for {target['branch']}")
                 payload = {**result, "updated": False, "merged": merged, "rebased": False, "errors": [rebase_result.stderr.strip()]}
                 return _emit(payload, rebase_result.returncode)
             rebased = True
@@ -385,6 +415,7 @@ def cmd_close_task(args: argparse.Namespace) -> int:
             if rebased
             else "Create the next task branch from the expedition base branch."
         )
+        state["landing_lease"] = None
         write_state(state_file, state)
         append_log_entry(
             log_path(cwd, str(state["expedition"])),
