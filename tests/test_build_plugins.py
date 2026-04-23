@@ -4,6 +4,7 @@ import json
 import os
 import re
 import shutil
+import subprocess
 import tempfile
 import unittest
 from pathlib import Path
@@ -35,6 +36,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.module.HOOKS_CATALOG_DIR = self.root / "catalog" / "hooks"
         self.module.PLUGINS_DIR = self.root / "plugins"
         self.module.CLAUDE_MARKETPLACE_FILE = self.root / ".claude-plugin" / "marketplace.json"
+        self.module.EXTERNAL_SKILLS = {}
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -131,40 +133,68 @@ class BuildPluginsTest(unittest.TestCase):
             normalized_skill_text = re.sub(r"\s+", " ", skill_text)
             self.assertIn(expected_phrase, normalized_skill_text)
 
-    def test_external_plugins_appear_in_marketplace_with_github_source(self) -> None:
-        self.module.build_repo(run_verification=False)
+    def test_external_skills_registry_declares_bugshot_under_bento(self) -> None:
+        module = load_build_plugins_module()
+        entries = module.EXTERNAL_SKILLS.get("bento", [])
+        bugshot = next((e for e in entries if e["name"] == "bugshot"), None)
+        self.assertIsNotNone(bugshot, "bugshot should be registered as an external skill of bento")
+        self.assertEqual(bugshot["repo"], "ketang/bugshot")
+        self.assertRegex(bugshot["ref"], r"^[0-9a-f]{40}$", "ref should be a pinned commit SHA")
 
-        marketplace = json.loads(
-            (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+    def test_fetch_external_skill_places_skill_md_at_destination_root(self) -> None:
+        fake_repo = self._build_fake_skill_repo("bugshot")
+        destination = self.root / "plugins" / "bento" / "skills" / "bugshot"
+        self.module.fetch_external_skill(destination, str(fake_repo), "HEAD")
+
+        self.assertTrue((destination / "SKILL.md").exists())
+        self.assertFalse((destination / ".git").exists())
+
+    def test_fetch_external_skill_include_restricts_copied_paths(self) -> None:
+        fake_repo = self._build_fake_skill_repo("bugshot")
+        (fake_repo / "extra.py").write_text("# drop me\n", encoding="utf-8")
+        (fake_repo / "docs").mkdir()
+        (fake_repo / "docs" / "notes.md").write_text("ignore\n", encoding="utf-8")
+        subprocess.run(["git", "-C", str(fake_repo), "add", "-A"], check=True)
+        subprocess.run(["git", "-C", str(fake_repo), "commit", "--quiet", "-m", "add bloat"], check=True)
+
+        destination = self.root / "plugins" / "bento" / "skills" / "bugshot"
+        self.module.fetch_external_skill(
+            destination, str(fake_repo), "HEAD", include=["SKILL.md"]
         )
-        plugin_names = [p["name"] for p in marketplace["plugins"]]
-        self.assertIn("bugshot", plugin_names)
 
-        bugshot = next(p for p in marketplace["plugins"] if p["name"] == "bugshot")
-        self.assertEqual(
-            bugshot["description"],
-            "Ephemeral screenshot gallery for visual bug review and issue filing",
+        self.assertTrue((destination / "SKILL.md").exists())
+        self.assertFalse((destination / "extra.py").exists())
+        self.assertFalse((destination / "docs").exists())
+
+    def test_fetch_external_skill_raises_when_skill_md_missing(self) -> None:
+        empty_repo = Path(self.temp_dir.name) / "empty-repo"
+        empty_repo.mkdir()
+        (empty_repo / "README.md").write_text("no skill here\n", encoding="utf-8")
+        subprocess.run(["git", "init", "--quiet"], cwd=empty_repo, check=True)
+        subprocess.run(["git", "-C", str(empty_repo), "config", "user.email", "t@t"], check=True)
+        subprocess.run(["git", "-C", str(empty_repo), "config", "user.name", "t"], check=True)
+        subprocess.run(["git", "-C", str(empty_repo), "add", "README.md"], check=True)
+        subprocess.run(["git", "-C", str(empty_repo), "commit", "--quiet", "-m", "init"], check=True)
+
+        destination = self.root / "plugins" / "bento" / "skills" / "bogus"
+        with self.assertRaises(SystemExit):
+            self.module.fetch_external_skill(destination, str(empty_repo), "HEAD")
+
+    def _build_fake_skill_repo(self, name: str) -> Path:
+        repo = Path(self.temp_dir.name) / f"fake-{name}.git-src"
+        repo.mkdir()
+        (repo / "SKILL.md").write_text(
+            f"---\nname: {name}\ndescription: fake {name} skill\n---\n", encoding="utf-8"
         )
-        self.assertEqual(bugshot["source"], {"source": "github", "repo": "ketang/bugshot"})
-        self.assertNotIn("version", bugshot)
-
-    def test_external_plugins_have_ref_field(self) -> None:
-        for ext in self.module.EXTERNAL_PLUGINS:
-            self.assertIn("ref", ext, f"External plugin {ext['name']} missing 'ref' field")
-
-    def test_external_plugins_are_not_built_locally(self) -> None:
-        self.module.build_repo(run_verification=False)
-
-        self.assertFalse((self.root / "plugins" / "bugshot").exists())
-
-    def test_external_plugin_dirs_not_pruned(self) -> None:
-        ext_dir = self.root / "plugins" / "bugshot"
-        ext_dir.mkdir(parents=True)
-        (ext_dir / "marker.txt").write_text("external\n", encoding="utf-8")
-
-        self.module.build_repo(run_verification=False)
-
-        self.assertTrue(ext_dir.exists())
+        subprocess.run(["git", "init", "--quiet"], cwd=repo, check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.email", "t@t"], check=True)
+        subprocess.run(["git", "-C", str(repo), "config", "user.name", "t"], check=True)
+        subprocess.run(["git", "-C", str(repo), "add", "SKILL.md"], check=True)
+        subprocess.run(
+            ["git", "-C", str(repo), "commit", "--quiet", "-m", "init"],
+            check=True,
+        )
+        return repo
 
     def test_build_repo_prunes_stale_generated_plugin_directories(self) -> None:
         stale_dir = self.root / "plugins" / "obsolete-pack"

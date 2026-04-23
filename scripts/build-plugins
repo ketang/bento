@@ -5,6 +5,7 @@ import os
 import shutil
 import struct
 import subprocess
+import tempfile
 import zlib
 from pathlib import Path
 
@@ -32,14 +33,26 @@ PLUGIN_ORDER = [
     "session-id",
 ]
 
-EXTERNAL_PLUGINS = [
-    {
-        "name": "bugshot",
-        "description": "Ephemeral screenshot gallery for visual bug review and issue filing",
-        "repo": "ketang/bugshot",
-        "ref": "main",
-    },
-]
+EXTERNAL_PLUGINS: list[dict] = []
+
+EXTERNAL_SKILLS: dict[str, list[dict]] = {
+    "bento": [
+        {
+            "name": "bugshot",
+            "repo": "ketang/bugshot",
+            "ref": "856774fe1f5093c109d8318e6363d2e6a402e146",
+            "include": [
+                "SKILL.md",
+                "ansi_render.py",
+                "bugshot_cli.py",
+                "bugshot_workflow.py",
+                "gallery_server.py",
+                "static",
+                "templates",
+            ],
+        },
+    ],
+}
 
 
 PLUGIN_DEFS = {
@@ -223,6 +236,68 @@ def copy_skills(plugin: str) -> None:
             target_dir / skill,
             ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
         )
+
+
+def fetch_external_skills(plugin: str) -> None:
+    entries = EXTERNAL_SKILLS.get(plugin, [])
+    if not entries:
+        return
+    target_dir = plugin_dir(plugin) / "skills"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for entry in entries:
+        url = f"https://github.com/{entry['repo']}.git"
+        fetch_external_skill(
+            target_dir / entry["name"],
+            url,
+            entry["ref"],
+            include=entry.get("include"),
+        )
+
+
+def fetch_external_skill(
+    destination: Path,
+    url: str,
+    ref: str,
+    include: list[str] | None = None,
+) -> None:
+    if destination.exists():
+        shutil.rmtree(destination)
+    with tempfile.TemporaryDirectory() as tmp:
+        workdir = Path(tmp) / "clone"
+        subprocess.run(["git", "clone", "--quiet", url, str(workdir)], check=True)
+        subprocess.run(
+            ["git", "-C", str(workdir), "checkout", "--quiet", ref],
+            check=True,
+        )
+        if include is not None:
+            copy_included_paths(workdir, destination, include)
+        else:
+            shutil.copytree(
+                workdir,
+                destination,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+            )
+    if not (destination / "SKILL.md").exists():
+        raise SystemExit(
+            f"External skill {destination.name} ({url}@{ref}) has no SKILL.md at repo root"
+        )
+
+
+def copy_included_paths(source: Path, destination: Path, include: list[str]) -> None:
+    destination.mkdir(parents=True, exist_ok=True)
+    for name in include:
+        src = source / name
+        if not src.exists():
+            raise SystemExit(f"External skill source missing required path: {name}")
+        dst = destination / name
+        if src.is_dir():
+            shutil.copytree(
+                src,
+                dst,
+                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+            )
+        else:
+            shutil.copy2(src, dst)
 
 
 def copy_hooks(plugin: str) -> None:
@@ -461,9 +536,10 @@ def build_plugin(plugin: str) -> None:
         shutil.rmtree(target)
     (target / ".claude-plugin").mkdir(parents=True)
     (target / ".codex-plugin").mkdir(parents=True)
-    if PLUGIN_DEFS[plugin].get("skills"):
-        (target / "skills").mkdir(parents=True)
+    if PLUGIN_DEFS[plugin].get("skills") or EXTERNAL_SKILLS.get(plugin):
+        (target / "skills").mkdir(parents=True, exist_ok=True)
         copy_skills(plugin)
+        fetch_external_skills(plugin)
     copy_hooks(plugin)
     write_assets(plugin)
     json_dump(target / ".claude-plugin" / "plugin.json", claude_manifest(plugin))
