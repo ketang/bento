@@ -101,6 +101,15 @@ class SwarmDiscoverTest(unittest.TestCase):
             payload["warnings"],
         )
 
+    def test_landing_target_flag_overrides_integration_branch(self) -> None:
+        payload = self.run_discover("--landing-target", "release-branch")
+        self.assertEqual(payload["integration_branch"], "release-branch")
+        self.assertEqual(payload["landing_target"], "release-branch")
+
+    def test_landing_target_defaults_echo_integration_branch(self) -> None:
+        payload = self.run_discover()
+        self.assertEqual(payload["landing_target"], payload["integration_branch"])
+
 
 if __name__ == "__main__":
     unittest.main()
