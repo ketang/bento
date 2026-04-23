@@ -12,7 +12,7 @@ EXPEDITIONS_ROOT = Path("docs") / "expeditions"
 RESUME_START = "<!-- expedition-resume:start -->"
 RESUME_END = "<!-- expedition-resume:end -->"
 RESUME_HEADER = "## RESUME HERE"
-SCHEMA_VERSION = 1
+SCHEMA_VERSION = 2
 NAME_RE = re.compile(r"^[a-z0-9]+(?:-[a-z0-9]+)*$")
 
 
@@ -93,7 +93,8 @@ def init_state(expedition: str, primary_branch: str, base_worktree: Path) -> dic
         "base_worktree": str(base_worktree.resolve()),
         "status": "ready_for_task",
         "next_task_number": 1,
-        "active_task": None,
+        "active_branches": [],
+        "landing_lease": None,
         "last_completed": None,
         "preserved_experiments": [],
         "next_action": "Create the first task branch from the expedition base branch.",
@@ -102,8 +103,21 @@ def init_state(expedition: str, primary_branch: str, base_worktree: Path) -> dic
     }
 
 
+def migrate_state(payload: dict[str, object]) -> dict[str, object]:
+    version = int(payload.get("schema_version", 1) or 1)
+    if version >= SCHEMA_VERSION:
+        return payload
+    if version == 1:
+        active_task = payload.pop("active_task", None)
+        payload["active_branches"] = [active_task] if active_task else []
+        payload["landing_lease"] = None
+        payload["schema_version"] = SCHEMA_VERSION
+    return payload
+
+
 def load_state(path: Path) -> dict[str, object]:
-    return json.loads(path.read_text(encoding="utf-8"))
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    return migrate_state(payload)
 
 
 def write_state(path: Path, payload: dict[str, object]) -> None:
@@ -176,10 +190,14 @@ def render_log(state: dict[str, object]) -> str:
 
 
 def render_resume_lines(state: dict[str, object]) -> str:
-    active = state.get("active_task")
     last = state.get("last_completed")
-    active_branch = active["branch"] if active else "none"
-    active_worktree = active["worktree"] if active else "none"
+    active_list = state.get("active_branches") or []
+    if active_list:
+        active_branch = ", ".join(item["branch"] for item in active_list)
+        active_worktree = ", ".join(item["worktree"] for item in active_list)
+    else:
+        active_branch = "none"
+        active_worktree = "none"
     last_completed = (
         f"{last['branch']} ({last['outcome']})" if last else "none"
     )
@@ -198,10 +216,14 @@ def render_resume_lines(state: dict[str, object]) -> str:
 
 
 def render_handoff(state: dict[str, object]) -> str:
-    active = state.get("active_task")
     last = state.get("last_completed")
-    active_branch = active["branch"] if active else "none"
-    active_worktree = active["worktree"] if active else "none"
+    active_list = state.get("active_branches") or []
+    if active_list:
+        active_branch = ", ".join(item["branch"] for item in active_list)
+        active_worktree = ", ".join(item["worktree"] for item in active_list)
+    else:
+        active_branch = "none"
+        active_worktree = "none"
     last_completed = f"{last['branch']} ({last['outcome']})" if last else "none"
     return f"""# {state['expedition']} Expedition Handoff
 

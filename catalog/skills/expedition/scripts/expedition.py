@@ -132,7 +132,8 @@ def cmd_discover(args: argparse.Namespace) -> int:
     expeditions = []
 
     for state_file, state in discover_expeditions(checkout_root, args.expedition):
-        active = state.get("active_task")
+        active_list = state.get("active_branches") or []
+        first_active = active_list[0] if active_list else None
         base_worktree = Path(str(state["base_worktree"])).resolve()
         expeditions.append(
             {
@@ -143,11 +144,11 @@ def cmd_discover(args: argparse.Namespace) -> int:
                 "handoff_file": str(handoff_path(base_worktree, str(state["expedition"]))),
                 "status": state["status"],
                 "next_action": state["next_action"],
-                "active_task_branch": active["branch"] if active else None,
-                "active_task_worktree": active["worktree"] if active else None,
+                "active_task_branch": first_active["branch"] if first_active else None,
+                "active_task_worktree": first_active["worktree"] if first_active else None,
                 "current_checkout": str(cwd) in {
                     str(base_worktree),
-                    str(Path(active["worktree"]).resolve()) if active else "",
+                    str(Path(first_active["worktree"]).resolve()) if first_active else "",
                 },
             }
         )

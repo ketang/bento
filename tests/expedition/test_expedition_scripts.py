@@ -228,6 +228,50 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertTrue(payload["docs_removed"])
         self.assertFalse((base_worktree / "docs" / "expeditions" / "alpha-expedition").exists())
 
+    def test_bootstrap_initializes_active_branches_and_landing_lease(self) -> None:
+        _, worktree = self.bootstrap_expedition()
+        state = self.read_state(worktree)
+        self.assertEqual(state["schema_version"], 2)
+        self.assertEqual(state["active_branches"], [])
+        self.assertIsNone(state["landing_lease"])
+
+    def test_state_migration_from_schema_v1_active_task(self) -> None:
+        from pathlib import Path as _P
+        import json as _j
+        _, worktree = self.bootstrap_expedition()
+        state_file = worktree / "docs" / "expeditions" / "alpha-expedition" / "state.json"
+        legacy = {
+            "schema_version": 1,
+            "expedition": "alpha-expedition",
+            "primary_branch": "main",
+            "base_branch": "alpha-expedition",
+            "base_worktree": str(worktree.resolve()),
+            "status": "task_in_progress",
+            "next_task_number": 3,
+            "active_task": {
+                "number": 2,
+                "kind": "task",
+                "slug": "legacy-slug",
+                "branch": "alpha-expedition-02-legacy-slug",
+                "worktree": str((worktree.parent / "alpha-expedition-02-legacy-slug").resolve()),
+                "base_head": "deadbeef",
+                "started_at": "2026-04-01T00:00:00Z",
+            },
+            "last_completed": None,
+            "preserved_experiments": [],
+            "next_action": "",
+            "created_at": "2026-04-01T00:00:00Z",
+            "updated_at": "2026-04-01T00:00:00Z",
+        }
+        state_file.write_text(_j.dumps(legacy, indent=2) + "\n", encoding="utf-8")
+
+        # A discover call triggers load_state through locate_expedition and should tolerate v1.
+        result = self.run_discover()
+        payload = _j.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        # active_task_branch is still reported via the existing discover contract.
+        self.assertEqual(payload["expeditions"][0]["active_task_branch"], "alpha-expedition-02-legacy-slug")
+
 
 if __name__ == "__main__":
     unittest.main()
