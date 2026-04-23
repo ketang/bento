@@ -1,0 +1,47 @@
+{
+  "name": "stacks",
+  "version": "1.0.8",
+  "description": "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL",
+  "author": {
+    "name": "Ketan Gangatirkar",
+    "email": "ketan@gangatirkar.com",
+    "url": "https://github.com/ketang"
+  },
+  "homepage": "https://github.com/ketang/bento",
+  "repository": "https://github.com/ketang/bento",
+  "license": "MIT",
+  "keywords": [
+    "go",
+    "postgres",
+    "react",
+    "graphql",
+    "full-stack"
+  ],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Bento Stacks",
+    "shortDescription": "Stack-specific implementation guidance",
+    "longDescription": "Bento Stacks gives Codex focused engineering guidance for common Bento implementation stacks, including Go with Postgres and Goose, React with Vite and Mantine, and GraphQL flows that span server and client codegen.",
+    "developerName": "Ketan Gangatirkar",
+    "category": "Coding",
+    "capabilities": [
+      "Write"
+    ],
+    "websiteURL": "https://github.com/ketang/bento",
+    "privacyPolicyURL": "https://github.com/ketang/bento",
+    "termsOfServiceURL": "https://github.com/ketang/bento",
+    "defaultPrompt": [
+      "Implement this feature using the existing Go, Postgres, and Goose migration patterns.",
+      "Add a React and Vite UI change that matches the current Mantine conventions in this repo.",
+      "Update this GraphQL flow across schema, server codegen, and client query types safely."
+    ],
+    "brandColor": "#A24C1A",
+    "composerIcon": "./assets/icon.png",
+    "logo": "./assets/logo.png",
+    "screenshots": [
+      "./assets/screenshot-1.png",
+      "./assets/screenshot-2.png",
+      "./assets/screenshot-3.png"
+    ]
+  }
+}
