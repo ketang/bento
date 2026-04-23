@@ -23,6 +23,10 @@ def parse_args() -> argparse.Namespace:
         default="auto",
         help="Select which runtime-specific swarm config to prefer.",
     )
+    parser.add_argument(
+        "--landing-target",
+        help="Override the branch that swarm-managed work lands onto. Defaults to the config's integration_branch or the detected primary branch.",
+    )
     return parser.parse_args()
 
 
@@ -83,6 +87,9 @@ def main() -> int:
         "config_found": bool(config_path),
         "warnings": warnings,
     }
+    landing_target = args.landing_target or output["integration_branch"]
+    output["integration_branch"] = landing_target
+    output["landing_target"] = landing_target
     json.dump(output, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
