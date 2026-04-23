@@ -10,7 +10,7 @@
     {
       "name": "bento",
       "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
-      "version": "1.0.26",
+      "version": "1.0.27",
       "source": "./plugins/bento",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -39,17 +39,6 @@
       "description": "SessionStart hook that writes the Claude Code session ID to ~/.claude/session_id",
       "version": "1.0.4",
       "source": "./plugins/session-id",
-      "author": {
-        "name": "Ketan Gangatirkar"
-      }
-    },
-    {
-      "name": "bugshot",
-      "description": "Ephemeral screenshot gallery for visual bug review and issue filing",
-      "source": {
-        "source": "github",
-        "repo": "ketang/bugshot"
-      },
       "author": {
         "name": "Ketan Gangatirkar"
       }
