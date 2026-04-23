@@ -132,8 +132,8 @@ def cmd_discover(args: argparse.Namespace) -> int:
     expeditions = []
 
     for state_file, state in discover_expeditions(checkout_root, args.expedition):
-        active_list = state.get("active_branches") or []
-        first_active = active_list[0] if active_list else None
+        active_branches = list(state.get("active_branches") or [])
+        head = active_branches[0] if active_branches else None
         base_worktree = Path(str(state["base_worktree"])).resolve()
         expeditions.append(
             {
@@ -144,12 +144,13 @@ def cmd_discover(args: argparse.Namespace) -> int:
                 "handoff_file": str(handoff_path(base_worktree, str(state["expedition"]))),
                 "status": state["status"],
                 "next_action": state["next_action"],
-                "active_task_branch": first_active["branch"] if first_active else None,
-                "active_task_worktree": first_active["worktree"] if first_active else None,
-                "current_checkout": str(cwd) in {
-                    str(base_worktree),
-                    str(Path(first_active["worktree"]).resolve()) if first_active else "",
-                },
+                "active_task_branch": head["branch"] if head else None,
+                "active_task_worktree": head["worktree"] if head else None,
+                "active_branches": active_branches,
+                "current_checkout": str(cwd) in (
+                    {str(base_worktree)}
+                    | {str(Path(item["worktree"]).resolve()) for item in active_branches}
+                ),
             }
         )
 
@@ -177,8 +178,11 @@ def _start_task_evaluate(
         errors.append(f"current branch does not match the expedition base branch: {state['base_branch']}")
     if not is_linked_worktree(cwd):
         errors.append("start-task requires the expedition base checkout to be a linked worktree")
-    if state.get("active_task") is not None:
-        errors.append(f"expedition already has an active task branch: {state['active_task']['branch']}")
+    existing_active = state.get("active_branches") or []
+    if existing_active:
+        errors.append(
+            f"expedition already has an active branch: {existing_active[0]['branch']}"
+        )
     if not is_clean(cwd):
         errors.append("expedition base worktree is dirty; commit or stash changes before creating the next task")
     if ref_exists(f"refs/heads/{branch}", cwd=checkout_root):
@@ -240,7 +244,7 @@ def cmd_start_task(args: argparse.Namespace) -> int:
             "base_head": current_head(cwd),
             "started_at": utc_now(),
         }
-        state["active_task"] = active_task
+        state.setdefault("active_branches", []).append(active_task)
         state["status"] = "task_in_progress"
         state["updated_at"] = utc_now()
         state["next_action"] = f"Complete work on `{branch}` in `{target_worktree}`."
@@ -266,21 +270,33 @@ def _close_task_evaluate(
     checkout_root = detect_checkout_root(cwd)
     state_file, state = locate_expedition(checkout_root, args.expedition)
     base_worktree = Path(str(state["base_worktree"])).resolve()
-    active = state.get("active_task")
+
+    active_list = list(state.get("active_branches") or [])
+    target: dict[str, object] | None
+    if args.branch:
+        target = next((item for item in active_list if item["branch"] == args.branch), None)
+    elif len(active_list) == 1:
+        target = active_list[0]
+    else:
+        target = None
 
     errors: list[str] = []
     if cwd.resolve() != base_worktree:
         errors.append(f"close-task must run from the expedition base worktree: {base_worktree}")
     if current_branch(cwd) != state["base_branch"]:
         errors.append(f"current branch does not match the expedition base branch: {state['base_branch']}")
-    if active is None:
-        errors.append("expedition has no active task to close")
-    elif args.outcome == "failed-experiment" and active["kind"] != "experiment":
+    if not active_list:
+        errors.append("expedition has no active branches to close")
+    elif target is None and args.branch:
+        errors.append(f"no active branch matches: {args.branch}")
+    elif target is None:
+        errors.append("multiple active branches — pass --branch to select one")
+    elif args.outcome == "failed-experiment" and target["kind"] != "experiment":
         errors.append("failed-experiment outcome is only valid for experiment branches")
     if not is_clean(cwd):
         errors.append("expedition base worktree is dirty; close-task expects a clean base worktree before merge/rebase")
-    if active and args.outcome == "kept":
-        task_worktree = Path(str(active["worktree"])).resolve()
+    if target and args.outcome == "kept":
+        task_worktree = Path(str(target["worktree"])).resolve()
         if not task_worktree.exists():
             errors.append(f"active task worktree is missing: {task_worktree}")
         elif not is_clean(task_worktree):
@@ -293,7 +309,7 @@ def _close_task_evaluate(
             "expedition": state["expedition"],
             "outcome": args.outcome,
             "summary": args.summary,
-            "active_task_branch": active["branch"] if active else None,
+            "active_task_branch": target["branch"] if target else None,
             "errors": errors,
             "ok": not errors,
             "apply_mode": args.apply,
@@ -316,9 +332,14 @@ def cmd_close_task(args: argparse.Namespace) -> int:
     rebased = False
     updated = False
     if args.apply:
-        active = state["active_task"]
+        active_list = list(state.get("active_branches") or [])
+        if args.branch:
+            target = next((item for item in active_list if item["branch"] == args.branch), None)
+        else:
+            target = active_list[0] if len(active_list) == 1 else None
+        assert target is not None  # _close_task_evaluate already rejected ambiguous cases
+        task_branch = str(target["branch"])
         state_file = Path(str(result["state_file"]))
-        task_branch = str(active["branch"])
 
         if args.outcome == "kept":
             merge_result = git(
@@ -337,11 +358,11 @@ def cmd_close_task(args: argparse.Namespace) -> int:
             rebased = True
 
         completion = {
-            "number": active["number"],
-            "kind": active["kind"],
-            "slug": active["slug"],
-            "branch": active["branch"],
-            "worktree": active["worktree"],
+            "number": target["number"],
+            "kind": target["kind"],
+            "slug": target["slug"],
+            "branch": target["branch"],
+            "worktree": target["worktree"],
             "outcome": args.outcome,
             "summary": args.summary,
             "completed_at": utc_now(),
@@ -350,10 +371,11 @@ def cmd_close_task(args: argparse.Namespace) -> int:
             state["preserved_experiments"].append(completion)
 
         state["last_completed"] = completion
-        state["active_task"] = None
-        state["next_task_number"] = int(active["number"]) + 1
+        state["active_branches"] = [item for item in active_list if item["branch"] != target["branch"]]
+        if not state["active_branches"]:
+            state["status"] = "ready_for_task"
+        state["next_task_number"] = int(target["number"]) + 1
         state["updated_at"] = utc_now()
-        state["status"] = "ready_for_task"
         state["next_action"] = (
             "Create the next task branch from the rebased expedition base branch."
             if rebased
@@ -362,16 +384,16 @@ def cmd_close_task(args: argparse.Namespace) -> int:
         write_state(state_file, state)
         append_log_entry(
             log_path(cwd, str(state["expedition"])),
-            f"Closed {active['kind']}",
+            f"Closed {target['kind']}",
             [
-                f"Branch: `{active['branch']}`.",
+                f"Branch: `{target['branch']}`.",
                 f"Outcome: `{args.outcome}`.",
                 f"Summary: {args.summary}",
                 "Base branch rebased onto the primary branch." if rebased else "Experiment preserved without merging.",
             ],
         )
         sync_markdown_views(cwd, state)
-        commit_expedition_docs(cwd, str(state["expedition"]), f"log(expedition): close {active['branch']} ({args.outcome})")
+        commit_expedition_docs(cwd, str(state["expedition"]), f"log(expedition): close {target['branch']} ({args.outcome})")
         updated = True
 
     return _emit({**result, "updated": updated, "merged": merged, "rebased": rebased})
@@ -390,7 +412,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
     errors: list[str] = []
     if cwd != base_worktree:
         errors.append(f"finish must run from the expedition base worktree: {base_worktree}")
-    if state.get("active_task") is not None:
+    if state.get("active_branches"):
         errors.append("finish cannot run while an expedition task is still active")
     if not docs_dir.exists():
         errors.append(f"expedition docs directory is missing: {docs_dir}")
@@ -433,15 +455,19 @@ def cmd_verify(args: argparse.Namespace) -> int:
         return _emit({"ok": False, "errors": [str(exc)]}, 1)
 
     base_worktree = Path(str(state["base_worktree"])).resolve()
-    active = state.get("active_task")
-    active_worktree = Path(str(active["worktree"])).resolve() if active else None
+    active_list = list(state.get("active_branches") or [])
+    active_task = next(
+        (item for item in active_list if Path(str(item["worktree"])).resolve() == cwd.resolve()),
+        None,
+    )
+    active_worktree = Path(str(active_task["worktree"])).resolve() if active_task else None
     branch = current_branch(cwd)
     role = "other"
     errors: list[str] = []
 
     if cwd == base_worktree and branch == state["base_branch"]:
         role = "base"
-    elif active and cwd == active_worktree and branch == active["branch"]:
+    elif active_task and cwd == active_worktree and branch == active_task["branch"]:
         role = "active_task"
     else:
         errors.append("current checkout does not match the expedition base worktree or active task worktree")
@@ -496,6 +522,7 @@ def build_parser() -> argparse.ArgumentParser:
     p.add_argument("--expedition", required=True, help="expedition name")
     p.add_argument("--outcome", choices=("kept", "failed-experiment"), required=True)
     p.add_argument("--summary", required=True, help="short summary of the task result")
+    p.add_argument("--branch", help="Branch to close. Optional when only one active branch exists.")
     p.add_argument("--apply", action="store_true", help="apply merge/rebase and update expedition state")
     p.set_defaults(func=cmd_close_task)
 

@@ -81,7 +81,7 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertEqual(state["base_branch"], "alpha-expedition")
         self.assertEqual(state["primary_branch"], "main")
         self.assertEqual(state["status"], "ready_for_task")
-        self.assertIsNone(state["active_task"])
+        self.assertEqual(state["active_branches"], [])
         self.assertEqual(state["next_task_number"], 1)
 
     def test_discover_lists_branch_local_expedition_state_from_linked_worktree(self) -> None:
@@ -116,9 +116,10 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
 
         state = self.read_state(base_worktree)
         self.assertEqual(state["status"], "task_in_progress")
-        self.assertEqual(state["active_task"]["branch"], "alpha-expedition-01-prepare-handoff")
-        self.assertEqual(state["active_task"]["slug"], "prepare-handoff")
-        self.assertEqual(state["active_task"]["kind"], "task")
+        active_head = state["active_branches"][0]
+        self.assertEqual(active_head["branch"], "alpha-expedition-01-prepare-handoff")
+        self.assertEqual(active_head["slug"], "prepare-handoff")
+        self.assertEqual(active_head["kind"], "task")
 
     def test_verify_accepts_active_task_worktree(self) -> None:
         _, base_worktree = self.bootstrap_expedition()
@@ -177,7 +178,7 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
 
         state = self.read_state(base_worktree)
         self.assertEqual(state["status"], "ready_for_task")
-        self.assertIsNone(state["active_task"])
+        self.assertEqual(state["active_branches"], [])
         self.assertEqual(state["next_task_number"], 2)
         self.assertEqual(state["last_completed"]["outcome"], "kept")
         self.assertEqual((base_worktree / "task.txt").read_text(encoding="utf-8"), "kept\n")
@@ -213,7 +214,7 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
 
         state = self.read_state(base_worktree)
         self.assertEqual(state["status"], "ready_for_task")
-        self.assertIsNone(state["active_task"])
+        self.assertEqual(state["active_branches"], [])
         self.assertEqual(state["next_task_number"], 2)
         self.assertEqual(len(state["preserved_experiments"]), 1)
         self.assertEqual(state["preserved_experiments"][0]["branch"], "alpha-expedition-exp-01-parser-probe")
