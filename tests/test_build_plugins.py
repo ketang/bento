@@ -44,83 +44,138 @@ class BuildPluginsTest(unittest.TestCase):
     def test_build_repo_generates_manifests_assets_and_claude_marketplace(self) -> None:
         self.module.build_repo(run_verification=False)
 
-        plugin_dir = self.root / "plugins" / "bento"
+        claude_bento = self.root / "plugins" / "claude" / "bento"
+        codex_bento = self.root / "plugins" / "codex" / "bento"
         executable_helpers = [
-            plugin_dir / "skills" / "build-vs-buy" / "scripts" / "build-vs-buy-discover.py",
-            plugin_dir / "skills" / "closure" / "scripts" / "closure-scan.py",
-            plugin_dir / "skills" / "expedition" / "scripts" / "expedition.py",
-            plugin_dir / "skills" / "generate-audit" / "scripts" / "audit-discover.py",
-            plugin_dir / "skills" / "land-work" / "scripts" / "land-work-create-preview.py",
-            plugin_dir / "skills" / "land-work" / "scripts" / "land-work-prepare.py",
-            plugin_dir / "skills" / "land-work" / "scripts" / "land-work-verify-landing.py",
-            plugin_dir / "skills" / "land-work" / "scripts" / "land-work-verify-lease.py",
-            plugin_dir / "skills" / "launch-work" / "scripts" / "launch-work-bootstrap.py",
-            plugin_dir / "skills" / "launch-work" / "scripts" / "launch-work-verify.py",
-            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-discover.py",
-            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-state.py",
-            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-triage.py",
-            plugin_dir / "skills" / "swarm" / "scripts" / "swarm-worktree-verify.py",
+            claude_bento / "skills" / "build-vs-buy" / "scripts" / "build-vs-buy-discover.py",
+            claude_bento / "skills" / "closure" / "scripts" / "closure-scan.py",
+            claude_bento / "skills" / "expedition" / "scripts" / "expedition.py",
+            claude_bento / "skills" / "generate-audit" / "scripts" / "audit-discover.py",
+            claude_bento / "skills" / "land-work" / "scripts" / "land-work-create-preview.py",
+            claude_bento / "skills" / "land-work" / "scripts" / "land-work-prepare.py",
+            claude_bento / "skills" / "land-work" / "scripts" / "land-work-verify-landing.py",
+            claude_bento / "skills" / "land-work" / "scripts" / "land-work-verify-lease.py",
+            claude_bento / "skills" / "launch-work" / "scripts" / "launch-work-bootstrap.py",
+            claude_bento / "skills" / "launch-work" / "scripts" / "launch-work-verify.py",
+            claude_bento / "skills" / "swarm" / "scripts" / "swarm-discover.py",
+            claude_bento / "skills" / "swarm" / "scripts" / "swarm-state.py",
+            claude_bento / "skills" / "swarm" / "scripts" / "swarm-triage.py",
+            claude_bento / "skills" / "swarm" / "scripts" / "swarm-worktree-verify.py",
         ]
-        self.assertTrue((plugin_dir / ".claude-plugin" / "plugin.json").exists())
-        self.assertTrue((plugin_dir / ".codex-plugin" / "plugin.json").exists())
-        self.assertTrue((plugin_dir / "skills" / "closure" / "SKILL.md").exists())
+        self.assertTrue((claude_bento / ".claude-plugin" / "plugin.json").exists())
+        self.assertFalse((claude_bento / ".codex-plugin").exists())
+        self.assertTrue((codex_bento / ".codex-plugin" / "plugin.json").exists())
+        self.assertFalse((codex_bento / ".claude-plugin").exists())
+        self.assertTrue((claude_bento / "skills" / "closure" / "SKILL.md").exists())
 
         for helper in executable_helpers:
             self.assertTrue(helper.exists(), helper)
             self.assertTrue(os.access(helper, os.X_OK), helper)
 
         versions = json.loads((REPO_ROOT / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
-        codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        codex_manifest = json.loads((codex_bento / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(codex_manifest["version"], versions["bento"])
         self.assertEqual(codex_manifest["skills"], "./skills/")
         self.assertEqual(codex_manifest["interface"]["displayName"], "Bento")
         self.assertEqual(len(codex_manifest["interface"]["defaultPrompt"]), 3)
         self.assertEqual(codex_manifest["interface"]["composerIcon"], "./assets/icon.png")
         self.assertEqual(codex_manifest["interface"]["screenshots"][2], "./assets/screenshot-3.png")
-        self.assertEqual(list(plugin_dir.rglob("*.pyc")), [])
-        self.assertEqual([path.name for path in plugin_dir.rglob("__pycache__")], [])
+        self.assertEqual(list(claude_bento.rglob("*.pyc")), [])
+        self.assertEqual([path.name for path in claude_bento.rglob("__pycache__")], [])
 
         for asset_name in ["icon.png", "logo.png", "screenshot-1.png", "screenshot-2.png", "screenshot-3.png"]:
-            asset = plugin_dir / "assets" / asset_name
+            asset = claude_bento / "assets" / asset_name
             self.assertTrue(asset.exists(), asset_name)
             self.assertGreater(asset.stat().st_size, 0)
 
         claude_marketplace = json.loads((self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         self.assertEqual(claude_marketplace["plugins"][1]["name"], "trackers")
         self.assertEqual(claude_marketplace["plugins"][1]["version"], versions["trackers"])
-        self.assertEqual(claude_marketplace["plugins"][2]["source"], "./plugins/stacks")
+        self.assertEqual(claude_marketplace["plugins"][2]["source"], "./plugins/claude/stacks")
         self.assertEqual(claude_marketplace["plugins"][3]["name"], "session-id")
 
-    def test_session_id_plugin_has_hooks_and_no_skills_dir(self) -> None:
+    def test_session_id_plugin_is_claude_only(self) -> None:
         self.module.build_repo(run_verification=False)
 
-        plugin_dir = self.root / "plugins" / "session-id"
-        self.assertTrue(plugin_dir.exists())
+        claude_session = self.root / "plugins" / "claude" / "session-id"
+        codex_session = self.root / "plugins" / "codex" / "session-id"
 
-        # no skills directory for a hook-only plugin
-        self.assertFalse((plugin_dir / "skills").exists())
+        self.assertTrue(claude_session.exists())
+        # Codex output is skipped entirely because session-id's only artifact
+        # (a SessionStart hook) is Claude-only by default.
+        self.assertFalse(codex_session.exists())
 
-        # hooks directory and config present
-        hooks_json = plugin_dir / "hooks" / "hooks.json"
+        self.assertFalse((claude_session / "skills").exists())
+
+        hooks_json = claude_session / "hooks" / "hooks.json"
         self.assertTrue(hooks_json.exists())
         hooks = json.loads(hooks_json.read_text(encoding="utf-8"))
         self.assertIn("SessionStart", hooks["hooks"])
 
-        # hook script is executable
-        hook_script = plugin_dir / "hooks" / "scripts" / "session-start.py"
+        hook_script = claude_session / "hooks" / "scripts" / "session-start.py"
         self.assertTrue(hook_script.exists())
         self.assertTrue(os.access(hook_script, os.X_OK))
 
-        # codex manifest has no "skills" field
-        versions = json.loads((REPO_ROOT / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
-        codex_manifest = json.loads((plugin_dir / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        self.assertNotIn("skills", codex_manifest)
-        self.assertEqual(codex_manifest["version"], versions["session-id"])
+    def test_bento_claude_only_hook_absent_from_codex_materialization(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        claude_bento_hooks = self.root / "plugins" / "claude" / "bento" / "hooks"
+        codex_bento = self.root / "plugins" / "codex" / "bento"
+
+        # The auto-allow hook ships with bento; it's Claude-only by hook default.
+        self.assertTrue((claude_bento_hooks / "hooks.json").exists())
+        self.assertTrue((claude_bento_hooks / "scripts" / "auto-allow.py").exists())
+        self.assertFalse((codex_bento / "hooks").exists())
+
+    def test_session_id_not_in_claude_marketplace_when_claude_empty(self) -> None:
+        # Force session-id to have no Claude artifacts, confirm it drops out
+        # of the Claude marketplace entries.
+        self.module.HOOK_PLATFORM_DEFAULT = ("codex",)
+
+        # Rebuild with the flipped default.
+        self.module.build_repo(run_verification=False)
+
+        claude_marketplace = json.loads(
+            (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        plugin_names = [p["name"] for p in claude_marketplace["plugins"] if "version" in p]
+        self.assertNotIn("session-id", plugin_names)
+
+    def test_packaging_sidecar_narrows_skill_to_codex_only(self) -> None:
+        # Add a codex-only sidecar to the closure skill, confirm it disappears
+        # from the Claude bento build and remains in Codex.
+        packaging = self.root / "catalog" / "skills" / "closure" / "packaging.json"
+        packaging.write_text(json.dumps({"platforms": ["codex"]}), encoding="utf-8")
+
+        self.module.build_repo(run_verification=False)
+
+        claude_closure = self.root / "plugins" / "claude" / "bento" / "skills" / "closure"
+        codex_closure = self.root / "plugins" / "codex" / "bento" / "skills" / "closure"
+
+        self.assertFalse(claude_closure.exists())
+        self.assertTrue(codex_closure.exists())
+
+    def test_packaging_sidecar_file_not_copied_into_output(self) -> None:
+        packaging = self.root / "catalog" / "skills" / "closure" / "packaging.json"
+        packaging.write_text(json.dumps({"platforms": ["claude", "codex"]}), encoding="utf-8")
+
+        self.module.build_repo(run_verification=False)
+
+        for platform in ("claude", "codex"):
+            copied = self.root / "plugins" / platform / "bento" / "skills" / "closure" / "packaging.json"
+            self.assertFalse(copied.exists(), copied)
+
+    def test_invalid_platform_in_sidecar_raises(self) -> None:
+        packaging = self.root / "catalog" / "skills" / "closure" / "packaging.json"
+        packaging.write_text(json.dumps({"platforms": ["klingon"]}), encoding="utf-8")
+
+        with self.assertRaises(SystemExit):
+            self.module.build_repo(run_verification=False)
 
     def test_build_repo_copies_red_green_tdd_guidance_into_generated_skills(self) -> None:
         self.module.build_repo(run_verification=False)
 
-        plugin_dir = self.root / "plugins" / "bento" / "skills"
+        skills_dir = self.root / "plugins" / "claude" / "bento" / "skills"
         expected_phrases = {
             "launch-work": "For new work and behavioral changes with feasible automated coverage, use a red/green workflow",
             "react-vite-mantine": "write or update a component test so it fails before implementing the change",
@@ -129,7 +184,7 @@ class BuildPluginsTest(unittest.TestCase):
         }
 
         for skill_name, expected_phrase in expected_phrases.items():
-            skill_text = (plugin_dir / skill_name / "SKILL.md").read_text(encoding="utf-8")
+            skill_text = (skills_dir / skill_name / "SKILL.md").read_text(encoding="utf-8")
             normalized_skill_text = re.sub(r"\s+", " ", skill_text)
             self.assertIn(expected_phrase, normalized_skill_text)
 
@@ -196,8 +251,14 @@ class BuildPluginsTest(unittest.TestCase):
         )
         return repo
 
+    def test_bugshot_external_skill_not_built_as_top_level_plugin(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        for platform in ("claude", "codex"):
+            self.assertFalse((self.root / "plugins" / platform / "bugshot").exists())
+
     def test_build_repo_prunes_stale_generated_plugin_directories(self) -> None:
-        stale_dir = self.root / "plugins" / "obsolete-pack"
+        stale_dir = self.root / "plugins" / "claude" / "obsolete-pack"
         stale_dir.mkdir(parents=True)
         (stale_dir / "orphan.txt").write_text("stale\n", encoding="utf-8")
 

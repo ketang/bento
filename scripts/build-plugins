@@ -97,6 +97,7 @@ PLUGIN_DEFS = {
             "react-vite-mantine",
             "graphql-gqlgen-gql-tada",
         ],
+        "hooks": "bento",
     },
     "trackers": {
         "description": "Tracker skills for Beads and GitHub Issues workflows",
@@ -223,26 +224,91 @@ def ensure_skill_exists(skill: str) -> None:
         raise SystemExit(f"Missing canonical skill source: {skill_dir / 'SKILL.md'}")
 
 
-def plugin_dir(plugin: str) -> Path:
-    return PLUGINS_DIR / plugin
+PLATFORMS = ("claude", "codex")
+SKILL_PLATFORM_DEFAULT = ("claude", "codex")
+HOOK_PLATFORM_DEFAULT = ("claude",)
+PACKAGING_FILENAME = "packaging.json"
 
 
-def copy_skills(plugin: str) -> None:
-    target_dir = plugin_dir(plugin) / "skills"
-    for skill in PLUGIN_DEFS[plugin]["skills"]:
+def plugin_dir(plugin: str, platform: str) -> Path:
+    return PLUGINS_DIR / platform / plugin
+
+
+def _read_packaging(source_dir: Path) -> dict:
+    path = source_dir / PACKAGING_FILENAME
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise SystemExit(f"Invalid packaging metadata in {path}: {exc}")
+    if not isinstance(data, dict):
+        raise SystemExit(f"Packaging metadata must be an object: {path}")
+    return data
+
+
+def _platforms_from_packaging(source_dir: Path, default: tuple[str, ...]) -> list[str]:
+    data = _read_packaging(source_dir)
+    raw = data.get("platforms", list(default))
+    if not isinstance(raw, list) or not all(isinstance(p, str) for p in raw):
+        raise SystemExit(
+            f"'platforms' in {source_dir / PACKAGING_FILENAME} must be a list of strings"
+        )
+    unknown = [p for p in raw if p not in PLATFORMS]
+    if unknown:
+        raise SystemExit(
+            f"Unknown platforms {unknown!r} in {source_dir / PACKAGING_FILENAME}; "
+            f"allowed: {list(PLATFORMS)}"
+        )
+    return raw
+
+
+def skill_platforms(skill: str) -> list[str]:
+    return _platforms_from_packaging(CATALOG_DIR / skill, SKILL_PLATFORM_DEFAULT)
+
+
+def hook_platforms(hook: str) -> list[str]:
+    return _platforms_from_packaging(HOOKS_CATALOG_DIR / hook, HOOK_PLATFORM_DEFAULT)
+
+
+def skills_for(plugin: str, platform: str) -> list[str]:
+    return [
+        skill for skill in PLUGIN_DEFS[plugin].get("skills", [])
+        if platform in skill_platforms(skill)
+    ]
+
+
+def hook_for(plugin: str, platform: str) -> str | None:
+    hook_name = PLUGIN_DEFS[plugin].get("hooks")
+    if not hook_name:
+        return None
+    if platform not in hook_platforms(hook_name):
+        return None
+    return hook_name
+
+
+def copy_skills(plugin: str, platform: str) -> None:
+    target_dir = plugin_dir(plugin, platform) / "skills"
+    for skill in skills_for(plugin, platform):
         ensure_skill_exists(skill)
         shutil.copytree(
             CATALOG_DIR / skill,
             target_dir / skill,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", PACKAGING_FILENAME),
         )
 
 
-def fetch_external_skills(plugin: str) -> None:
-    entries = EXTERNAL_SKILLS.get(plugin, [])
+def external_skills_for(plugin: str, platform: str) -> list[dict]:
+    # External skills currently default to both platforms; no sidecar scheme yet.
+    del platform
+    return EXTERNAL_SKILLS.get(plugin, [])
+
+
+def fetch_external_skills(plugin: str, platform: str) -> None:
+    entries = external_skills_for(plugin, platform)
     if not entries:
         return
-    target_dir = plugin_dir(plugin) / "skills"
+    target_dir = plugin_dir(plugin, platform) / "skills"
     target_dir.mkdir(parents=True, exist_ok=True)
     for entry in entries:
         url = f"https://github.com/{entry['repo']}.git"
@@ -300,8 +366,8 @@ def copy_included_paths(source: Path, destination: Path, include: list[str]) -> 
             shutil.copy2(src, dst)
 
 
-def copy_hooks(plugin: str) -> None:
-    hook_name = PLUGIN_DEFS[plugin].get("hooks")
+def copy_hooks(plugin: str, platform: str) -> None:
+    hook_name = hook_for(plugin, platform)
     if not hook_name:
         return
     src = HOOKS_CATALOG_DIR / hook_name
@@ -309,8 +375,8 @@ def copy_hooks(plugin: str) -> None:
         raise SystemExit(f"Missing hook catalog source: {src}")
     shutil.copytree(
         src,
-        plugin_dir(plugin) / "hooks",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+        plugin_dir(plugin, platform) / "hooks",
+        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", PACKAGING_FILENAME),
     )
 
 
@@ -519,9 +585,9 @@ def make_screenshot(path: Path, palette: dict[str, tuple[int, int, int]], varian
     write_png(path, width, height, pixels)
 
 
-def write_assets(plugin: str) -> None:
+def write_assets(plugin: str, platform: str) -> None:
     metadata = PLUGIN_DEFS[plugin]
-    assets_dir = plugin_dir(plugin) / "assets"
+    assets_dir = plugin_dir(plugin, platform) / "assets"
     assets_dir.mkdir(parents=True, exist_ok=True)
     palette = metadata["palette"]
     make_icon(assets_dir / "icon.png", palette)
@@ -530,20 +596,32 @@ def write_assets(plugin: str) -> None:
         make_screenshot(assets_dir / f"screenshot-{variant}.png", palette, variant)
 
 
-def build_plugin(plugin: str) -> None:
-    target = plugin_dir(plugin)
+def plugin_has_content(plugin: str, platform: str) -> bool:
+    return (
+        bool(skills_for(plugin, platform))
+        or hook_for(plugin, platform) is not None
+        or bool(external_skills_for(plugin, platform))
+    )
+
+
+def build_plugin(plugin: str, platform: str) -> bool:
+    """Materialize <plugin> for <platform>. Returns True iff a dir was written."""
+    if not plugin_has_content(plugin, platform):
+        return False
+    target = plugin_dir(plugin, platform)
     if target.exists():
         shutil.rmtree(target)
-    (target / ".claude-plugin").mkdir(parents=True)
-    (target / ".codex-plugin").mkdir(parents=True)
-    if PLUGIN_DEFS[plugin].get("skills") or EXTERNAL_SKILLS.get(plugin):
+    manifest_dir = ".claude-plugin" if platform == "claude" else ".codex-plugin"
+    (target / manifest_dir).mkdir(parents=True)
+    if skills_for(plugin, platform) or external_skills_for(plugin, platform):
         (target / "skills").mkdir(parents=True, exist_ok=True)
-        copy_skills(plugin)
-        fetch_external_skills(plugin)
-    copy_hooks(plugin)
-    write_assets(plugin)
-    json_dump(target / ".claude-plugin" / "plugin.json", claude_manifest(plugin))
-    json_dump(target / ".codex-plugin" / "plugin.json", codex_manifest(plugin))
+        copy_skills(plugin, platform)
+        fetch_external_skills(plugin, platform)
+    copy_hooks(plugin, platform)
+    write_assets(plugin, platform)
+    manifest = claude_manifest(plugin) if platform == "claude" else codex_manifest(plugin)
+    json_dump(target / manifest_dir / "plugin.json", manifest)
+    return True
 
 
 def write_claude_marketplace() -> None:
@@ -552,12 +630,13 @@ def write_claude_marketplace() -> None:
             "name": plugin,
             "description": PLUGIN_DEFS[plugin]["description"],
             "version": plugin_version(plugin),
-            "source": f"./plugins/{plugin}",
+            "source": f"./plugins/claude/{plugin}",
             "author": {
                 "name": OWNER_NAME,
             },
         }
         for plugin in PLUGIN_ORDER
+        if plugin_has_content(plugin, "claude")
     ]
     external_entries = [
         {
@@ -587,11 +666,11 @@ def write_claude_marketplace() -> None:
 
 
 def prune_generated_plugin_dirs() -> None:
-    PLUGINS_DIR.mkdir(parents=True, exist_ok=True)
-    valid = set(PLUGIN_ORDER) | {ext["name"] for ext in EXTERNAL_PLUGINS}
-    for child in PLUGINS_DIR.iterdir():
-        if child.is_dir() and child.name not in valid:
-            shutil.rmtree(child)
+    if PLUGINS_DIR.exists():
+        shutil.rmtree(PLUGINS_DIR)
+    PLUGINS_DIR.mkdir(parents=True)
+    for platform in PLATFORMS:
+        (PLUGINS_DIR / platform).mkdir(parents=True, exist_ok=True)
 
 
 def run_verify_commands() -> None:
@@ -604,7 +683,8 @@ def run_verify_commands() -> None:
 def build_repo(run_verification: bool = True) -> None:
     prune_generated_plugin_dirs()
     for plugin in PLUGIN_ORDER:
-        build_plugin(plugin)
+        for platform in PLATFORMS:
+            build_plugin(plugin, platform)
     write_claude_marketplace()
     if run_verification:
         run_verify_commands()

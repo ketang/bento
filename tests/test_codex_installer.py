@@ -203,7 +203,7 @@ class CodexInstallerTest(unittest.TestCase):
             "stacks": "Coding",
         }
         for name, category in plugin_defs.items():
-            plugin_dir = source_root / "plugins" / name
+            plugin_dir = source_root / "plugins" / "codex" / name
             (plugin_dir / ".codex-plugin").mkdir(parents=True, exist_ok=True)
             (plugin_dir / ".codex-plugin" / "plugin.json").write_text(
                 json.dumps({"interface": {"category": category}}, indent=2) + "\n",

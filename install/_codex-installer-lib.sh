@@ -55,9 +55,14 @@ fi
 mkdir -p "$PLUGIN_ROOT" "$(dirname "$MARKETPLACE_PATH")"
 
 for plugin in "${PLUGIN_NAMES[@]}"; do
-  src="${repo_root}/plugins/${plugin}"
+  src="${repo_root}/plugins/codex/${plugin}"
   dest="${PLUGIN_ROOT}/${plugin}"
   staging="${PLUGIN_ROOT}/.${plugin}.tmp"
+
+  if [[ ! -d "${src}" ]]; then
+    # Plugin has no Codex-compatible content; skip silently.
+    continue
+  fi
 
   if [[ ! -f "${src}/.codex-plugin/plugin.json" ]]; then
     echo "missing published plugin bundle for ${plugin}" >&2
@@ -163,7 +168,9 @@ def local_source_path(name: str) -> str:
 
 source_plugins = []
 for name in local_names:
-    manifest_path = repo_root / "plugins" / name / ".codex-plugin" / "plugin.json"
+    manifest_path = repo_root / "plugins" / "codex" / name / ".codex-plugin" / "plugin.json"
+    if not manifest_path.exists():
+        continue
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
     interface = manifest.get("interface", {})
     source_plugins.append(
