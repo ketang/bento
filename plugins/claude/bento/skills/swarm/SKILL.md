@@ -20,6 +20,7 @@ parallel with good isolation.
 - The project's documented tracker workflow
 - The project's documented branch, worktree, and landing conventions
 - The project's required quality gates and any pre-completion checks
+- Optional landing target branch (defaults to the detected primary branch).
 
 ## Deterministic Helpers
 
@@ -32,6 +33,7 @@ This skill includes local helper scripts under `swarm/scripts/`:
   schema and output category enum.
 - `swarm/scripts/swarm-worktree-verify.py` — verify the current checkout is
   the expected linked worktree on the expected branch
+- `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch>` — run a named post-land hook after a successful land. Use by script path, not `python3 <script>`.
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script. They require `python3` on `PATH`. If `python3` is
@@ -148,8 +150,10 @@ Use the runtime's managed multi-agent flow, not ad hoc background workers:
 
 For each launched task: exactly one branch, exactly one worktree, and the
 prompt must include task details, expected scope, overlap risks, required
-quality gates, and the row number from the triage table. Require the teammate
-to stop and report back if the task is broader or more coupled than expected.
+quality gates, and the row number from the triage table. Include the landing
+target branch in the teammate prompt so the teammate knows which branch their
+work merges into. Require the teammate to stop and report back if the task is
+broader or more coupled than expected.
 
 Teammate instructions must treat worktree placement as part of setup, not an
 implementation detail. Require a durable dedicated root and reject placements
@@ -176,15 +180,17 @@ not explain how the task will be verified.
 
 ## Phase 4: Monitor and Land
 
-Land one completed branch at a time using the project's documented landing
-workflow (see `land-work` unless project docs define a stricter flow):
+Land one completed branch at a time onto the landing target (default: the detected primary branch). Use the project's documented landing workflow (see `land-work` unless project docs define a stricter flow):
 
 1. Verify the promised quality gates actually ran and passed, plus any
    required pre-completion step.
 2. Land the branch; resolve conflicts carefully or send back for rebase.
 3. Run any documented post-land hooks.
 4. Close or update the tracker item only after the verified landing.
-5. Close the teammate and clean up branch + worktree only after the work is
+5. If a post-land hook is configured for this swarm, run it:
+    `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
+    If the hook fails, stop and report — do not continue landing more branches until the hook succeeds.
+6. Close the teammate and clean up branch + worktree only after the work is
    safely landed or explicitly deferred. Never discard a teammate's work
    before then.
 

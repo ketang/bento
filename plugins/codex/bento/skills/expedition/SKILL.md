@@ -1,6 +1,6 @@
 ---
 name: expedition
-description: Use when a large body of mostly interdependent work should run as a named expedition on its own long-lived base branch, with one meaningful task branch at a time, durable in-branch plan/log/handoff files, and preserved failed experiments.
+description: Use when a large body of mostly interdependent work should run as a named expedition on its own long-lived base branch, with parallel task branches off a shared base branch with one landing lease, durable in-branch plan/log/handoff files, and preserved failed experiments.
 recommended_model: high
 ---
 
@@ -17,7 +17,7 @@ sessions.
 Use this skill when the user wants an "expedition" rather than a one-off task:
 
 - one named base branch created from the primary branch
-- serial task branches created from that base branch
+- parallel task branches cut from that base branch; a serial landing lease keeps merges orderly
 - occasional failed experiments that must be preserved but not merged
 - a stronger session-handoff protocol than ad hoc pasted prompts
 
@@ -44,19 +44,20 @@ An expedition is a long-lived serial program of work:
 - Base worktree: one dedicated linked worktree for that branch
 - Task branch: `<expedition>-<nn>-<slug>`
 - Experiment branch: `<expedition>-exp-<nn>-<slug>`
+- Performance optimization experiment branch: `<expedition>-perfexp-<nn>-<slug>`
 
 Hard invariants:
 
-- Only the base branch rebases.
-- The base branch rebases only onto the detected primary branch.
-- Task and experiment branches never rebase.
-- Only one active task or experiment branch may exist for an expedition at a time.
-- A new task branch cannot be created until the previous kept task is merged into
-  the base branch and the base branch has rebased onto the primary branch.
-- Failed experiments are preserved as branches and worktrees, but never merged
-  into the base branch.
-- Parallel expeditions are allowed, but expeditions only interact through the
-  primary branch after one expedition lands.
+- Only the base branch rebases onto the primary branch.
+- A task or experiment branch rebases exactly once, onto the current base tip, at land time.
+- Failed experiments are preserved as branches and worktrees and never merged into the base branch.
+- At most one performance optimization experiment is active per expedition at a time, because parallel performance measurements contaminate each other on shared hardware.
+- One landing lease per expedition. Tasks and regular experiments merge serially into the base branch even when they run in parallel.
+- Parallel expeditions are allowed and only interact through the primary branch.
+
+## Quality Bar
+
+Experiment branches are held to the same production-quality bar as task branches. "Experiment" describes hypothesis uncertainty, not a lower coding standard. No measurement scaffolding, debug prints, stubbed tests, or disabled logging stay behind. A kept experiment merges through the same landing cycle as a task.
 
 ## Durable State
 
@@ -82,15 +83,13 @@ the following subcommands:
   - scan linked worktrees for branch-local expedition state and handoff files
 - `expedition/scripts/expedition.py bootstrap --expedition <name> --worktree <path>`
   - preview or create the base branch/worktree plus initial expedition files
-- `expedition/scripts/expedition.py start-task --expedition <name> --slug <slug>`
-  - preview or create the next serial task or experiment branch/worktree and
-    update the expedition state
+- `expedition/scripts/expedition.py start-task --expedition <name> --slug <slug> [--kind task|experiment|perf-experiment]`
+  - preview or create the next numbered task or experiment branch/worktree and update expedition state; `perf-experiment` is allowed only if no other perf-experiment is active
 - `expedition/scripts/expedition.py verify --expedition <name>`
   - verify that the current checkout matches the expedition base worktree or
     the currently active task worktree
-- `expedition/scripts/expedition.py close-task --expedition <name> --outcome kept|failed-experiment`
-  - merge a kept task into the base branch, rebase the base onto the primary
-    branch, or preserve a failed experiment and update the expedition state
+- `expedition/scripts/expedition.py close-task --expedition <name> [--branch <name>] --outcome kept|failed-experiment`
+  - for kept branches: acquire the landing lease, rebase the branch onto the current base tip, merge into the base, rebase base onto the primary branch, release the lease; for failed experiments: preserve the branch and release the lease
 - `expedition/scripts/expedition.py finish --expedition <name>`
   - verify that the expedition is ready for final landing and remove the
     branch-local expedition files before the last linear merge to the primary branch
@@ -123,19 +122,19 @@ expedition/scripts/expedition.py verify --expedition <name>
 Do not ask the user to reconstruct prior context when the expedition handoff
 files already exist.
 
+If discover reports stale_active_branches, inspect each listed branch and decide case-by-case whether the teammate's work is recoverable or the entry should be closed out.
+
 ## Session End Protocol
 
 Every session should end on the expedition base branch and rewrite
-`handoff.md`. A typical serial cycle is:
+`handoff.md`. A typical cycle is:
 
 1. Create or resume the base worktree.
-2. Start exactly one task or experiment branch.
-3. Complete the task.
-4. If the task is kept, merge it into the base branch and rebase the base
-   branch onto the primary branch.
-5. If the task is a failed experiment, preserve the branch and worktree, but do
-   not merge it.
-6. Update `state.json`, `log.md`, and `handoff.md`.
+2. Triage the expedition plan and launch any number of task and regular experiment branches in parallel. Launch at most one performance optimization experiment branch at a time.
+3. As each branch completes, close it via close-task to acquire the lease, rebase, merge, and rebase base onto primary.
+4. Failed experiment branches are preserved without merge; record the outcome in the log and release the lease.
+5. Re-triage and launch replacement branches from the now-advanced base.
+6. Update state.json, log.md, and handoff.md (these are written by the coordinator, never by teammates).
 
 ## Final Landing
 
@@ -156,19 +155,14 @@ expedition/scripts/expedition.py finish --expedition <name> --apply
 
 ## Non-Negotiable Rules
 
-- Do not create a new expedition task branch while an active task branch still
-  exists for that expedition.
-- Do not rebase task or experiment branches.
-- Do not rebase the expedition base branch onto anything except the detected
-  primary branch.
-- Do not merge one expedition base branch directly into another expedition base
-  branch.
-- Do not delete failed experiment branches before their result is captured in
-  the expedition log.
-- Do not rely on a pasted chat prompt when the expedition handoff files already
-  exist.
-- Do not update expedition state from the primary checkout when the expedition's
-  base worktree is available.
+- Only the coordinator writes to docs/expeditions/<expedition>/*. Teammates never commit there.
+- Do not launch a second performance optimization experiment for an expedition while one is active.
+- Do not rebase task or experiment branches outside the close-task rebase-onto-base step.
+- Do not rebase the expedition base branch onto anything except the detected primary branch.
+- Do not merge one expedition base branch directly into another expedition base branch.
+- Do not delete failed experiment branches before their result is captured in the log.
+- Do not rely on a pasted chat prompt when expedition handoff files already exist.
+- Do not update expedition state from the primary checkout when the expedition's base worktree is available.
 
 ## Templates
 
