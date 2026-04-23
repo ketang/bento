@@ -135,6 +135,10 @@ def cmd_discover(args: argparse.Namespace) -> int:
         active_branches = list(state.get("active_branches") or [])
         head = active_branches[0] if active_branches else None
         base_worktree = Path(str(state["base_worktree"])).resolve()
+        stale = [
+            item for item in active_branches
+            if not Path(str(item["worktree"])).exists()
+        ]
         expeditions.append(
             {
                 "expedition": state["expedition"],
@@ -147,6 +151,7 @@ def cmd_discover(args: argparse.Namespace) -> int:
                 "active_task_branch": head["branch"] if head else None,
                 "active_task_worktree": head["worktree"] if head else None,
                 "active_branches": active_branches,
+                "stale_active_branches": stale,
                 "current_checkout": str(cwd) in (
                     {str(base_worktree)}
                     | {str(Path(item["worktree"]).resolve()) for item in active_branches}

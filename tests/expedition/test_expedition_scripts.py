@@ -397,5 +397,25 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertIsNone(state["landing_lease"])
 
 
+    def test_discover_reports_stale_active_branch_when_worktree_missing(self) -> None:
+        import shutil as _shutil
+        _, base_worktree = self.bootstrap_expedition()
+        start = json.loads(
+            self.run_start(
+                "--expedition", "alpha-expedition", "--slug", "will-go-stale", "--apply",
+                cwd=base_worktree,
+            ).stdout
+        )
+        task_worktree = Path(start["target_worktree"])
+        _shutil.rmtree(task_worktree)
+
+        result = self.run_discover()
+        payload = json.loads(result.stdout)
+        expedition = payload["expeditions"][0]
+        stale = expedition["stale_active_branches"]
+        self.assertEqual(len(stale), 1)
+        self.assertEqual(stale[0]["branch"], start["target_branch"])
+
+
 if __name__ == "__main__":
     unittest.main()
