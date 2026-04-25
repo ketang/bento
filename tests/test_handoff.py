@@ -176,5 +176,121 @@ class HandoffSuffixTest(unittest.TestCase):
         )
 
 
+class HandoffTemplateResolutionTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp.name).resolve()
+        self.handoff = _load_handoff_module()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _write(self, path: Path, content: str) -> Path:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        return path
+
+    def test_repo_scope_wins_over_home_and_bundled(self) -> None:
+        repo_root = self.tmp_path / "repo"
+        repo_root.mkdir()
+        repo_template = self._write(
+            repo_root / ".agent-plugins" / "bento" / "bento" / "handoff" / "template.md",
+            "REPO\n",
+        )
+        self._write(
+            self.tmp_path / "home" / "agent-plugins" / "bento" / "bento" / "handoff" / "template.md",
+            "HOME\n",
+        )
+        bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
+        resolved = self.handoff.resolve_template(
+            repo_root=repo_root,
+            xdg_config_home=self.tmp_path / "home",
+            bundled=bundled,
+        )
+        self.assertEqual(resolved, repo_template)
+
+    def test_home_scope_wins_over_bundled_when_repo_absent(self) -> None:
+        repo_root = self.tmp_path / "repo"
+        repo_root.mkdir()
+        home_template = self._write(
+            self.tmp_path / "home" / "agent-plugins" / "bento" / "bento" / "handoff" / "template.md",
+            "HOME\n",
+        )
+        bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
+        resolved = self.handoff.resolve_template(
+            repo_root=repo_root,
+            xdg_config_home=self.tmp_path / "home",
+            bundled=bundled,
+        )
+        self.assertEqual(resolved, home_template)
+
+    def test_bundled_used_when_no_overrides(self) -> None:
+        repo_root = self.tmp_path / "repo"
+        repo_root.mkdir()
+        bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
+        resolved = self.handoff.resolve_template(
+            repo_root=repo_root,
+            xdg_config_home=self.tmp_path / "home",
+            bundled=bundled,
+        )
+        self.assertEqual(resolved, bundled)
+
+    def test_xdg_default_used_when_xdg_config_home_unset(self) -> None:
+        fake_home = self.tmp_path / "fake-home"
+        home_template = self._write(
+            fake_home / ".config" / "agent-plugins" / "bento" / "bento" / "handoff" / "template.md",
+            "HOME\n",
+        )
+        bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
+        resolved = self.handoff.resolve_template(
+            repo_root=self.tmp_path / "repo-not-existing",
+            xdg_config_home=None,
+            bundled=bundled,
+            home=fake_home,
+        )
+        self.assertEqual(resolved, home_template)
+
+
+class HandoffSelfHealTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp.name).resolve()
+        self.handoff = _load_handoff_module()
+        self.bundled = self.tmp_path / "bundled.md"
+        self.bundled.write_text("BUNDLED\n", encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_self_heal_creates_home_scope_when_missing(self) -> None:
+        xdg = self.tmp_path / "xdg"
+        target = xdg / "agent-plugins" / "bento" / "bento" / "handoff" / "template.md"
+        self.assertFalse(target.exists())
+        created = self.handoff.self_heal_home_template(
+            xdg_config_home=xdg, bundled=self.bundled
+        )
+        self.assertTrue(created)
+        self.assertEqual(target.read_text(encoding="utf-8"), "BUNDLED\n")
+
+    def test_self_heal_leaves_existing_home_scope_alone(self) -> None:
+        xdg = self.tmp_path / "xdg"
+        target = xdg / "agent-plugins" / "bento" / "bento" / "handoff" / "template.md"
+        target.parent.mkdir(parents=True)
+        target.write_text("CUSTOM\n", encoding="utf-8")
+        created = self.handoff.self_heal_home_template(
+            xdg_config_home=xdg, bundled=self.bundled
+        )
+        self.assertFalse(created)
+        self.assertEqual(target.read_text(encoding="utf-8"), "CUSTOM\n")
+
+    def test_self_heal_silently_no_ops_when_bundled_missing(self) -> None:
+        xdg = self.tmp_path / "xdg"
+        missing_bundle = self.tmp_path / "does-not-exist.md"
+        created = self.handoff.self_heal_home_template(
+            xdg_config_home=xdg, bundled=missing_bundle
+        )
+        self.assertFalse(created)
+
+
 if __name__ == "__main__":
     unittest.main()

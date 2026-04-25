@@ -11,9 +11,15 @@ import argparse
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 from pathlib import Path
+
+
+MARKETPLACE = "bento"
+PLUGIN_NAME = "bento"
+TEMPLATE_REL = Path("handoff") / "template.md"
 
 
 class HandoffError(Exception):
@@ -36,6 +42,48 @@ def derive_suffix(*, current: str, primary: str, slug: str | None) -> str:
             "kebab-case summary so the output filename is meaningful."
         )
     return sanitize_suffix(slug)
+
+
+def resolve_template(
+    *,
+    repo_root: Path | None,
+    xdg_config_home: Path | None,
+    bundled: Path,
+    home: Path | None = None,
+) -> Path:
+    candidates: list[Path] = []
+    if repo_root is not None:
+        candidates.append(
+            repo_root / ".agent-plugins" / MARKETPLACE / PLUGIN_NAME / TEMPLATE_REL
+        )
+    if xdg_config_home is not None:
+        base = xdg_config_home
+    else:
+        base = (home or Path.home()) / ".config"
+    candidates.append(base / "agent-plugins" / MARKETPLACE / PLUGIN_NAME / TEMPLATE_REL)
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    if bundled.is_file():
+        return bundled
+    raise HandoffError(f"no template found at any candidate path: {candidates}")
+
+
+def self_heal_home_template(
+    *, xdg_config_home: Path | None, bundled: Path, home: Path | None = None
+) -> bool:
+    if xdg_config_home is not None:
+        base = xdg_config_home
+    else:
+        base = (home or Path.home()) / ".config"
+    target = base / "agent-plugins" / MARKETPLACE / PLUGIN_NAME / TEMPLATE_REL
+    if target.is_file():
+        return False
+    if not bundled.is_file():
+        return False
+    target.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(bundled, target)
+    return True
 
 
 def _is_inside_work_tree(cwd: Path) -> bool:
