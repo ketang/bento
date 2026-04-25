@@ -17,6 +17,9 @@ import sys
 from datetime import datetime
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import git_state  # noqa: E402
+
 
 MARKETPLACE = "bento"
 PLUGIN_NAME = "bento"
@@ -90,6 +93,35 @@ def self_heal_home_template(
 def output_path(*, suffix: str, now: datetime, tmp_root: Path) -> Path:
     stamp = now.strftime("%Y%m%d-%H%M%S")
     return tmp_root / f"handoff-{suffix}-{stamp}.md"
+
+
+def _read_input(arg: str) -> str:
+    if arg == "-":
+        return sys.stdin.read()
+    return Path(arg).read_text(encoding="utf-8")
+
+
+def _bundled_template_path() -> Path:
+    return (
+        Path(__file__).resolve().parent.parent
+        / "references"
+        / "templates"
+        / "handoff.md"
+    )
+
+
+def _xdg_config_home() -> Path | None:
+    raw = os.environ.get("XDG_CONFIG_HOME")
+    if not raw:
+        return None
+    return Path(raw)
+
+
+def _tmp_root() -> Path:
+    raw = os.environ.get("HANDOFF_TMP_ROOT")
+    if raw:
+        return Path(raw)
+    return Path("/tmp")
 
 
 def _is_inside_work_tree(cwd: Path) -> bool:
@@ -194,7 +226,43 @@ def main(argv: list[str] | None = None) -> int:
             file=sys.stderr,
         )
         return 2
-    del args
+
+    checkout_root = git_state.detect_checkout_root(cwd)
+    primary_branch, _warnings = git_state.detect_primary_branch(checkout_root)
+    current_branch = subprocess.run(
+        ["git", "branch", "--show-current"],
+        cwd=str(cwd),
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout.strip()
+
+    try:
+        suffix = derive_suffix(
+            current=current_branch, primary=primary_branch, slug=args.slug
+        )
+    except HandoffError as exc:
+        print(f"/handoff: {exc}", file=sys.stderr)
+        return 2
+
+    bundled = _bundled_template_path()
+    xdg = _xdg_config_home()
+    self_heal_home_template(xdg_config_home=xdg, bundled=bundled)
+
+    try:
+        resolve_template(repo_root=checkout_root, xdg_config_home=xdg, bundled=bundled)
+    except HandoffError as exc:
+        print(f"/handoff: {exc}", file=sys.stderr)
+        return 2
+
+    body = _read_input(args.input)
+    target = output_path(suffix=suffix, now=datetime.now(), tmp_root=_tmp_root())
+    target.parent.mkdir(parents=True, exist_ok=True)
+    target.write_text(body, encoding="utf-8")
+
+    if args.verbose:
+        print(f"/handoff: wrote {target}", file=sys.stderr)
+    print(str(target))
     return 0
 
 

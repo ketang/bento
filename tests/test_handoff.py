@@ -315,5 +315,127 @@ class HandoffPathGenerationTest(unittest.TestCase):
         self.assertNotEqual(a, b)
 
 
+class HandoffEndToEndTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.tmp_path = Path(self.tmp.name).resolve()
+        self.repo = self.tmp_path / "repo"
+        self.repo.mkdir()
+        subprocess.run(["git", "init", "-q", "-b", "main"], cwd=self.repo, check=True)
+        subprocess.run(["git", "config", "user.email", "t@e.com"], cwd=self.repo, check=True)
+        subprocess.run(["git", "config", "user.name", "Test"], cwd=self.repo, check=True)
+        (self.repo / "README.md").write_text("hi\n", encoding="utf-8")
+        subprocess.run(["git", "add", "."], cwd=self.repo, check=True)
+        subprocess.run(["git", "commit", "-q", "-m", "init"], cwd=self.repo, check=True)
+        subprocess.run(
+            ["git", "checkout", "-q", "-b", "feat/foo"], cwd=self.repo, check=True
+        )
+        self.input_path = self.tmp_path / "body.md"
+        self.input_path.write_text("filled handoff\n", encoding="utf-8")
+        self.tmp_root = self.tmp_path / "tmp"
+        self.tmp_root.mkdir()
+        self.xdg = self.tmp_path / "xdg"
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def test_writes_file_under_tmp_root_with_branch_suffix(self) -> None:
+        env = os.environ.copy()
+        env["HANDOFF_TMP_ROOT"] = str(self.tmp_root)
+        env["XDG_CONFIG_HOME"] = str(self.xdg)
+        env["BENTO_EXPEDITION_SCRIPT"] = str(self.tmp_path / "no-such-expedition.py")
+        result = subprocess.run(
+            [str(HANDOFF_SCRIPT), "--input", str(self.input_path)],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        path_line = result.stdout.strip()
+        self.assertTrue(path_line.startswith(str(self.tmp_root)))
+        self.assertIn("feat-foo-", path_line)
+        self.assertTrue(path_line.endswith(".md"))
+        self.assertEqual(
+            Path(path_line).read_text(encoding="utf-8"), "filled handoff\n"
+        )
+
+    def test_stdin_input_path(self) -> None:
+        env = os.environ.copy()
+        env["HANDOFF_TMP_ROOT"] = str(self.tmp_root)
+        env["XDG_CONFIG_HOME"] = str(self.xdg)
+        env["BENTO_EXPEDITION_SCRIPT"] = str(self.tmp_path / "no-such-expedition.py")
+        result = subprocess.run(
+            [str(HANDOFF_SCRIPT), "--input", "-"],
+            cwd=self.repo,
+            input="from stdin\n",
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        written = Path(result.stdout.strip())
+        self.assertEqual(written.read_text(encoding="utf-8"), "from stdin\n")
+
+    def test_self_heal_creates_home_scope_template_during_run(self) -> None:
+        env = os.environ.copy()
+        env["HANDOFF_TMP_ROOT"] = str(self.tmp_root)
+        env["XDG_CONFIG_HOME"] = str(self.xdg)
+        env["BENTO_EXPEDITION_SCRIPT"] = str(self.tmp_path / "no-such-expedition.py")
+        target = self.xdg / "agent-plugins" / "bento" / "bento" / "handoff" / "template.md"
+        self.assertFalse(target.exists())
+        result = subprocess.run(
+            [str(HANDOFF_SCRIPT), "--input", str(self.input_path)],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertTrue(target.exists())
+        self.assertIn("## Next action", target.read_text(encoding="utf-8"))
+
+    def test_primary_branch_without_slug_fails(self) -> None:
+        subprocess.run(
+            ["git", "checkout", "-q", "main"], cwd=self.repo, check=True
+        )
+        env = os.environ.copy()
+        env["HANDOFF_TMP_ROOT"] = str(self.tmp_root)
+        env["XDG_CONFIG_HOME"] = str(self.xdg)
+        env["BENTO_EXPEDITION_SCRIPT"] = str(self.tmp_path / "no-such-expedition.py")
+        result = subprocess.run(
+            [str(HANDOFF_SCRIPT), "--input", str(self.input_path)],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--slug", result.stderr)
+
+    def test_primary_branch_with_slug_uses_slug_in_filename(self) -> None:
+        subprocess.run(
+            ["git", "checkout", "-q", "main"], cwd=self.repo, check=True
+        )
+        env = os.environ.copy()
+        env["HANDOFF_TMP_ROOT"] = str(self.tmp_root)
+        env["XDG_CONFIG_HOME"] = str(self.xdg)
+        env["BENTO_EXPEDITION_SCRIPT"] = str(self.tmp_path / "no-such-expedition.py")
+        result = subprocess.run(
+            [str(HANDOFF_SCRIPT), "--input", str(self.input_path), "--slug", "quick-hop"],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("quick-hop-", result.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
