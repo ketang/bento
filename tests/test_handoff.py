@@ -117,5 +117,64 @@ class HandoffPreconditionsTest(unittest.TestCase):
         self.assertEqual(existing_before, existing_after)
 
 
+import importlib.machinery
+import importlib.util
+
+
+def _load_handoff_module():
+    loader = importlib.machinery.SourceFileLoader("handoff_module", str(HANDOFF_SCRIPT))
+    spec = importlib.util.spec_from_loader("handoff_module", loader)
+    module = importlib.util.module_from_spec(spec)
+    loader.exec_module(module)
+    return module
+
+
+class HandoffSuffixTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.handoff = _load_handoff_module()
+
+    def test_clean_branch_name_used_verbatim(self) -> None:
+        self.assertEqual(self.handoff.sanitize_suffix("feat-foo"), "feat-foo")
+
+    def test_branch_with_slash_replaced_with_dash(self) -> None:
+        self.assertEqual(self.handoff.sanitize_suffix("user/feature"), "user-feature")
+
+    def test_unusual_chars_replaced_with_dash(self) -> None:
+        self.assertEqual(
+            self.handoff.sanitize_suffix("weird name (test)#1"),
+            "weird-name--test--1",
+        )
+
+    def test_only_alphanum_dot_underscore_dash_kept(self) -> None:
+        self.assertEqual(
+            self.handoff.sanitize_suffix("a.b_c-d"),
+            "a.b_c-d",
+        )
+
+    def test_primary_branch_requires_slug(self) -> None:
+        with self.assertRaises(self.handoff.HandoffError) as ctx:
+            self.handoff.derive_suffix(current="main", primary="main", slug=None)
+        self.assertIn("--slug", str(ctx.exception))
+
+    def test_primary_branch_uses_slug_when_provided(self) -> None:
+        self.assertEqual(
+            self.handoff.derive_suffix(current="main", primary="main", slug="quick-fix"),
+            "quick-fix",
+        )
+
+    def test_non_primary_branch_uses_branch_name(self) -> None:
+        self.assertEqual(
+            self.handoff.derive_suffix(current="user/feat", primary="main", slug=None),
+            "user-feat",
+        )
+
+    def test_non_primary_branch_ignores_slug(self) -> None:
+        self.assertEqual(
+            self.handoff.derive_suffix(current="user/feat", primary="main", slug="ignored"),
+            "user-feat",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()

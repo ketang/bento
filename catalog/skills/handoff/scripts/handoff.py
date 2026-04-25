@@ -10,9 +10,32 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import subprocess
 import sys
 from pathlib import Path
+
+
+class HandoffError(Exception):
+    """Raised when the helper cannot proceed."""
+
+
+_SUFFIX_VALID = re.compile(r"[A-Za-z0-9._-]")
+
+
+def sanitize_suffix(branch: str) -> str:
+    return "".join(ch if _SUFFIX_VALID.match(ch) else "-" for ch in branch)
+
+
+def derive_suffix(*, current: str, primary: str, slug: str | None) -> str:
+    if current != primary:
+        return sanitize_suffix(current)
+    if not slug:
+        raise HandoffError(
+            "current branch is the primary branch; pass --slug with a 2-4 word "
+            "kebab-case summary so the output filename is meaningful."
+        )
+    return sanitize_suffix(slug)
 
 
 def _is_inside_work_tree(cwd: Path) -> bool:
