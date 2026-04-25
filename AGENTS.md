@@ -37,6 +37,19 @@ When updating docs or structure:
 - avoid language that implies the repo is only useful for one agent runtime
   unless that limitation is technically required
 
+## Conventions this repo follows
+
+- `agent-plugins` convention: user-editable plugin customization files live at
+  `<repo-root>/.agent-plugins/<marketplace>/<plugin>/...` (repo scope) and
+  `$XDG_CONFIG_HOME/agent-plugins/<marketplace>/<plugin>/...` (home scope, with
+  the XDG default of `~/.config/agent-plugins/` when unset). Repo scope
+  overrides home scope, which overrides the plugin-bundled default. Lookup is
+  per file. See
+  [docs/specs/2026-04-24-agent-plugins-convention-design.md](docs/specs/2026-04-24-agent-plugins-convention-design.md)
+  for the full specification.
+  When editing a bento skill that exposes user-editable customization files,
+  follow this convention; do not invent ad hoc locations.
+
 ## Safe editing guidance
 
 Prefer edits in:
