@@ -57,6 +57,18 @@ durable, user-scoped worktree directory rather than an ad hoc convenient path.
 Use `/tmp` only for ephemeral scratch data or continuation state that can be
 recomputed after a reboot or context reset.
 
+## Agent-plugins convention
+
+Bento follows the `agent-plugins` convention for user-editable plugin
+customization files. Plugins that expose editable templates, rule lists, or
+similar user-facing customization files read them from an XDG-respecting
+home-scope directory and a repo-scope directory, with a defined
+override precedence over plugin-bundled defaults.
+
+The convention is cross-marketplace and agent-neutral. See
+[docs/specs/2026-04-24-agent-plugins-convention-design.md](docs/specs/2026-04-24-agent-plugins-convention-design.md)
+for the full specification.
+
 ## Current target platforms
 
 Today, `bento` emits plugins in Claude Code's marketplace format and Codex's
