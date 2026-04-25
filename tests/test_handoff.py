@@ -292,5 +292,28 @@ class HandoffSelfHealTest(unittest.TestCase):
         self.assertFalse(created)
 
 
+from datetime import datetime
+
+
+class HandoffPathGenerationTest(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls) -> None:
+        cls.handoff = _load_handoff_module()
+
+    def test_path_format(self) -> None:
+        moment = datetime(2026, 4, 25, 9, 5, 7)
+        path = self.handoff.output_path(suffix="feat-foo", now=moment, tmp_root=Path("/tmp"))
+        self.assertEqual(path, Path("/tmp/handoff-feat-foo-20260425-090507.md"))
+
+    def test_two_consecutive_calls_with_different_seconds_yield_different_paths(self) -> None:
+        a = self.handoff.output_path(
+            suffix="x", now=datetime(2026, 4, 25, 9, 5, 7), tmp_root=Path("/tmp")
+        )
+        b = self.handoff.output_path(
+            suffix="x", now=datetime(2026, 4, 25, 9, 5, 8), tmp_root=Path("/tmp")
+        )
+        self.assertNotEqual(a, b)
+
+
 if __name__ == "__main__":
     unittest.main()

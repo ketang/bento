@@ -14,6 +14,7 @@ import re
 import shutil
 import subprocess
 import sys
+from datetime import datetime
 from pathlib import Path
 
 
@@ -84,6 +85,11 @@ def self_heal_home_template(
     target.parent.mkdir(parents=True, exist_ok=True)
     shutil.copyfile(bundled, target)
     return True
+
+
+def output_path(*, suffix: str, now: datetime, tmp_root: Path) -> Path:
+    stamp = now.strftime("%Y%m%d-%H%M%S")
+    return tmp_root / f"handoff-{suffix}-{stamp}.md"
 
 
 def _is_inside_work_tree(cwd: Path) -> bool:
