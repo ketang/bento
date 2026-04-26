@@ -266,6 +266,18 @@ class BuildPluginsTest(unittest.TestCase):
 
         self.assertFalse(stale_dir.exists())
 
+    def test_build_repo_includes_dev_skill_in_claude_bento_plugin(self) -> None:
+        self.module.build_repo(run_verification=False)
+        dev_skill_md = (
+            self.root / "plugins" / "claude" / "bento" / "skills" / "dev-skill" / "SKILL.md"
+        )
+        self.assertTrue(dev_skill_md.exists(), "dev-skill SKILL.md must be present in claude bento plugin")
+
+    def test_dev_skill_is_excluded_from_codex_bento_plugin(self) -> None:
+        self.module.build_repo(run_verification=False)
+        codex_path = self.root / "plugins" / "codex" / "bento" / "skills" / "dev-skill"
+        self.assertFalse(codex_path.exists(), "dev-skill must not appear in codex bento plugin")
+
 
 if __name__ == "__main__":
     unittest.main()
