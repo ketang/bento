@@ -104,6 +104,58 @@ class CodexInstallerTest(unittest.TestCase):
         self.assertEqual(config_text.count('[plugins."bento@bento"]'), 1)
         self.assertEqual(config_text.count("enabled = true"), 2)
 
+    def test_home_install_seeds_agent_plugins_handoff_template(self) -> None:
+        install_root = self.root / "home-seed"
+        plugin_root, _marketplace_path, _codex_cache_root, _codex_config_path, _result = self.run_installer(
+            "home",
+            install_root,
+            enable_codex=True,
+        )
+        # The fixture's bento plugin includes a handoff skill bundled template.
+        seeded = (
+            install_root
+            / ".config"
+            / "agent-plugins"
+            / "bento"
+            / "bento"
+            / "handoff"
+            / "template.md"
+        )
+        self.assertTrue(seeded.exists(), msg=f"expected seeded template at {seeded}")
+        self.assertEqual(seeded.read_text(encoding="utf-8"), "BUNDLED\n")
+
+    def test_project_install_seeds_agent_plugins_handoff_template(self) -> None:
+        install_root = self.root / "project-seed"
+        _plugin_root, _marketplace_path, _codex_cache_root, _codex_config_path, _result = self.run_installer(
+            "project",
+            install_root,
+        )
+        seeded = (
+            install_root
+            / ".agent-plugins"
+            / "bento"
+            / "bento"
+            / "handoff"
+            / "template.md"
+        )
+        self.assertTrue(seeded.exists(), msg=f"expected seeded template at {seeded}")
+
+    def test_seed_does_not_overwrite_existing_home_scope_template(self) -> None:
+        install_root = self.root / "home-noop"
+        seeded = (
+            install_root
+            / ".config"
+            / "agent-plugins"
+            / "bento"
+            / "bento"
+            / "handoff"
+            / "template.md"
+        )
+        seeded.parent.mkdir(parents=True)
+        seeded.write_text("USER EDITED\n", encoding="utf-8")
+        self.run_installer("home", install_root, enable_codex=True)
+        self.assertEqual(seeded.read_text(encoding="utf-8"), "USER EDITED\n")
+
     def test_home_install_removes_legacy_unkeyed_cache_layout(self) -> None:
         install_root = self.root / "home-legacy-cache"
         legacy_cache = install_root / ".codex" / "plugins" / "cache" / "bento" / "bento"
@@ -210,6 +262,17 @@ class CodexInstallerTest(unittest.TestCase):
                 encoding="utf-8",
             )
             (plugin_dir / "README.txt").write_text(f"{name}\n", encoding="utf-8")
+            if name == "bento":
+                handoff_template = (
+                    plugin_dir
+                    / "skills"
+                    / "handoff"
+                    / "references"
+                    / "templates"
+                    / "handoff.md"
+                )
+                handoff_template.parent.mkdir(parents=True, exist_ok=True)
+                handoff_template.write_text("BUNDLED\n", encoding="utf-8")
 
         self._make_archive(source_root, self.main_archive)
 

@@ -97,6 +97,37 @@ convention, but runtime-specific skills should not invent different defaults.
 Those overrides should still use a dedicated, durable, user-scoped worktree
 root rather than an arbitrary nearby directory.
 
+## Agent-Plugins Convention
+
+Bento ratifies the `agent-plugins` convention as the location and lookup rule
+for user-editable plugin customization files.
+
+Rationale: plugins frequently expose user-editable artifacts (prompt templates,
+rule lists, allow/deny lists, fill-in-the-blank content skeletons). Without a
+shared convention, each plugin chooses its own location ad hoc, and a user who
+installs plugins from multiple marketplaces has to learn an inconsistent
+scatter of customization paths. A small, focused convention solves layout and
+lookup without reaching into orthogonal concerns like cache, runtime state,
+install mechanics, or packaging.
+
+Key positions:
+
+- Home-scope base directory honors XDG: `$XDG_CONFIG_HOME/agent-plugins/`,
+  falling back to `~/.config/agent-plugins/` when unset.
+- Repo-scope base directory is `<repo-root>/.agent-plugins/`.
+- Path layout below each base is two-level: `<marketplace>/<plugin>/...`.
+  Each plugin chooses its own internal substructure.
+- File-level override precedence: repo scope beats home scope beats
+  plugin-bundled default.
+- Creation mechanics are deliberately unspecified. Plugins may use installers,
+  session-lifecycle hooks, first-use self-healing, or manual user setup.
+
+The convention is cross-marketplace and agent-neutral by design; bento is its
+first concrete adopter but the intent is that other marketplaces can follow it
+without modification. See
+[docs/specs/2026-04-24-agent-plugins-convention-design.md](docs/specs/2026-04-24-agent-plugins-convention-design.md)
+for the full specification.
+
 ## Skill implementation pattern
 
 Canonical skills should keep the reusable capability contract in `SKILL.md` and

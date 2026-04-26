@@ -76,6 +76,36 @@ for plugin in "${PLUGIN_NAMES[@]}"; do
   mv "$staging" "$dest"
 done
 
+seed_agent_plugins_handoff() {
+  local source_template="${PLUGIN_ROOT}/bento/skills/handoff/references/templates/handoff.md"
+  if [[ ! -f "$source_template" ]]; then
+    return 0
+  fi
+  local agent_plugins_root
+  case "$INSTALL_SCOPE" in
+    home)
+      agent_plugins_root="${XDG_CONFIG_HOME:-$INSTALL_ROOT/.config}/agent-plugins"
+      ;;
+    project)
+      agent_plugins_root="${INSTALL_ROOT}/.agent-plugins"
+      ;;
+    *)
+      return 0
+      ;;
+  esac
+  local target_dir="${agent_plugins_root}/bento/bento/handoff"
+  local target_file="${target_dir}/template.md"
+  if [[ -f "$target_file" ]]; then
+    log "agent-plugins handoff template already present at ${target_file}"
+    return 0
+  fi
+  mkdir -p "$target_dir"
+  cp "$source_template" "$target_file"
+  log "seeded agent-plugins handoff template at ${target_file}"
+}
+
+seed_agent_plugins_handoff
+
 # Install external plugins from their own GitHub repos
 for ext_name in "${!EXTERNAL_PLUGIN_REPOS[@]}"; do
   ext_repo="${EXTERNAL_PLUGIN_REPOS[$ext_name]}"
