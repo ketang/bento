@@ -1,15 +1,9 @@
 ---
 name: dev-skill
-description: Load and execute any Claude plugin skill from a local clone or GitHub repo URL. Use when QA-testing a skill before release, verifying a specific commit, or exercising a skill not yet published to the installed plugin cache.
+description: Load and execute any Claude plugin skill from a local clone or GitHub repo URL — any Claude plugin, not just bento. Use when QA-testing a skill before release, verifying a specific commit, or exercising a skill not yet published to the installed plugin cache.
 ---
 
 # dev-skill
-
-## When to use
-
-Use in a target project session to test a skill from a local checkout or a
-GitHub repo without modifying the installed plugin cache or the target project.
-Works for any Claude plugin, not just bento.
 
 ## Inputs
 
@@ -27,6 +21,8 @@ Collect two inputs before proceeding:
    (e.g. `swarm`, `handoff`, `launch-work`).
 
 Reject any skill name that contains path separators (`/`, `\`) or `..`.
+
+If either input is absent, ask the user before proceeding.
 
 ## Path resolution
 
@@ -89,7 +85,3 @@ base directory.
 
 - Do not modify the installed plugin cache.
 - Do not modify any file in the target project as part of dev-skill setup.
-- Always announce the resolved source path and base directory before executing.
-- Always surface the script warning before executing when applicable.
-- Do not fabricate a skill path. If resolution fails, report what was tried.
-- Reject skill names containing `/`, `\`, or `..`.
