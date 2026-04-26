@@ -97,6 +97,7 @@ PLUGIN_DEFS = {
             "go-pgx-goose",
             "react-vite-mantine",
             "graphql-gqlgen-gql-tada",
+            "dev-skill",
         ],
         "hooks": "bento",
     },
