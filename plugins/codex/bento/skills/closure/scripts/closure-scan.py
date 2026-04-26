@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
 import subprocess
 import sys
 import time
@@ -25,6 +26,33 @@ RECENTLY_ACTIVE_THRESHOLD_S = 2 * 3600  # 2 active hours
 
 # How many calendar days back to scan for session logs.
 SESSION_SCAN_DAYS = 4
+
+LAUNCH_WORK_LOG_REL = Path(".launch-work") / "log.md"
+LAUNCH_WORK_HEADER_RE = re.compile(
+    r"<!--\s*launch-work-log\s*\n"
+    r"last-updated:\s*(?P<last_updated>[^\n]+)\n"
+    r"checkpoint:\s*(?P<checkpoint>[^\n]+)\n"
+    r"-->",
+    re.MULTILINE,
+)
+
+
+def scan_launch_work_log(worktree_path: Path) -> dict[str, object] | None:
+    log_path = worktree_path / LAUNCH_WORK_LOG_REL
+    if not log_path.is_file():
+        return None
+    try:
+        body = log_path.read_text(encoding="utf-8", errors="replace")
+    except OSError:
+        return None
+    match = LAUNCH_WORK_HEADER_RE.search(body)
+    if not match:
+        return {"present": True, "last_updated": "", "checkpoint": ""}
+    return {
+        "present": True,
+        "last_updated": match.group("last_updated").strip(),
+        "checkpoint": match.group("checkpoint").strip(),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -655,6 +683,11 @@ def removable_merged_worktree_reason(worktree: dict[str, object], current_checko
         return "worktree is detached"
     if worktree.get("working_tree_dirty"):
         return "worktree has uncommitted changes"
+    launch_work = worktree.get("launch_work")
+    if isinstance(launch_work, dict):
+        checkpoint = str(launch_work.get("checkpoint") or "")
+        if checkpoint and checkpoint != "ready-to-land":
+            return f"launch-work log in flight (checkpoint={checkpoint})"
     liveness = worktree.get("liveness")
     if not isinstance(liveness, dict):
         return "liveness assessment unavailable"
@@ -858,6 +891,10 @@ def main() -> int:
 
             wt_entry["working_tree_dirty"] = bool(wt_dirty)
             wt_entry["working_tree_entries"] = wt_dirty
+
+            launch_work = scan_launch_work_log(wt_path)
+            if launch_work is not None:
+                wt_entry["launch_work"] = launch_work
 
             if not args.no_liveness:
                 activity_ts, activity_source = worktree_activity_ts(wt_path, wt_dirty)
