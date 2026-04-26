@@ -272,6 +272,10 @@ class BuildPluginsTest(unittest.TestCase):
             self.root / "plugins" / "claude" / "bento" / "skills" / "dev-skill" / "SKILL.md"
         )
         self.assertTrue(dev_skill_md.exists(), "dev-skill SKILL.md must be present in claude bento plugin")
+        self.assertFalse(
+            (self.root / "plugins" / "claude" / "bento" / "skills" / "dev-skill" / "packaging.json").exists(),
+            "packaging.json must not be copied into the output skill directory",
+        )
 
     def test_dev_skill_is_excluded_from_codex_bento_plugin(self) -> None:
         self.module.build_repo(run_verification=False)
