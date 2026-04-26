@@ -41,6 +41,9 @@ state checks that should not rely on ad hoc prose reconstruction:
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
   verify the landed primary-branch ref still matches the verified candidate
+- `land-work/scripts/land-work-clean-log.py --base <ref> [--apply] [--keep-commits]`
+  to identify log-only commits, drop them via non-interactive rebase, and
+  remove `.launch-work/log.md` before the merge
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script.
@@ -76,6 +79,29 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 
 2. Confirm the current branch is the intended landing branch and that the helper
    reports a clean feature-branch checkout.
+2a. If `.launch-work/log.md` is present, run the log-cleanup pass before
+    rebasing or verifying:
+
+    - Verify the log's `checkpoint` is `ready-to-land`. If it is not, stop
+      and ask the user — the work is not actually ready, or the agent forgot
+      to update the log.
+    - Preview the cleanup:
+
+```bash
+land-work/scripts/land-work-clean-log.py --base <primary>
+```
+
+    - Apply the cleanup:
+
+```bash
+land-work/scripts/land-work-clean-log.py --base <primary> --apply
+```
+
+    - On rebase conflict (a non-log commit also touched the log file), retry
+      with `--apply --keep-commits` to accept the log-only commits as clutter
+      and proceed; the deletion commit still runs.
+    - The rebase rewrites local history. The next steps assume the rewritten
+      branch.
 3. Treat any verification that ran before a rebase, merge, cherry-pick, or
    manual conflict resolution as stale evidence only. It does not authorize a
    landing after the candidate changes.
@@ -151,6 +177,11 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
   landed candidate matches the verified preview.
 - Do not land changes that include deploy-critical artifacts without verifying
   the committed blob content matches what was tested locally.
+- Do not merge a feature branch with a `.launch-work/log.md` whose
+  `checkpoint` is not `ready-to-land`.
+- Do not skip the log-cleanup pass when `.launch-work/log.md` is present.
+- Use `--keep-commits` only when the rebase reports a conflict, or when the
+  user explicitly accepts log-commit clutter in the primary branch.
 
 ## Tracker Handoff
 

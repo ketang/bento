@@ -129,6 +129,27 @@ activity at 10:45pm and a check at 8:15am produces ~30 active minutes, not
 
 Last activity is the maximum of: the HEAD commit timestamp and the mtime of any
 tracked file with uncommitted changes.  Untracked files are excluded.
+
+### Launch-Work Progress Logs
+
+When a worktree contains `.launch-work/log.md`, the helper emits a
+`launch_work` object on that worktree entry with `present`, `last_updated`,
+and `checkpoint`. The presence of an in-flight log
+(`checkpoint != "ready-to-land"`) is **affirmative** evidence that the
+worktree is mid-task — unlike uncommitted state, which is not.
+
+`--apply delete-local-merged-branches` never deletes a worktree with an
+in-flight log, even when liveness is `stale` or `unknown`. The skip reason
+(`launch-work log in flight (checkpoint=<name>)`) is surfaced in the
+apply-mode output.
+
+A `ready-to-land` log on a merged branch is an anomaly — `land-work`'s
+cleanup pass did not run. Surface it to the user before any cleanup action.
+
+When a dry-run pass finds any worktree with an in-flight log, the next-step
+menu must include **resume in-flight launch-work** alongside the existing
+options (apply safe cleanup, hand off to `land-work`, leave unchanged).
+
 ## Usage
 
 - Invoke `closure` for a full scan of the current repo.
