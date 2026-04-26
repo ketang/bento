@@ -64,7 +64,23 @@ This apply mode deletes:
   merged branch after the worktree removal succeeds
 
 For merged, clean, stale-or-unknown linked worktrees, this helper apply mode is
-the approved automatic cleanup path. Everything else remains review-driven.
+the approved automatic cleanup path.
+
+If the user also wants patch-equivalent branches removed (work landed via
+rebase or squash with no merge commit):
+
+```bash
+closure/scripts/closure-scan.py --apply delete-local-patch-equivalent-branches
+```
+
+This apply mode force-deletes local branches whose classification is
+`patch_equivalent_review` — branches with zero unique patches relative to
+primary that are not checked out in any worktree. These branches are not
+reachable ancestors of primary (hence no merge record), so the helper uses
+`git branch -D`. The force delete is safe because `unique_patch_count == 0`
+confirms all content is already on primary.
+
+Everything else remains review-driven.
 
 Add `--no-liveness` for a faster scan that skips session log scanning and
 process detection, returning git state only.
@@ -192,7 +208,9 @@ primary-branch shell state.
 
 - Always start with dry-run output from the helper.
 - Do not force-push or rebase the primary branch without explicit approval.
-- Do not auto-delete stashes or patch-equivalent branches.
+- Do not auto-delete stashes.
+- Do not delete patch-equivalent branches outside the helper's
+  `--apply delete-local-patch-equivalent-branches` mode.
 - Do not delete worktrees except through the helper's
   `--apply delete-local-merged-branches` mode for clean
   `merged_checked_out` worktrees that satisfy the helper's liveness gate.
@@ -203,9 +221,10 @@ primary-branch shell state.
   worktree is safe to discard — an agent waiting for input may be idle for
   hours.
 - **Never construct manual `git branch -D` or `git branch -d` commands.** All
-  branch deletion must go through the helper's
-  `--apply delete-local-merged-branches` mode. Manually scripted deletion
-  loops bypass the helper's safety checks and can trigger Claude Code
+  branch deletion must go through the helper's apply modes
+  (`--apply delete-local-merged-branches` or
+  `--apply delete-local-patch-equivalent-branches`). Manually scripted
+  deletion loops bypass the helper's safety checks and can trigger Claude Code
   rendering errors.
 - **Never combine multiple shell operations in one `Bash` command** using
   `&&`, pipes, `$(...)`, or inline interpreters. Issue one command per tool

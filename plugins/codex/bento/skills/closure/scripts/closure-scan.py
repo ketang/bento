@@ -12,6 +12,7 @@ from pathlib import Path
 
 
 APPLY_DELETE_LOCAL_MERGED = "delete-local-merged-branches"
+APPLY_DELETE_LOCAL_PATCH_EQUIVALENT = "delete-local-patch-equivalent-branches"
 WORKTREE_SAFE_TO_REMOVE_LIVENESS = {"stale", "unknown"}
 
 # Hours during which agents are expected to be active.
@@ -801,6 +802,43 @@ def apply_delete_local_merged_branches(
     return applied, skipped
 
 
+def apply_delete_patch_equivalent_branches(
+    branches: list[dict[str, object]],
+    cwd: Path,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    """
+    Force-delete local branches classified as patch_equivalent_review.
+
+    These branches have no unique patches relative to primary but were not
+    merged via a merge commit (rebased or squash-merged), so git's ancestry
+    check returns false and `git branch -d` would refuse them.  `git branch -D`
+    is safe here because unique_patch_count == 0 guarantees all content is
+    already on the primary branch.
+    """
+    applied: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+
+    for branch in branches:
+        if branch["classification"] != "patch_equivalent_review":
+            continue
+
+        branch_name = str(branch["name"])
+        result = git("branch", "-D", branch_name, cwd=cwd, check=False)
+        if result.returncode == 0:
+            applied.append({"action": "delete_local_branch", "branch": branch_name})
+            continue
+
+        skipped.append(
+            {
+                "action": "delete_local_branch",
+                "branch": branch_name,
+                "reason": result.stderr.strip() or "git branch -D failed",
+            }
+        )
+
+    return applied, skipped
+
+
 # ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
@@ -809,7 +847,7 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--apply",
-        choices=[APPLY_DELETE_LOCAL_MERGED],
+        choices=[APPLY_DELETE_LOCAL_MERGED, APPLY_DELETE_LOCAL_PATCH_EQUIVALENT],
         help="apply the supported cleanup action after the dry-run scan",
     )
     parser.add_argument(
@@ -884,6 +922,11 @@ def main() -> int:
             applied_actions, skipped_actions = apply_delete_local_merged_branches(
                 branches,
                 enriched_worktrees,
+                repo_root,
+            )
+        elif args.apply == APPLY_DELETE_LOCAL_PATCH_EQUIVALENT:
+            applied_actions, skipped_actions = apply_delete_patch_equivalent_branches(
+                branches,
                 repo_root,
             )
 
