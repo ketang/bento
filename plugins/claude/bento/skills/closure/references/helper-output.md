@@ -36,8 +36,9 @@ it may automatically remove a clean linked worktree only when the branch is
 
 ## Apply Mode Behavior
 
-`closure-scan.py --apply delete-local-merged-branches` can perform two kinds
-of cleanup:
+### `--apply delete-local-merged-branches`
+
+Performs two kinds of cleanup:
 
 - delete `safe_to_delete` local branches immediately
 - remove a linked worktree for a `merged_checked_out` branch, then delete that
@@ -53,6 +54,25 @@ orphaned linked worktrees in detached `HEAD` state.
 If liveness is unavailable, the worktree is dirty, or the verdict is
 `confirmed_live`, `possibly_live`, or `recently_active`, the helper skips that
 worktree and leaves the branch in place.
+
+### `--apply delete-local-patch-equivalent-branches`
+
+Force-deletes local branches classified as `patch_equivalent_review` — branches
+with `unique_patch_count == 0` that are not checked out in any worktree.
+
+These branches were landed via rebase or squash merge, so they are not reachable
+ancestors of the primary branch and `git branch -d` would refuse them. The
+helper uses `git branch -D`. This is safe because `unique_patch_count == 0`
+(verified via `git cherry`) confirms no content unique to the branch is missing
+from primary.
+
+The two apply modes are independent. Run both in sequence to clear all
+no-content local branches:
+
+```bash
+closure/scripts/closure-scan.py --apply delete-local-merged-branches
+closure/scripts/closure-scan.py --apply delete-local-patch-equivalent-branches
+```
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware
