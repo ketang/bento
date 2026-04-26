@@ -68,5 +68,80 @@ class LaunchWorkLogInitTest(unittest.TestCase):
         self.assertIn("primary branch", result.stderr)
 
 
+class LaunchWorkLogUpdateTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = init_feature_repo(Path(self.temp_dir.name))
+        run([str(LOG_SCRIPT), "init"], cwd=self.repo)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_update_rewrites_checkpoint_and_commits(self) -> None:
+        result = run([str(LOG_SCRIPT), "update", "--checkpoint", "deps-installed"], cwd=self.repo)
+        self.assertEqual(result.returncode, 0)
+
+        body = (self.repo / ".launch-work/log.md").read_text(encoding="utf-8")
+        self.assertIn("checkpoint: deps-installed", body)
+
+        last = git(self.repo, "log", "-1", "--format=%s").stdout.strip()
+        self.assertEqual(last, "chore(launch-work-log): deps-installed")
+
+    def test_update_rejects_unknown_checkpoint(self) -> None:
+        result = run(
+            [str(LOG_SCRIPT), "update", "--checkpoint", "bogus"],
+            cwd=self.repo,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("unknown checkpoint", result.stderr)
+
+    def test_update_with_slot_replaces_named_section(self) -> None:
+        proc = subprocess.run(
+            [
+                str(LOG_SCRIPT),
+                "update",
+                "--checkpoint",
+                "tests-green",
+                "--slot",
+                "next-action",
+                "--content",
+                "-",
+            ],
+            cwd=self.repo,
+            input="Wire the new endpoint into routing.",
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        self.assertEqual(proc.returncode, 0)
+
+        body = (self.repo / ".launch-work/log.md").read_text(encoding="utf-8")
+        self.assertIn("Wire the new endpoint into routing.", body)
+        self.assertIn("checkpoint: tests-green", body)
+
+
+class LaunchWorkLogReadTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = init_feature_repo(Path(self.temp_dir.name))
+        run([str(LOG_SCRIPT), "init"], cwd=self.repo)
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_read_emits_header_fields_as_json(self) -> None:
+        result = run([str(LOG_SCRIPT), "read"], cwd=self.repo)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["checkpoint"], "worktree-ready")
+        self.assertRegex(payload["last_updated"], r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
+        self.assertEqual(payload["path"], str(self.repo / ".launch-work/log.md"))
+
+    def test_read_when_log_missing_exits_nonzero(self) -> None:
+        (self.repo / ".launch-work/log.md").unlink()
+        result = run([str(LOG_SCRIPT), "read"], cwd=self.repo, check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+
 if __name__ == "__main__":
     unittest.main()
