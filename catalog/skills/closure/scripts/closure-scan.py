@@ -683,6 +683,11 @@ def removable_merged_worktree_reason(worktree: dict[str, object], current_checko
         return "worktree is detached"
     if worktree.get("working_tree_dirty"):
         return "worktree has uncommitted changes"
+    launch_work = worktree.get("launch_work")
+    if isinstance(launch_work, dict):
+        checkpoint = str(launch_work.get("checkpoint") or "")
+        if checkpoint and checkpoint != "ready-to-land":
+            return f"launch-work log in flight (checkpoint={checkpoint})"
     liveness = worktree.get("liveness")
     if not isinstance(liveness, dict):
         return "liveness assessment unavailable"

@@ -450,5 +450,69 @@ class ClosureScanLaunchWorkLogTest(unittest.TestCase):
         self.assertNotIn("launch_work", record)
 
 
+class ClosureApplyLaunchWorkExclusionTest(unittest.TestCase):
+    """A worktree with an in-flight launch-work log (checkpoint != ready-to-land)
+    is never eligible for --apply delete-local-merged-branches, even when the
+    branch is merged and the worktree is otherwise clean."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        write_file(self.repo / "README.md", "root\n")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "initial")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_in_flight_log_blocks_auto_delete(self) -> None:
+        # Build a merged branch whose commit set includes the log file, then
+        # add a linked worktree on the merged branch. This represents the
+        # defensive case: land-work normally removes the log before merge, but
+        # if a log somehow survives, closure must not auto-delete the worktree.
+        old_date = "2020-01-01T12:00:00+00:00"
+        old_env = {"GIT_AUTHOR_DATE": old_date, "GIT_COMMITTER_DATE": old_date}
+
+        git(self.repo, "checkout", "-b", "feature-active")
+        write_file(self.repo / "work.txt", "work\n")
+        git(self.repo, "add", "work.txt")
+        git_with_env(self.repo, old_env, "commit", "-m", "add work")
+
+        log_path = self.repo / ".launch-work" / "log.md"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            LAUNCH_WORK_LOG_BODY.format(checkpoint="tests-green"), encoding="utf-8"
+        )
+        git(self.repo, "add", ".launch-work/log.md")
+        git_with_env(self.repo, old_env, "commit", "-m", "chore(launch-work-log): tests-green")
+
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-active", "-m", "merge feature-active")
+
+        wt = Path(self.temp_dir.name) / "wt-feature-active"
+        git(self.repo, "worktree", "add", str(wt), "feature-active")
+
+        scan = json.loads(
+            run([str(SCRIPT), "--apply", "delete-local-merged-branches"], self.repo).stdout
+        )
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        self.assertIn(
+            {
+                "action": "delete_worktree",
+                "branch": "feature-active",
+                "worktree": str(wt),
+                "reason": "launch-work log in flight (checkpoint=tests-green)",
+            },
+            scan["skipped_actions"],
+        )
+        self.assertTrue(wt.exists())
+        self.assertIn("feature-active", branches)
+
+
 if __name__ == "__main__":
     unittest.main()
