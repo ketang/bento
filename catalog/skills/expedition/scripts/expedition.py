@@ -337,13 +337,12 @@ def cmd_close_task(args: argparse.Namespace) -> int:
     try:
         result, state = _close_task_evaluate(args, cwd)
     except ExpeditionStateError as exc:
-        return _emit({"ok": False, "errors": [str(exc)], "updated": False, "merged": False, "rebased": False}, 1)
+        return _emit({"ok": False, "errors": [str(exc)], "updated": False, "merged": False}, 1)
 
     if args.apply and not result["ok"]:
-        return _emit({**result, "updated": False, "merged": False, "rebased": False}, 1)
+        return _emit({**result, "updated": False, "merged": False}, 1)
 
     merged = False
-    rebased = False
     updated = False
     if args.apply:
         active_list = list(state.get("active_branches") or [])
@@ -370,7 +369,7 @@ def cmd_close_task(args: argparse.Namespace) -> int:
                 write_state(state_file, state)
                 commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed rebase for {target['branch']}")
                 payload = {
-                    **result, "updated": False, "merged": False, "rebased": False,
+                    **result, "updated": False, "merged": False,
                     "errors": [f"failed to rebase {target['branch']} onto {state['base_branch']}: {rebase_task.stderr.strip()}"],
                 }
                 return _emit(payload, rebase_task.returncode)
@@ -383,18 +382,9 @@ def cmd_close_task(args: argparse.Namespace) -> int:
                 state["landing_lease"] = None
                 write_state(state_file, state)
                 commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed merge for {target['branch']}")
-                payload = {**result, "updated": False, "merged": False, "rebased": False, "errors": [merge_result.stderr.strip()]}
+                payload = {**result, "updated": False, "merged": False, "errors": [merge_result.stderr.strip()]}
                 return _emit(payload, merge_result.returncode)
             merged = True
-
-            rebase_result = git("rebase", str(state["primary_branch"]), cwd=cwd, check=False)
-            if rebase_result.returncode != 0:
-                state["landing_lease"] = None
-                write_state(state_file, state)
-                commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed primary rebase for {target['branch']}")
-                payload = {**result, "updated": False, "merged": merged, "rebased": False, "errors": [rebase_result.stderr.strip()]}
-                return _emit(payload, rebase_result.returncode)
-            rebased = True
 
         completion = {
             "number": target["number"],
@@ -415,11 +405,7 @@ def cmd_close_task(args: argparse.Namespace) -> int:
             state["status"] = "ready_for_task"
         state["next_task_number"] = max(int(state["next_task_number"]), int(target["number"]) + 1)
         state["updated_at"] = utc_now()
-        state["next_action"] = (
-            "Create the next task branch from the rebased expedition base branch."
-            if rebased
-            else "Create the next task branch from the expedition base branch."
-        )
+        state["next_action"] = "Create the next task branch from the expedition base branch."
         state["landing_lease"] = None
         write_state(state_file, state)
         append_log_entry(
@@ -429,14 +415,14 @@ def cmd_close_task(args: argparse.Namespace) -> int:
                 f"Branch: `{target['branch']}`.",
                 f"Outcome: `{args.outcome}`.",
                 f"Summary: {args.summary}",
-                "Base branch rebased onto the primary branch." if rebased else "Experiment preserved without merging.",
+                "Experiment preserved without merging." if args.outcome == "failed-experiment" else "Task merged into base branch.",
             ],
         )
         sync_markdown_views(cwd, state)
         commit_expedition_docs(cwd, str(state["expedition"]), f"log(expedition): close {target['branch']} ({args.outcome})")
         updated = True
 
-    return _emit({**result, "updated": updated, "merged": merged, "rebased": rebased})
+    return _emit({**result, "updated": updated, "merged": merged})
 
 
 def cmd_finish(args: argparse.Namespace) -> int:
@@ -480,7 +466,7 @@ def cmd_finish(args: argparse.Namespace) -> int:
         "base_worktree": str(base_worktree),
         "updated": updated,
         "docs_removed": docs_removed,
-        "next_action": "Run the final verification gates, commit the expedition-doc removal, and land the rebased base branch onto the primary branch.",
+        "next_action": "Rebase the base branch onto the primary branch, run the final verification gates, commit the expedition-doc removal, and land.",
         "errors": errors,
     }
     return _emit(payload, 0 if payload["ok"] else 1)
