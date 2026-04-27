@@ -33,26 +33,15 @@ PLUGIN_ORDER = [
     "session-id",
 ]
 
-EXTERNAL_PLUGINS: list[dict] = []
+EXTERNAL_PLUGINS: list[dict] = [
+    {
+        "name": "bugshot",
+        "description": "Ephemeral screenshot gallery for visual bug review and issue filing",
+        "repo": "ketang/bugshot",
+    },
+]
 
-EXTERNAL_SKILLS: dict[str, list[dict]] = {
-    "bento": [
-        {
-            "name": "bugshot",
-            "repo": "ketang/bugshot",
-            "ref": "856774fe1f5093c109d8318e6363d2e6a402e146",
-            "include": [
-                "SKILL.md",
-                "ansi_render.py",
-                "bugshot_cli.py",
-                "bugshot_workflow.py",
-                "gallery_server.py",
-                "static",
-                "templates",
-            ],
-        },
-    ],
-}
+EXTERNAL_SKILLS: dict[str, list[dict]] = {}
 
 
 PLUGIN_DEFS = {

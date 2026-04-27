@@ -188,13 +188,38 @@ class BuildPluginsTest(unittest.TestCase):
             normalized_skill_text = re.sub(r"\s+", " ", skill_text)
             self.assertIn(expected_phrase, normalized_skill_text)
 
-    def test_external_skills_registry_declares_bugshot_under_bento(self) -> None:
+    def test_bugshot_not_in_bento_external_skills(self) -> None:
         module = load_build_plugins_module()
-        entries = module.EXTERNAL_SKILLS.get("bento", [])
-        bugshot = next((e for e in entries if e["name"] == "bugshot"), None)
-        self.assertIsNotNone(bugshot, "bugshot should be registered as an external skill of bento")
+        bento_skills = module.EXTERNAL_SKILLS.get("bento", [])
+        bugshot = next((e for e in bento_skills if e["name"] == "bugshot"), None)
+        self.assertIsNone(bugshot, "bugshot must not be bundled as an external skill of bento")
+
+    def test_bugshot_in_external_plugins(self) -> None:
+        module = load_build_plugins_module()
+        bugshot = next((e for e in module.EXTERNAL_PLUGINS if e["name"] == "bugshot"), None)
+        self.assertIsNotNone(bugshot, "bugshot should be registered in EXTERNAL_PLUGINS")
         self.assertEqual(bugshot["repo"], "ketang/bugshot")
-        self.assertRegex(bugshot["ref"], r"^[0-9a-f]{40}$", "ref should be a pinned commit SHA")
+
+    def test_bugshot_appears_in_claude_marketplace_as_external(self) -> None:
+        self.module.build_repo(run_verification=False)
+        marketplace = json.loads(
+            (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        bugshot = next((p for p in marketplace["plugins"] if p["name"] == "bugshot"), None)
+        self.assertIsNotNone(bugshot, "bugshot should appear in the claude marketplace")
+        self.assertNotIn("version", bugshot, "external plugin entry must not carry a version field")
+        self.assertIn("source", bugshot)
+        self.assertEqual(bugshot["source"]["source"], "github")
+        self.assertEqual(bugshot["source"]["repo"], "ketang/bugshot")
+
+    def test_bugshot_not_bundled_in_bento_plugin(self) -> None:
+        self.module.build_repo(run_verification=False)
+        for platform in ("claude", "codex"):
+            bento_bugshot = self.root / "plugins" / platform / "bento" / "skills" / "bugshot"
+            self.assertFalse(
+                bento_bugshot.exists(),
+                f"bugshot must not be bundled inside bento for {platform}",
+            )
 
     def test_fetch_external_skill_places_skill_md_at_destination_root(self) -> None:
         fake_repo = self._build_fake_skill_repo("bugshot")
