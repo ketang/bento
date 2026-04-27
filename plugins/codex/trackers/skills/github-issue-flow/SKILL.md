@@ -52,6 +52,11 @@ documented triage label and unresolved questions included in the body.
 - Do not assume assignee-based claiming is canonical.
 - Do not assume closing always happens on merge to `main`; follow the repo's
   documented primary-branch naming and landing flow.
+- Keep issues reasonably self-contained. Prefer putting the necessary context in
+  the issue itself instead of pointing to external files.
+- Avoid references to local filesystem paths or other access-scoped artifacts
+  unless there is no practical alternative, such as an image hosted in a
+  tracker that cannot take attachments.
 - Do not invent extra labels, comments, or issue transitions that the repo does
   not document.
 - Do not close from cleanup evidence alone unless the landed-work correlation

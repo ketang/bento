@@ -124,6 +124,11 @@ ran `land-work` itself — capture the SHA and run the check anyway.
 - Do not assume every repo uses `in_progress` as the active-work status.
 - Do not assume closing always happens on merge to `main`; follow the repo's
   documented primary-branch naming and landing flow.
+- Keep issues reasonably self-contained. Prefer putting the necessary context in
+  the issue itself instead of pointing to external files.
+- Avoid references to local filesystem paths or other access-scoped artifacts
+  unless there is no practical alternative, such as an image hosted in a
+  tracker that cannot take attachments.
 - Do not invent extra Beads statuses or transitions that the repo does not
   document.
 - Do not close from cleanup evidence alone unless the landed-work correlation
