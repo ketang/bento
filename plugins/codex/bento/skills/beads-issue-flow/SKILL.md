@@ -65,3 +65,30 @@ bd create --title "..." --description "..."
 bd update <id> --status <status>
 bd close <id>
 ```
+
+## Dependency Links
+
+When creating a blocks relationship, prefer:
+
+```bash
+bd dep <blocker> --blocks <blocked>
+```
+
+Use this flag form because it makes the direction explicit at the call site.
+Do not use positional `bd link <a> <b>` or `bd dep add <a> <b>` in
+agent-authored commands; those forms are easy to invert.
+
+After creating a dependency, always verify it with:
+
+```bash
+bd dep list <blocked>
+```
+
+Confirm the blocker appears under `blocked by`, not under `blocks`.
+
+Worked example:
+
+- English statement: `bento-auth` must finish before `bento-ui`.
+- Command: `bd dep bento-auth --blocks bento-ui`
+- Verification: run `bd dep list bento-ui` and confirm `bento-auth` appears in
+  the `blocked by` section.
