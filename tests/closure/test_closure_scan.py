@@ -373,6 +373,93 @@ class MergedCheckedOutTest(unittest.TestCase):
         self.assertTrue(worktree_path.exists())
         self.assertIn("feature-dirty-merged", branches)
 
+    def test_target_branch_scopes_apply_to_one_branch(self) -> None:
+        # Two merged feature branches with linked worktrees — only the targeted
+        # one should be cleaned up.
+        for name in ("feature-target", "feature-other"):
+            git(self.repo, "checkout", "-b", name)
+            self.commit_file_with_old_date(f"{name}.txt", "x\n", f"add {name}")
+            git(self.repo, "checkout", "main")
+            git(self.repo, "merge", "--no-ff", name, "-m", f"merge {name}")
+
+        target_wt = Path(self.temp_dir.name) / "wt-target"
+        other_wt = Path(self.temp_dir.name) / "wt-other"
+        git(self.repo, "worktree", "add", str(target_wt), "feature-target")
+        git(self.repo, "worktree", "add", str(other_wt), "feature-other")
+
+        scan = json.loads(
+            run(
+                [
+                    str(SCRIPT),
+                    "--target-branch",
+                    "feature-target",
+                    "--apply",
+                    "delete-local-merged-branches",
+                ],
+                self.repo,
+            ).stdout
+        )
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        self.assertIn(
+            {"action": "delete_worktree", "branch": "feature-target", "worktree": str(target_wt)},
+            scan["applied_actions"],
+        )
+        self.assertIn(
+            {"action": "delete_local_branch", "branch": "feature-target"},
+            scan["applied_actions"],
+        )
+        self.assertFalse(target_wt.exists())
+        self.assertNotIn("feature-target", branches)
+        # The non-targeted merged branch and its worktree must remain untouched.
+        self.assertTrue(other_wt.exists())
+        self.assertIn("feature-other", branches)
+        for action in scan["applied_actions"]:
+            self.assertNotIn("feature-other", action.get("branch", ""))
+
+    def test_target_branch_missing_errors_non_zero(self) -> None:
+        result = subprocess.run(
+            [
+                str(SCRIPT),
+                "--target-branch",
+                "no-such-branch",
+                "--apply",
+                "delete-local-merged-branches",
+            ],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no-such-branch", result.stderr)
+
+    def test_target_branch_wrong_classification_skipped(self) -> None:
+        # An unmerged branch should not be eligible: the helper reports it in
+        # skipped_actions and leaves the branch in place. Exit code is 0 — the
+        # caller decides what to do with the skip reason.
+        git(self.repo, "checkout", "-b", "feature-open")
+        self.commit_file("open.txt", "open\n", "add open work")
+        git(self.repo, "checkout", "main")
+
+        scan = json.loads(
+            run(
+                [
+                    str(SCRIPT),
+                    "--target-branch",
+                    "feature-open",
+                    "--apply",
+                    "delete-local-merged-branches",
+                ],
+                self.repo,
+            ).stdout
+        )
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        self.assertEqual(scan["applied_actions"], [])
+        self.assertIn("feature-open", branches)
+        skipped_branches = {entry.get("branch") for entry in scan["skipped_actions"]}
+        self.assertIn("feature-open", skipped_branches)
+
 
 LAUNCH_WORK_LOG_BODY = """<!-- launch-work-log
 last-updated: 2026-04-26T12:00:00Z
