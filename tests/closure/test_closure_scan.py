@@ -265,6 +265,41 @@ class MergedCheckedOutTest(unittest.TestCase):
         for wt in scan["worktrees"]:
             self.assertNotIn("liveness", wt)
 
+    def test_self_invocation_flag_set_when_helper_runs_inside_worktree(self) -> None:
+        git(self.repo, "checkout", "-b", "feature-self-call")
+        self.commit_file("self.txt", "self\n", "add self file")
+        git(self.repo, "checkout", "main")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-self-call"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-self-call")
+
+        scan = json.loads(
+            run([str(SCRIPT), "--no-liveness"], worktree_path).stdout
+        )
+        wt_records = {wt["path"]: wt for wt in scan["worktrees"]}
+
+        linked = wt_records[str(worktree_path)]
+        self.assertTrue(linked.get("self_invocation"))
+
+        primary = wt_records[str(self.repo)]
+        self.assertFalse(primary.get("self_invocation", False))
+
+    def test_self_invocation_skip_reason_points_to_land_work(self) -> None:
+        # Self-invocation takes precedence over other skip reasons in
+        # removable_merged_worktree_reason; the message must redirect
+        # callers to land-work for own-work cleanup.
+        mod = _load_module()
+        worktree = {
+            "path": "/tmp/some-worktree",
+            "self_invocation": True,
+            "working_tree_dirty": False,
+            "liveness": {"verdict": "stale"},
+        }
+        reason = mod.removable_merged_worktree_reason(worktree, Path("/tmp/elsewhere"))
+        self.assertIsNotNone(reason)
+        self.assertIn("self-invocation", reason)
+        self.assertIn("land-work", reason)
+
     def test_worktree_dirty_state_reported(self) -> None:
         # Create a branch and linked worktree, then dirty a tracked file in it.
         git(self.repo, "checkout", "-b", "feature-dirty")
