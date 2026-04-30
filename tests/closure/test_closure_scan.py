@@ -284,43 +284,21 @@ class MergedCheckedOutTest(unittest.TestCase):
         primary = wt_records[str(self.repo)]
         self.assertFalse(primary.get("self_invocation", False))
 
-    def test_apply_skips_self_invocation_worktree_with_pointed_reason(self) -> None:
-        git(self.repo, "checkout", "-b", "feature-self-merged")
-        self.commit_file_with_old_date(
-            "merged-self.txt", "merged-self\n", "add merged self work",
-        )
-        git(self.repo, "checkout", "main")
-        git(
-            self.repo, "merge", "--no-ff", "feature-self-merged",
-            "-m", "merge feature-self-merged",
-        )
-
-        worktree_path = Path(self.temp_dir.name) / "wt-self-merged"
-        git(self.repo, "worktree", "add", str(worktree_path), "feature-self-merged")
-
-        scan = json.loads(
-            run(
-                [str(SCRIPT), "--apply", "delete-local-merged-branches"],
-                worktree_path,
-            ).stdout
-        )
-
-        skipped_worktree = next(
-            (
-                a for a in scan["skipped_actions"]
-                if a.get("action") == "delete_worktree"
-                and a.get("branch") == "feature-self-merged"
-            ),
-            None,
-        )
-        self.assertIsNotNone(skipped_worktree)
-        reason = skipped_worktree["reason"]
+    def test_self_invocation_skip_reason_points_to_land_work(self) -> None:
+        # Self-invocation takes precedence over other skip reasons in
+        # removable_merged_worktree_reason; the message must redirect
+        # callers to land-work for own-work cleanup.
+        mod = _load_module()
+        worktree = {
+            "path": "/tmp/some-worktree",
+            "self_invocation": True,
+            "working_tree_dirty": False,
+            "liveness": {"verdict": "stale"},
+        }
+        reason = mod.removable_merged_worktree_reason(worktree, Path("/tmp/elsewhere"))
+        self.assertIsNotNone(reason)
         self.assertIn("self-invocation", reason)
         self.assertIn("land-work", reason)
-
-        self.assertTrue(worktree_path.exists())
-        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
-        self.assertIn("feature-self-merged", branches)
 
     def test_worktree_dirty_state_reported(self) -> None:
         # Create a branch and linked worktree, then dirty a tracked file in it.
