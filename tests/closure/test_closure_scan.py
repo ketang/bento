@@ -601,5 +601,187 @@ class ClosureApplyLaunchWorkExclusionTest(unittest.TestCase):
         self.assertIn("feature-active", branches)
 
 
+class CorrelateBranchesTest(unittest.TestCase):
+    """Tests for --correlate-branches signal emission on review_required branches."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        self._commit("README.md", "root\n", "initial commit")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _commit(self, rel: str, content: str, msg: str) -> str:
+        path = self.repo / rel
+        path.write_text(content, encoding="utf-8")
+        git(self.repo, "add", rel)
+        git(self.repo, "commit", "-m", msg)
+        return git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+    def _scan(self, *args: str) -> dict:
+        return json.loads(
+            run([str(SCRIPT), "--no-liveness", *args], self.repo).stdout
+        )
+
+    def _branch_record(self, scan: dict, name: str) -> dict:
+        for b in scan["local_branches"]:
+            if b["name"] == name:
+                return b
+        self.fail(f"missing branch {name}")
+
+    def test_correlate_only_emitted_on_review_required(self) -> None:
+        # feature-merged → safe_to_delete (no correlation block)
+        # feature-open → review_required (has correlation block)
+        git(self.repo, "checkout", "-b", "feature-merged")
+        self._commit("merged.txt", "m\n", "add merged")
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-merged", "-m", "merge")
+
+        git(self.repo, "checkout", "-b", "bento-999-feature-open")
+        self._commit("open.txt", "o\n", "add open work")
+        git(self.repo, "checkout", "main")
+
+        scan = self._scan("--correlate-branches", "--tracker", "none")
+
+        merged_rec = self._branch_record(scan, "feature-merged")
+        self.assertNotIn("correlation", merged_rec)
+
+        open_rec = self._branch_record(scan, "bento-999-feature-open")
+        self.assertIn("correlation", open_rec)
+
+    def test_correlate_signals_for_open_branch(self) -> None:
+        git(self.repo, "checkout", "-b", "bento-999-feature-open")
+        self._commit("open.txt", "o\n", "add open work")
+        self._commit("more.txt", "more\n", "more open work")
+        git(self.repo, "checkout", "main")
+        self._commit("main-only.txt", "m\n", "main divergence")
+
+        scan = self._scan(
+            "--correlate-branches",
+            "--tracker", "none",
+            "--issue-pattern", r"(bento-[0-9]+)",
+        )
+        rec = self._branch_record(scan, "bento-999-feature-open")
+        corr = rec["correlation"]
+
+        self.assertEqual(corr["issue_id"], "bento-999")
+        self.assertEqual(corr["cherry_unique_count"], 2)
+        self.assertEqual(corr["cherry_equivalent_count"], 0)
+        self.assertEqual(corr["divergence_ahead"], 2)
+        self.assertEqual(corr["divergence_behind"], 1)
+        self.assertIsNone(corr["tracker_status"])
+        self.assertEqual(corr["main_commits_referencing_issue"], [])
+        self.assertGreaterEqual(corr["merge_base_age_days"], 0)
+
+    def test_correlate_detects_landed_under_different_sha(self) -> None:
+        # Branch with cherry-pick equivalent already on main → all cherry "-"
+        # AND main has a commit message mentioning the issue id.
+        git(self.repo, "checkout", "-b", "bento-777-landed-elsewhere")
+        c = self._commit("landed.txt", "l\n", "add landed bento-777")
+        git(self.repo, "checkout", "main")
+        self._commit("main-only.txt", "m\n", "main divergence")
+        git(self.repo, "cherry-pick", c)
+
+        # cherry-pick of merged branch yields patch_equivalent_review (no
+        # correlation). Force review_required by adding an unmerged commit AND
+        # a separate commit on main referencing the issue id.
+        git(self.repo, "checkout", "bento-777-landed-elsewhere")
+        self._commit("extra.txt", "e\n", "add extra unmerged work")
+        git(self.repo, "checkout", "main")
+        self._commit(
+            "ref.txt", "r\n", "fix something for bento-777 separately"
+        )
+
+        scan = self._scan(
+            "--correlate-branches",
+            "--tracker", "none",
+            "--issue-pattern", r"(bento-[0-9]+)",
+        )
+        rec = self._branch_record(scan, "bento-777-landed-elsewhere")
+        self.assertEqual(rec["classification"], "review_required")
+        corr = rec["correlation"]
+        self.assertEqual(corr["issue_id"], "bento-777")
+        self.assertEqual(corr["cherry_equivalent_count"], 1)
+        self.assertEqual(corr["cherry_unique_count"], 1)
+        # Both the cherry-pick (preserves original commit message) and the
+        # explicit "fix... bento-777 separately" commit hit the grep.
+        self.assertGreaterEqual(len(corr["main_commits_referencing_issue"]), 1)
+
+    def test_correlate_off_by_default(self) -> None:
+        git(self.repo, "checkout", "-b", "bento-111-feature")
+        self._commit("f.txt", "f\n", "add f")
+        git(self.repo, "checkout", "main")
+        scan = self._scan()
+        rec = self._branch_record(scan, "bento-111-feature")
+        self.assertNotIn("correlation", rec)
+
+    def test_correlate_no_issue_id_when_branch_does_not_match(self) -> None:
+        git(self.repo, "checkout", "-b", "wip-no-tracker-id")
+        self._commit("f.txt", "f\n", "add f")
+        git(self.repo, "checkout", "main")
+        scan = self._scan(
+            "--correlate-branches",
+            "--tracker", "none",
+            "--issue-pattern", r"(bento-[0-9]+)",
+        )
+        rec = self._branch_record(scan, "wip-no-tracker-id")
+        corr = rec["correlation"]
+        self.assertIsNone(corr["issue_id"])
+        self.assertEqual(corr["main_commits_referencing_issue"], [])
+
+
+class CorrelationUnitTest(unittest.TestCase):
+    """Direct tests on helper functions for tracker shim and signal extraction."""
+
+    def setUp(self) -> None:
+        self.mod = _load_module()
+
+    def test_extract_issue_id_default_patterns(self) -> None:
+        self.assertEqual(
+            self.mod.extract_issue_id("bento-49l-foo", r"([a-z]+-[a-z0-9]+)"),
+            "bento-49l",
+        )
+        self.assertEqual(
+            self.mod.extract_issue_id("feat/PROJ-123-thing", r"([A-Z]+-[0-9]+)"),
+            "PROJ-123",
+        )
+        self.assertIsNone(
+            self.mod.extract_issue_id("just-words-here", r"([A-Z]+-[0-9]+)"),
+        )
+
+    def test_default_issue_pattern_per_tracker(self) -> None:
+        self.assertEqual(self.mod.default_issue_pattern("beads"), r"([a-z]+-[a-z0-9]+)")
+        self.assertEqual(self.mod.default_issue_pattern("jira"), r"([A-Z]+-[0-9]+)")
+        self.assertIsNone(self.mod.default_issue_pattern("none"))
+
+    def test_detect_tracker_prefers_beads(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            (root / ".beads").mkdir()
+            self.assertEqual(self.mod.detect_tracker(root), "beads")
+
+    def test_detect_tracker_jira_via_env(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            root = Path(td)
+            env = {
+                "JIRA_BASE_URL": "https://example.atlassian.net",
+                "JIRA_API_TOKEN": "x",
+                "JIRA_USER_EMAIL": "u@e.com",
+            }
+            self.assertEqual(self.mod.detect_tracker(root, env=env), "jira")
+
+    def test_detect_tracker_none_when_nothing_configured(self) -> None:
+        with tempfile.TemporaryDirectory() as td:
+            self.assertEqual(
+                self.mod.detect_tracker(Path(td), env={}, gh_available=False),
+                "none",
+            )
+
+
 if __name__ == "__main__":
     unittest.main()

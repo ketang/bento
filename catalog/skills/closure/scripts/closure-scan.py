@@ -4,10 +4,14 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import re
+import shutil
 import subprocess
 import sys
 import time
+import urllib.error
+import urllib.request
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -899,6 +903,227 @@ def apply_delete_patch_equivalent_branches(
 
 
 # ---------------------------------------------------------------------------
+# Branch correlation (review_required triage signals)
+# ---------------------------------------------------------------------------
+
+TRACKER_BEADS = "beads"
+TRACKER_GH = "gh"
+TRACKER_JIRA = "jira"
+TRACKER_NONE = "none"
+TRACKER_CHOICES = (TRACKER_BEADS, TRACKER_GH, TRACKER_JIRA, TRACKER_NONE, "auto")
+
+DEFAULT_PATTERNS = {
+    TRACKER_BEADS: r"([a-z]+-[a-z0-9]+)",
+    TRACKER_JIRA:  r"([A-Z]+-[0-9]+)",
+    TRACKER_GH:    r"#?([0-9]+)",
+}
+
+
+def default_issue_pattern(tracker: str) -> str | None:
+    return DEFAULT_PATTERNS.get(tracker)
+
+
+def extract_issue_id(branch_name: str, pattern: str) -> str | None:
+    if not pattern:
+        return None
+    match = re.search(pattern, branch_name)
+    if not match:
+        return None
+    if match.groups():
+        return match.group(1)
+    return match.group(0)
+
+
+def gh_cli_available() -> bool:
+    return shutil.which("gh") is not None
+
+
+def detect_tracker(
+    repo_root: Path,
+    env: dict[str, str] | None = None,
+    gh_available: bool | None = None,
+) -> str:
+    env = os.environ if env is None else env
+    if (repo_root / ".beads").is_dir():
+        return TRACKER_BEADS
+    if all(env.get(k) for k in ("JIRA_BASE_URL", "JIRA_API_TOKEN", "JIRA_USER_EMAIL")):
+        return TRACKER_JIRA
+    if (repo_root / ".github").is_dir():
+        if gh_cli_available() if gh_available is None else gh_available:
+            return TRACKER_GH
+    return TRACKER_NONE
+
+
+def parse_cherry(branch: str, primary: str, cwd: Path) -> tuple[int, int]:
+    """Return (unique_count, equivalent_count) from `git cherry primary branch`."""
+    if branch == primary:
+        return 0, 0
+    raw = git_stdout("cherry", primary, branch, cwd=cwd)
+    unique = 0
+    equivalent = 0
+    for line in raw.splitlines():
+        if line.startswith("+"):
+            unique += 1
+        elif line.startswith("-"):
+            equivalent += 1
+    return unique, equivalent
+
+
+def merge_base_age_days(branch: str, primary: str, cwd: Path) -> int:
+    base = try_git_stdout("merge-base", primary, branch, cwd=cwd)
+    if not base:
+        return 0
+    raw = try_git_stdout("log", "-1", "--format=%ct", base, cwd=cwd)
+    if not raw:
+        return 0
+    age_seconds = max(0, time.time() - float(raw))
+    return int(age_seconds // 86400)
+
+
+def merge_base_iso_date(branch: str, primary: str, cwd: Path) -> str | None:
+    base = try_git_stdout("merge-base", primary, branch, cwd=cwd)
+    if not base:
+        return None
+    raw = try_git_stdout("log", "-1", "--format=%cI", base, cwd=cwd)
+    return raw or None
+
+
+def commits_referencing_issue_on_main(
+    issue_id: str,
+    primary: str,
+    since_iso: str | None,
+    cwd: Path,
+) -> list[str]:
+    args = ["log", primary, "--format=%h", f"--grep={issue_id}", "--fixed-strings"]
+    if since_iso:
+        args.append(f"--since={since_iso}")
+    raw = try_git_stdout(*args, cwd=cwd)
+    if not raw:
+        return []
+    return [line for line in raw.splitlines() if line]
+
+
+def lookup_beads_status(issue_id: str) -> str | None:
+    if not shutil.which("bd"):
+        return None
+    result = subprocess.run(
+        ["bd", "show", issue_id, "--json"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        obj = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    status = obj.get("status") if isinstance(obj, dict) else None
+    return str(status) if status else None
+
+
+def lookup_gh_status(issue_id: str) -> str | None:
+    if not shutil.which("gh"):
+        return None
+    number = issue_id.lstrip("#")
+    result = subprocess.run(
+        ["gh", "issue", "view", number, "--json", "state"],
+        capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        return None
+    try:
+        obj = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    state = obj.get("state") if isinstance(obj, dict) else None
+    return str(state).lower() if state else None
+
+
+def lookup_jira_status(
+    issue_id: str,
+    env: dict[str, str] | None = None,
+) -> str | None:
+    env = os.environ if env is None else env
+    base = env.get("JIRA_BASE_URL")
+    token = env.get("JIRA_API_TOKEN")
+    email = env.get("JIRA_USER_EMAIL")
+    if not (base and token and email):
+        return None
+
+    import base64
+    auth_raw = f"{email}:{token}".encode()
+    auth_header = "Basic " + base64.b64encode(auth_raw).decode()
+    url = f"{base.rstrip('/')}/rest/api/3/issue/{issue_id}?fields=status"
+    request = urllib.request.Request(
+        url,
+        headers={"Authorization": auth_header, "Accept": "application/json"},
+    )
+    try:
+        with urllib.request.urlopen(request, timeout=10) as response:
+            obj = json.loads(response.read().decode())
+    except (urllib.error.URLError, urllib.error.HTTPError, json.JSONDecodeError, OSError):
+        return None
+    fields = obj.get("fields") if isinstance(obj, dict) else None
+    status = fields.get("status") if isinstance(fields, dict) else None
+    name = status.get("name") if isinstance(status, dict) else None
+    return str(name) if name else None
+
+
+def tracker_lookup_for(tracker: str):
+    if tracker == TRACKER_BEADS:
+        return lookup_beads_status
+    if tracker == TRACKER_GH:
+        return lookup_gh_status
+    if tracker == TRACKER_JIRA:
+        return lookup_jira_status
+    return lambda _id: None
+
+
+def correlate_branch(
+    branch: dict[str, object],
+    primary_branch: str,
+    tracker: str,
+    issue_pattern: str | None,
+    cwd: Path,
+    tracker_lookup=None,
+) -> dict[str, object]:
+    branch_name = str(branch["name"])
+    issue_id: str | None = None
+    if issue_pattern:
+        issue_id = extract_issue_id(branch_name, issue_pattern)
+
+    unique_count, equivalent_count = parse_cherry(branch_name, primary_branch, cwd)
+    behind, ahead = ahead_behind(branch_name, primary_branch, cwd)
+    age_days = merge_base_age_days(branch_name, primary_branch, cwd)
+    since_iso = merge_base_iso_date(branch_name, primary_branch, cwd)
+
+    referencing: list[str] = []
+    tracker_status: str | None = None
+    if issue_id:
+        referencing = commits_referencing_issue_on_main(
+            issue_id, primary_branch, since_iso, cwd,
+        )
+        if tracker != TRACKER_NONE:
+            lookup = tracker_lookup or tracker_lookup_for(tracker)
+            tracker_status = lookup(issue_id)
+            # Only retain issue_id if the tracker recognizes it (i.e. status
+            # was returned). Otherwise the regex matched noise.
+            if tracker_status is None:
+                issue_id = None
+                referencing = []
+
+    return {
+        "issue_id": issue_id,
+        "cherry_unique_count": unique_count,
+        "cherry_equivalent_count": equivalent_count,
+        "main_commits_referencing_issue": referencing,
+        "tracker_status": tracker_status,
+        "merge_base_age_days": age_days,
+        "divergence_ahead": ahead,
+        "divergence_behind": behind,
+    }
+
+
+# ---------------------------------------------------------------------------
 # CLI
 # ---------------------------------------------------------------------------
 
@@ -919,6 +1144,30 @@ def parse_args() -> argparse.Namespace:
         help=(
             "scope --apply delete-local-merged-branches to a single branch "
             "(used by skills like land-work that already know what to clean)"
+        ),
+    )
+    parser.add_argument(
+        "--correlate-branches",
+        action="store_true",
+        help=(
+            "emit a 'correlation' block on each review_required branch with "
+            "raw triage signals (cherry, grep on primary, tracker status). "
+            "Off by default; opt-in because git cherry across many branches "
+            "is slow."
+        ),
+    )
+    parser.add_argument(
+        "--tracker",
+        choices=TRACKER_CHOICES,
+        default="auto",
+        help="tracker source for issue-status lookups (default: auto-detect)",
+    )
+    parser.add_argument(
+        "--issue-pattern",
+        help=(
+            "regex for extracting an issue id from branch names. The first "
+            "capture group (or the full match) becomes the candidate id. "
+            "Defaults to the detected tracker's convention."
         ),
     )
     return parser.parse_args()
@@ -983,6 +1232,18 @@ def main() -> int:
                 )
 
             enriched_worktrees.append(wt_entry)
+
+        if args.correlate_branches:
+            tracker = args.tracker
+            if tracker == "auto":
+                tracker = detect_tracker(repo_root)
+            issue_pattern = args.issue_pattern or default_issue_pattern(tracker)
+            for branch in branches:
+                if branch["classification"] != "review_required":
+                    continue
+                branch["correlation"] = correlate_branch(
+                    branch, primary_branch, tracker, issue_pattern, repo_root,
+                )
 
         summary = build_summary(branches, enriched_worktrees, stashes, working_tree)
         applied_actions: list[dict[str, str]] = []
