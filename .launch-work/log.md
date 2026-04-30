@@ -1,6 +1,6 @@
 <!-- launch-work-log
-last-updated: 2026-04-30T04:42:58Z
-checkpoint: verification-passed
+last-updated: 2026-04-30T20:02:22Z
+checkpoint: ready-to-land
 -->
 
 # Launch-Work Progress Log
@@ -32,4 +32,5 @@ Rewrote docs/plans/2026-04-26-bento-telemetry.md into two tracks: internal telem
 
 ## Notes
 
-<!-- Free-form prose for in-flight reasoning that does not fit a slot. -->
+Plan rewrite committed and Beads epics/issues created: bento-8en for internal telemetry and bento-fmx for independent bentobug. Beads auto-push failed due local SSH config permissions, so tracker changes are local in .beads for now. Next action: land or publish the bento-telemetry-design branch and separately decide how to sync/commit the .beads tracker state.
+
