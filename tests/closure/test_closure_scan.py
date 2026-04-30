@@ -265,6 +265,63 @@ class MergedCheckedOutTest(unittest.TestCase):
         for wt in scan["worktrees"]:
             self.assertNotIn("liveness", wt)
 
+    def test_self_invocation_flag_set_when_helper_runs_inside_worktree(self) -> None:
+        git(self.repo, "checkout", "-b", "feature-self-call")
+        self.commit_file("self.txt", "self\n", "add self file")
+        git(self.repo, "checkout", "main")
+
+        worktree_path = Path(self.temp_dir.name) / "wt-self-call"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-self-call")
+
+        scan = json.loads(
+            run([str(SCRIPT), "--no-liveness"], worktree_path).stdout
+        )
+        wt_records = {wt["path"]: wt for wt in scan["worktrees"]}
+
+        linked = wt_records[str(worktree_path)]
+        self.assertTrue(linked.get("self_invocation"))
+
+        primary = wt_records[str(self.repo)]
+        self.assertFalse(primary.get("self_invocation", False))
+
+    def test_apply_skips_self_invocation_worktree_with_pointed_reason(self) -> None:
+        git(self.repo, "checkout", "-b", "feature-self-merged")
+        self.commit_file_with_old_date(
+            "merged-self.txt", "merged-self\n", "add merged self work",
+        )
+        git(self.repo, "checkout", "main")
+        git(
+            self.repo, "merge", "--no-ff", "feature-self-merged",
+            "-m", "merge feature-self-merged",
+        )
+
+        worktree_path = Path(self.temp_dir.name) / "wt-self-merged"
+        git(self.repo, "worktree", "add", str(worktree_path), "feature-self-merged")
+
+        scan = json.loads(
+            run(
+                [str(SCRIPT), "--apply", "delete-local-merged-branches"],
+                worktree_path,
+            ).stdout
+        )
+
+        skipped_worktree = next(
+            (
+                a for a in scan["skipped_actions"]
+                if a.get("action") == "delete_worktree"
+                and a.get("branch") == "feature-self-merged"
+            ),
+            None,
+        )
+        self.assertIsNotNone(skipped_worktree)
+        reason = skipped_worktree["reason"]
+        self.assertIn("self-invocation", reason)
+        self.assertIn("land-work", reason)
+
+        self.assertTrue(worktree_path.exists())
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+        self.assertIn("feature-self-merged", branches)
+
     def test_worktree_dirty_state_reported(self) -> None:
         # Create a branch and linked worktree, then dirty a tracked file in it.
         git(self.repo, "checkout", "-b", "feature-dirty")
