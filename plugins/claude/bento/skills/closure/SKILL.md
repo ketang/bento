@@ -66,6 +66,28 @@ This apply mode deletes:
 For merged, clean, stale-or-unknown linked worktrees, this helper apply mode is
 the approved automatic cleanup path.
 
+### Single-Target Mode
+
+When another skill (notably `land-work`) already knows the exact branch to
+clean up after a successful merge, scope the apply pass with `--target-branch`:
+
+```bash
+closure/scripts/closure-scan.py --target-branch <name> --apply delete-local-merged-branches
+```
+
+The full scan still runs and the JSON output is unchanged in shape, but the
+apply pass operates on the named branch only — other `safe_to_delete` and
+`merged_checked_out` branches are ignored. All safety gates (clean worktree,
+liveness verdict, in-flight launch-work log) still apply. If the target branch
+does not exist locally, the helper exits non-zero. If the target exists but is
+not eligible (wrong classification), the helper records a single
+`skipped_actions` entry with the classification in the reason and exits 0; the
+caller decides what to do with that signal.
+
+Use single-target mode for handoffs from skills that have already verified the
+landing. The wide-net workflow below is for repo-wide cleanup passes, not for
+single-branch tear-down.
+
 If the user also wants patch-equivalent branches removed (work landed via
 rebase or squash with no merge commit):
 
