@@ -702,6 +702,7 @@ def apply_delete_merged_checked_out_worktrees(
     branches: list[dict[str, object]],
     worktrees: list[dict[str, object]],
     cwd: Path,
+    target_branch: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -714,6 +715,8 @@ def apply_delete_merged_checked_out_worktrees(
 
     for branch in branches:
         if branch["classification"] != "merged_checked_out":
+            continue
+        if target_branch is not None and str(branch["name"]) != target_branch:
             continue
 
         branch_name = str(branch["name"])
@@ -806,6 +809,7 @@ def apply_delete_local_merged_branches(
     branches: list[dict[str, object]],
     worktrees: list[dict[str, object]],
     cwd: Path,
+    target_branch: str | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -813,8 +817,10 @@ def apply_delete_local_merged_branches(
     for branch in branches:
         if branch["classification"] != "safe_to_delete":
             continue
-
         branch_name = str(branch["name"])
+        if target_branch is not None and branch_name != target_branch:
+            continue
+
         result = git("branch", "-d", branch_name, cwd=cwd, check=False)
         if result.returncode == 0:
             applied.append({"action": "delete_local_branch", "branch": branch_name})
@@ -828,9 +834,29 @@ def apply_delete_local_merged_branches(
             }
         )
 
-    merged_applied, merged_skipped = apply_delete_merged_checked_out_worktrees(branches, worktrees, cwd)
+    merged_applied, merged_skipped = apply_delete_merged_checked_out_worktrees(
+        branches, worktrees, cwd, target_branch=target_branch
+    )
     applied.extend(merged_applied)
     skipped.extend(merged_skipped)
+
+    if target_branch is not None and not applied and not skipped:
+        target_record = next(
+            (b for b in branches if str(b["name"]) == target_branch), None
+        )
+        classification = (
+            str(target_record["classification"]) if target_record else "missing"
+        )
+        skipped.append(
+            {
+                "action": "delete_local_branch",
+                "branch": target_branch,
+                "reason": (
+                    f"target branch classification {classification!r} is not eligible "
+                    "for delete-local-merged-branches"
+                ),
+            }
+        )
 
     return applied, skipped
 
@@ -887,6 +913,13 @@ def parse_args() -> argparse.Namespace:
         "--no-liveness",
         action="store_true",
         help="skip per-worktree liveness assessment (faster, git-state only)",
+    )
+    parser.add_argument(
+        "--target-branch",
+        help=(
+            "scope --apply delete-local-merged-branches to a single branch "
+            "(used by skills like land-work that already know what to clean)"
+        ),
     )
     return parser.parse_args()
 
@@ -955,11 +988,28 @@ def main() -> int:
         applied_actions: list[dict[str, str]] = []
         skipped_actions: list[dict[str, str]] = []
 
+        if args.target_branch is not None:
+            if args.apply != APPLY_DELETE_LOCAL_MERGED:
+                print(
+                    "--target-branch is only supported with --apply "
+                    f"{APPLY_DELETE_LOCAL_MERGED}",
+                    file=sys.stderr,
+                )
+                return 2
+            known_branch_names = {str(b["name"]) for b in branches}
+            if args.target_branch not in known_branch_names:
+                print(
+                    f"target branch {args.target_branch!r} not found in local branches",
+                    file=sys.stderr,
+                )
+                return 2
+
         if args.apply == APPLY_DELETE_LOCAL_MERGED:
             applied_actions, skipped_actions = apply_delete_local_merged_branches(
                 branches,
                 enriched_worktrees,
                 repo_root,
+                target_branch=args.target_branch,
             )
         elif args.apply == APPLY_DELETE_LOCAL_PATCH_EQUIVALENT:
             applied_actions, skipped_actions = apply_delete_patch_equivalent_branches(

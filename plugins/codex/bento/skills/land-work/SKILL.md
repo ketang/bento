@@ -154,10 +154,22 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the
    detected primary branch.
-10. Clean up local branch and worktree state using the repo's documented
-    process. Follow `references/workflow-invariants.md`: if the merged
-    feature branch is still checked out in a linked worktree, remove the
-    linked worktree before deleting the branch.
+10. Clean up the merged feature branch and its linked worktree by handing off
+    to `closure` in single-target mode. Return to the repo root on the primary
+    branch first (you cannot remove the worktree you are standing in), then
+    run:
+
+    ```bash
+    closure/scripts/closure-scan.py --target-branch <feature-branch> --apply delete-local-merged-branches
+    ```
+
+    The helper enforces the ordering rule from
+    `references/workflow-invariants.md`: it removes the linked worktree before
+    deleting the branch. Inspect `applied_actions` and `skipped_actions` in
+    the output. If the helper skipped because of liveness, dirty state, or an
+    in-flight `.launch-work/log.md`, resolve that condition and re-run rather
+    than constructing manual `git branch -D` or `git worktree remove`
+    commands.
 
 ## Non-Negotiable Rules
 
