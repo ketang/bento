@@ -107,6 +107,56 @@ Everything else remains review-driven.
 Add `--no-liveness` for a faster scan that skips session log scanning and
 process detection, returning git state only.
 
+### Branch Correlation (review_required triage)
+
+When a `review_required` branch needs disposition (genuine outstanding work vs.
+landed-under-different-SHA vs. abandoned re-implementation), opt into raw
+signal collection:
+
+```bash
+closure/scripts/closure-scan.py --correlate-branches
+```
+
+Off by default — `git cherry` across many branches is slow. Each
+`review_required` branch entry then carries a `correlation` block:
+
+- `issue_id` — extracted from the branch name and confirmed by tracker lookup;
+  `null` if the regex matches noise the tracker does not recognize
+- `cherry_unique_count` / `cherry_equivalent_count` — `git cherry` `+`/`-` lines
+- `main_commits_referencing_issue` — short SHAs on primary whose commit message
+  mentions the issue id (bounded by merge-base date)
+- `tracker_status` — `null`, or the tracker's status string (e.g. `closed`,
+  `open`, `in_progress`)
+- `merge_base_age_days`, `divergence_ahead`, `divergence_behind`
+
+Tracker auto-detection: `.beads/` → beads; else JIRA env vars
+(`JIRA_BASE_URL` + `JIRA_API_TOKEN` + `JIRA_USER_EMAIL`) → jira; else
+`.github/` + `gh` CLI → gh; else none. Override with
+`--tracker {beads,gh,jira,none}`. Override the issue-id regex with
+`--issue-pattern <regex>` when the tracker default does not fit the repo's
+branch convention.
+
+#### Decision matrix
+
+The agent applies this matrix per branch. Heuristic deletions are **never**
+batched — present the evidence and the proposed action, then ask the user.
+
+| `cherry_unique_count` | `tracker_status` | grep on primary | Proposed action |
+|---|---|---|---|
+| 0 | `closed` | hits | Landed under a different SHA. Recommend delete; ask before deleting. |
+| 0 | `open` | hits | Patches landed but tracker still open. Recommend delete branch + hand off to tracker skill to close. |
+| 0 | (any/null) | hits | Landed under a different SHA. Recommend delete; ask before deleting. |
+| > 0 | `closed` | hits | Issue done but this branch's code never merged — likely abandoned re-implementation. Spot-check, then ask before deleting. |
+| > 0 | `open` | none | Genuine outstanding work. Keep. |
+| > 0 | `open` | hits | Partial overlap. Surface to user; do not delete. |
+| > 0 | `null` | none | No tracker context. Surface to user; do not delete. |
+
+A `0` cherry count corresponds to the existing `patch_equivalent_review`
+classification when the branch is not in a worktree, and the
+`--apply delete-local-patch-equivalent-branches` mode already handles it.
+Correlation is for the `review_required` rows above where deletion remains
+review-driven.
+
 ### Branch Classifications
 
 | Classification | Meaning |

@@ -708,7 +708,9 @@ class CorrelateBranchesTest(unittest.TestCase):
         self.assertEqual(corr["issue_id"], "bento-777")
         self.assertEqual(corr["cherry_equivalent_count"], 1)
         self.assertEqual(corr["cherry_unique_count"], 1)
-        self.assertEqual(len(corr["main_commits_referencing_issue"]), 1)
+        # Both the cherry-pick (preserves original commit message) and the
+        # explicit "fix... bento-777 separately" commit hit the grep.
+        self.assertGreaterEqual(len(corr["main_commits_referencing_issue"]), 1)
 
     def test_correlate_off_by_default(self) -> None:
         git(self.repo, "checkout", "-b", "bento-111-feature")

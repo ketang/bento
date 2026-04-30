@@ -73,6 +73,30 @@ no-content local branches:
 closure/scripts/closure-scan.py --apply delete-local-merged-branches
 closure/scripts/closure-scan.py --apply delete-local-patch-equivalent-branches
 ```
+## Branch Correlation (`--correlate-branches`)
+
+Off by default. When set, each `review_required` branch entry carries a
+`correlation` block:
+
+| Field | Source |
+|---|---|
+| `issue_id` | `--issue-pattern` regex on branch name; cleared if tracker lookup does not recognize the candidate |
+| `cherry_unique_count`, `cherry_equivalent_count` | `git cherry <primary> <branch>` `+`/`-` line counts |
+| `main_commits_referencing_issue` | `git log <primary> --grep=<id> --fixed-strings --since=<merge-base-date> --format=%h` |
+| `tracker_status` | tracker shim (`bd show`, `gh issue view`, JIRA REST); `null` when tracker is `none` or lookup fails |
+| `merge_base_age_days` | days between `git merge-base` commit time and now |
+| `divergence_ahead`, `divergence_behind` | `git rev-list --left-right --count <primary>...<branch>` |
+
+Tracker auto-detection precedence: `.beads/` → beads; else JIRA env vars
+present → jira; else `.github/` + `gh` CLI available → gh; else `none`.
+Override with `--tracker {beads,gh,jira,none}`.
+
+Issue-id default patterns: beads `([a-z]+-[a-z0-9]+)`, jira `([A-Z]+-[0-9]+)`,
+gh `#?([0-9]+)`. Override with `--issue-pattern`.
+
+Correlation produces signals only — no verdict, and no new `--apply` mode.
+Heuristic deletion belongs to the agent + user, not the helper.
+
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware
