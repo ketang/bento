@@ -891,5 +891,105 @@ class CorrelationUnitTest(unittest.TestCase):
             )
 
 
+class PatchEquivalentCheckedOutTest(unittest.TestCase):
+    """A branch whose diff is already on primary under a different SHA
+    (squash/rebase landing) but whose linked worktree was never cleaned up
+    must be classifiable and removable. Without this, every such branch
+    falls into checked_out_in_worktree and stays forever — the user is
+    forced into manual git worktree remove + git branch -D, bypassing the
+    helper's safety rules."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        write_file(self.repo / "README.md", "root\n")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "initial")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _build_squash_landed_branch_with_worktree(self) -> Path:
+        # Feature branch with a commit, then a divergent commit on main, then
+        # cherry-pick the feature commit onto main. The cherry-pick creates a
+        # different SHA (different parent), so feature is patch-equivalent to
+        # primary but not an ancestor — the squash/rebase-landing pattern.
+        git(self.repo, "checkout", "-b", "feature-squash-landed")
+        write_file(self.repo / "work.txt", "w\n")
+        git(self.repo, "add", "work.txt")
+        git(self.repo, "commit", "-m", "add work")
+        feature_commit = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+        git(self.repo, "checkout", "main")
+        write_file(self.repo / "main-only.txt", "m\n")
+        git(self.repo, "add", "main-only.txt")
+        git(self.repo, "commit", "-m", "main divergence")
+        git(self.repo, "cherry-pick", feature_commit)
+
+        wt = Path(self.temp_dir.name) / "wt-squash-landed"
+        git(self.repo, "worktree", "add", str(wt), "feature-squash-landed")
+        return wt
+
+    def test_classified_as_patch_equivalent_checked_out(self) -> None:
+        self._build_squash_landed_branch_with_worktree()
+
+        scan = json.loads(run([str(SCRIPT)], self.repo).stdout)
+        record = next(
+            b for b in scan["local_branches"] if b["name"] == "feature-squash-landed"
+        )
+        self.assertEqual(record["classification"], "patch_equivalent_checked_out")
+
+    def test_apply_removes_worktree_and_force_deletes_branch(self) -> None:
+        wt = self._build_squash_landed_branch_with_worktree()
+
+        scan = json.loads(
+            run(
+                [str(SCRIPT), "--apply", "delete-local-patch-equivalent-branches"],
+                self.repo,
+            ).stdout
+        )
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        self.assertIn(
+            {
+                "action": "delete_worktree",
+                "branch": "feature-squash-landed",
+                "worktree": str(wt),
+            },
+            scan["applied_actions"],
+        )
+        self.assertIn(
+            {"action": "delete_local_branch", "branch": "feature-squash-landed"},
+            scan["applied_actions"],
+        )
+        self.assertFalse(wt.exists())
+        self.assertNotIn("feature-squash-landed", branches)
+
+    def test_apply_skips_dirty_worktree(self) -> None:
+        wt = self._build_squash_landed_branch_with_worktree()
+        (wt / "work.txt").write_text("modified\n", encoding="utf-8")
+
+        scan = json.loads(
+            run(
+                [str(SCRIPT), "--apply", "delete-local-patch-equivalent-branches"],
+                self.repo,
+            ).stdout
+        )
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        skipped_reasons = {
+            (s.get("action"), s.get("reason"))
+            for s in scan["skipped_actions"]
+            if s.get("branch") == "feature-squash-landed"
+        }
+        self.assertIn(("delete_worktree", "worktree has uncommitted changes"), skipped_reasons)
+        self.assertTrue(wt.exists())
+        self.assertIn("feature-squash-landed", branches)
+
+
 if __name__ == "__main__":
     unittest.main()
