@@ -123,6 +123,30 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertIsNotNone(payload["preview_tree"])
         self.assertEqual((preview_dir / "feature.txt").read_text(encoding="utf-8"), "feature\n")
 
+    def test_preview_cleanup_removes_registered_worktree(self) -> None:
+        preview_dir = Path(self.temp_dir.name) / "preview-to-clean"
+        self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree)
+        registered_before = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(preview_dir.resolve()), registered_before)
+        self.assertTrue(preview_dir.exists())
+
+        result = self.run_preview("--cleanup", "--preview-dir", str(preview_dir), cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["cleaned_up"])
+        registered_after = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertNotIn(str(preview_dir.resolve()), registered_after)
+        self.assertFalse(preview_dir.exists())
+
+    def test_preview_cleanup_is_idempotent_on_missing_dir(self) -> None:
+        missing = Path(self.temp_dir.name) / "no-such-preview"
+        result = self.run_preview("--cleanup", "--preview-dir", str(missing), cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["cleaned_up"])
+
     def test_preview_rejects_conflicting_merge_candidate(self) -> None:
         (self.repo / "README.md").write_text("main branch\n", encoding="utf-8")
         git(self.repo, "add", "README.md")
