@@ -700,10 +700,13 @@ class ClosureScanMissingWorktreeDirTest(unittest.TestCase):
         scan = json.loads(run([str(SCRIPT)], self.repo).stdout)
 
         self.assertIn("worktrees", scan)
-        ghost = next(
-            (w for w in scan["worktrees"] if w["path"] == str(wt)), None,
+        scanned_paths = {w["path"] for w in scan["worktrees"]}
+        self.assertNotIn(str(wt), scanned_paths)
+        warnings = scan.get("warnings", [])
+        self.assertTrue(
+            any("pruned" in w and "missing" in w for w in warnings),
+            f"expected prune warning, got {warnings}",
         )
-        self.assertIsNotNone(ghost, "ghost worktree should still appear in output")
 
 
 class CorrelateBranchesTest(unittest.TestCase):

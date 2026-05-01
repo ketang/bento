@@ -46,6 +46,8 @@ LAUNCH_WORK_HEADER_RE = re.compile(
 def _launch_work_log_path(worktree_path: Path) -> Path | None:
     """Locate the launch-work log under the worktree's git-dir, falling back
     to the legacy in-tree path. Returns None if neither exists."""
+    if not worktree_path.is_dir():
+        return None
     git_dir_proc = subprocess.run(
         ["git", "rev-parse", "--absolute-git-dir"],
         cwd=worktree_path,
@@ -136,6 +138,22 @@ def detect_primary_branch(cwd: Path) -> tuple[str, list[str]]:
         return current_branch, warnings
 
     raise RuntimeError("unable to detect primary branch")
+
+
+def prune_missing_worktrees(cwd: Path) -> list[str]:
+    """Run `git worktree prune --verbose` and return its reported lines.
+
+    Worktree directories left over from interrupted runs (e.g. land-work
+    previews under /tmp) cause every per-worktree probe to crash with
+    FileNotFoundError when subprocess.run is given a missing cwd. Pruning
+    once at scan start removes these registrations before any probe runs.
+    """
+    result = git("worktree", "prune", "--verbose", cwd=cwd, check=False)
+    if result.returncode != 0:
+        return []
+    # `git worktree prune --verbose` reports prunes on stderr in git >= 2.20.
+    output = (result.stdout or "") + (result.stderr or "")
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def parse_worktrees_raw(cwd: Path) -> list[dict[str, object]]:
@@ -304,8 +322,10 @@ def worktree_activity_ts(
     predate the current agent run.  Note: on WSL, file mtimes can be
     unreliable for files written from the Windows side.
 
-    source is one of: 'commit', 'file_mtime'
+    source is one of: 'commit', 'file_mtime', 'missing'
     """
+    if not worktree_path.is_dir():
+        return 0.0, "missing"
     raw_ts = try_git_stdout("log", "-1", "--format=%ct", "HEAD", cwd=worktree_path)
     commit_ts = float(raw_ts) if raw_ts else 0.0
     best_ts = commit_ts
@@ -1269,6 +1289,11 @@ def main() -> int:
         repo_root = detect_repo_root(cwd)
         primary_branch, warnings = detect_primary_branch(repo_root)
         current_branch = git_stdout("branch", "--show-current", cwd=repo_root)
+        pruned = prune_missing_worktrees(repo_root)
+        if pruned:
+            warnings.append(
+                f"pruned {len(pruned)} worktree registration(s) whose directories were missing"
+            )
         raw_worktrees = parse_worktrees_raw(repo_root)
         checked_out_in_worktrees = {
             str(wt["branch"])
@@ -1293,6 +1318,11 @@ def main() -> int:
         for wt in raw_worktrees:
             wt_path = Path(str(wt["path"])).resolve()
             wt_entry: dict[str, object] = dict(wt)
+            wt_entry["path_missing"] = not wt_path.is_dir()
+            if wt_entry["path_missing"]:
+                warnings.append(
+                    f"worktree path missing on disk after prune: {wt_path}"
+                )
 
             try:
                 wt_dirty = working_tree_entries(wt_path)
