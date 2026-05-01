@@ -166,6 +166,42 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertIn("merge preview has conflicts", payload["errors"])
         self.assertIn("README.md", payload["conflicting_paths"])
 
+    def test_preview_rejects_launch_work_log_artifact_in_tree(self) -> None:
+        log_dir = self.worktree / ".launch-work"
+        log_dir.mkdir()
+        (log_dir / "log.md").write_text("checkpoint: ready-to-land\n", encoding="utf-8")
+        git(self.worktree, "add", ".launch-work/log.md")
+        git(self.worktree, "commit", "-m", "chore(launch-work-log): ready-to-land")
+
+        preview_dir = Path(self.temp_dir.name) / "preview-with-log"
+        result = self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        joined_errors = " ".join(payload["errors"])
+        self.assertIn("land-work-clean-log.py", joined_errors)
+        self.assertIn(".launch-work/log.md", joined_errors)
+
+    def test_preview_rejects_launch_work_log_chore_commit_in_range(self) -> None:
+        log_dir = self.worktree / ".launch-work"
+        log_dir.mkdir()
+        (log_dir / "log.md").write_text("checkpoint: worktree-ready\n", encoding="utf-8")
+        git(self.worktree, "add", ".launch-work/log.md")
+        git(self.worktree, "commit", "-m", "chore(launch-work-log): worktree-ready")
+        git(self.worktree, "rm", ".launch-work/log.md")
+        git(self.worktree, "commit", "-m", "chore(launch-work-log): remove")
+
+        preview_dir = Path(self.temp_dir.name) / "preview-with-log-commit"
+        result = self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        joined_errors = " ".join(payload["errors"])
+        self.assertIn("land-work-clean-log.py", joined_errors)
+        self.assertIn("chore(launch-work-log)", joined_errors)
+
     def test_lease_check_matches_expected_sha(self) -> None:
         expected_sha = git(self.repo, "rev-parse", "refs/heads/main").stdout.strip()
 
