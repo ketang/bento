@@ -1,10 +1,30 @@
 ---
 name: closure
-description: Use when cleaning up leftover git state after interrupted or completed work — branches, worktrees, stashes, and uncommitted changes.
+description: Use as an eventual garbage-collection pass over OTHER agents' leftover git state — dead-agent branches, worktrees, stashes, and uncommitted work. Not for cleaning up your own active or just-finished work; use land-work for that.
 recommended_model: high
 ---
 
 # Closure
+
+## When NOT to use
+
+Closure is a GC pass. It is **not** the cleanup path for the calling agent's
+own work:
+
+- **Just merged your own branch?** Run `land-work` — its post-merge cleanup
+  removes the branch and worktree it owns. Calling closure to delete your own
+  worktree leaves the worktree behind because the helper correctly refuses
+  to delete a recently-active or self-invoked worktree.
+- **Mid-task and want to discard your own work?** Exit the worktree, then use
+  `git worktree remove` and `git branch -D` directly. Closure will not delete
+  a worktree whose call-site is your own agent.
+- **Routine after every task?** No. Closure is for sweeping up state left
+  behind by agents that crashed, were abandoned, or whose `land-work` cleanup
+  did not run. Treat it as periodic GC, not a per-task step.
+
+The helper detects self-invocation (your own agent's process tree has a cwd
+inside one of the scanned worktrees) and surfaces a `self_invocation: true`
+flag plus a pointed apply-mode skip reason directing you to `land-work`.
 
 ## Model Guidance
 

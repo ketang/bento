@@ -27,12 +27,30 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
     parser.add_argument("--base-ref", help="base revision to preview against; defaults to origin/<primary-branch> when available")
     parser.add_argument("--feature-ref", help="feature revision to merge; defaults to the current branch")
-    parser.add_argument("--preview-dir", help="directory to materialize the merge preview into")
+    parser.add_argument("--preview-dir", help="directory to materialize the merge preview into; required with --cleanup")
+    parser.add_argument(
+        "--cleanup",
+        action="store_true",
+        help="remove a previously-created preview worktree at --preview-dir; idempotent if the directory is already gone",
+    )
     return parser.parse_args()
 
 
 def default_preview_dir() -> Path:
     return Path(tempfile.mkdtemp(prefix="land-work-preview-", dir="/tmp")).resolve()
+
+
+def cleanup_preview(preview_dir: Path, checkout_root: Path) -> tuple[bool, list[str]]:
+    """Remove a registered preview worktree. Idempotent when the dir is gone."""
+    errors: list[str] = []
+    if not preview_dir.exists():
+        return False, errors
+    result = git("worktree", "remove", "--force", str(preview_dir), cwd=checkout_root, check=False)
+    if result.returncode != 0:
+        stderr = (result.stderr or "").strip()
+        errors.append(stderr or f"git worktree remove failed for {preview_dir}")
+        return False, errors
+    return True, errors
 
 
 def main() -> int:
@@ -41,6 +59,25 @@ def main() -> int:
     checkout_root = detect_checkout_root(cwd)
     primary_branch, warnings = detect_primary_branch(checkout_root)
     branch = current_branch(checkout_root)
+
+    if args.cleanup:
+        if not args.preview_dir:
+            print("--cleanup requires --preview-dir", file=sys.stderr)
+            return 2
+        preview_dir = Path(args.preview_dir).resolve()
+        cleaned_up, errors = cleanup_preview(preview_dir, checkout_root)
+        payload = {
+            "cwd": str(cwd),
+            "checkout_root": str(checkout_root),
+            "preview_dir": str(preview_dir),
+            "cleaned_up": cleaned_up,
+            "ok": not errors,
+            "warnings": warnings,
+            "errors": errors,
+        }
+        json.dump(payload, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0 if payload["ok"] else 1
     default_base_ref = (
         f"refs/remotes/origin/{primary_branch}"
         if ref_exists(f"refs/remotes/origin/{primary_branch}", checkout_root)

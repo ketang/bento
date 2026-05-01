@@ -10,7 +10,7 @@
     {
       "name": "bento",
       "description": "Complete Bento skill pack with workflow, tracker, stack, and repository cleanup skills",
-      "version": "1.0.34",
+      "version": "1.0.35",
       "source": "./plugins/claude/bento",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -19,7 +19,7 @@
     {
       "name": "trackers",
       "description": "Tracker skills for Beads and GitHub Issues workflows",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "source": "./plugins/claude/trackers",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -28,7 +28,7 @@
     {
       "name": "stacks",
       "description": "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL",
-      "version": "1.0.9",
+      "version": "1.0.10",
       "source": "./plugins/claude/stacks",
       "author": {
         "name": "Ketan Gangatirkar"
@@ -37,7 +37,7 @@
     {
       "name": "session-id",
       "description": "SessionStart hook that writes the Claude Code session ID to ~/.claude/session_id",
-      "version": "1.0.6",
+      "version": "1.0.7",
       "source": "./plugins/claude/session-id",
       "author": {
         "name": "Ketan Gangatirkar"

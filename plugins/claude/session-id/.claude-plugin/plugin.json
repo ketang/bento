@@ -1,7 +1,7 @@
 {
   "name": "session-id",
   "description": "SessionStart hook that writes the Claude Code session ID to ~/.claude/session_id",
-  "version": "1.0.6",
+  "version": "1.0.7",
   "author": {
     "name": "Ketan Gangatirkar"
   }

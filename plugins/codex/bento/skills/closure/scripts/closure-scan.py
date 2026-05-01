@@ -472,6 +472,67 @@ def scan_claude_sessions(worktree_path: Path) -> dict[str, object] | None:
 
 
 # ---------------------------------------------------------------------------
+# Self-invocation detection
+# ---------------------------------------------------------------------------
+
+# Defensive bound on the PPID walk; init is pid 1.
+ANCESTOR_WALK_LIMIT = 64
+
+
+def caller_ancestor_cwds() -> list[Path]:
+    """
+    Return the resolved cwd of every ancestor process up the PPID chain.
+
+    Used to detect when the agent driving this helper is living inside one
+    of the scanned worktrees — e.g. a Claude/Codex process whose cwd is the
+    worktree, with a bash subshell and the helper as descendants. /proc is
+    Linux-specific; returns an empty list elsewhere or on permission errors.
+    """
+    proc = Path("/proc")
+    if not proc.exists():
+        return []
+
+    cwds: list[Path] = []
+    pid = os.getppid()
+    seen: set[int] = set()
+    for _ in range(ANCESTOR_WALK_LIMIT):
+        if pid <= 1 or pid in seen:
+            break
+        seen.add(pid)
+        pid_dir = proc / str(pid)
+        try:
+            cwds.append((pid_dir / "cwd").resolve())
+        except (PermissionError, FileNotFoundError, OSError):
+            pass
+        try:
+            status = (pid_dir / "status").read_text(errors="replace")
+        except (PermissionError, FileNotFoundError, OSError):
+            break
+        next_pid: int | None = None
+        for line in status.splitlines():
+            if line.startswith("PPid:"):
+                try:
+                    next_pid = int(line.split()[1])
+                except (IndexError, ValueError):
+                    next_pid = None
+                break
+        if next_pid is None:
+            break
+        pid = next_pid
+    return cwds
+
+
+def detect_self_invocation(worktree_path: Path, caller_cwds: list[Path]) -> bool:
+    target = worktree_path.resolve()
+    target_str = str(target)
+    for caller in caller_cwds:
+        caller_str = str(caller)
+        if caller_str == target_str or caller_str.startswith(target_str + "/"):
+            return True
+    return False
+
+
+# ---------------------------------------------------------------------------
 # Process liveness detection
 # ---------------------------------------------------------------------------
 
@@ -682,6 +743,11 @@ def build_summary(
 
 def removable_merged_worktree_reason(worktree: dict[str, object], current_checkout: Path) -> str | None:
     path = Path(str(worktree["path"])).resolve()
+    if worktree.get("self_invocation"):
+        return (
+            "self-invocation: helper invoked from inside this worktree; "
+            "use land-work for own-work cleanup, not closure"
+        )
     if path == current_checkout.resolve():
         return "worktree is the current checkout"
     if worktree.get("detached"):
@@ -1198,6 +1264,9 @@ def main() -> int:
         working_tree = working_tree_entries(repo_root)
         stashes = stash_entries(repo_root)
 
+        ancestor_cwds = caller_ancestor_cwds()
+        invocation_cwds = [cwd, *ancestor_cwds]
+
         # Enrich each worktree with its own dirty state and liveness assessment
         enriched_worktrees: list[dict[str, object]] = []
         for wt in raw_worktrees:
@@ -1211,6 +1280,7 @@ def main() -> int:
 
             wt_entry["working_tree_dirty"] = bool(wt_dirty)
             wt_entry["working_tree_entries"] = wt_dirty
+            wt_entry["self_invocation"] = detect_self_invocation(wt_path, invocation_cwds)
 
             launch_work = scan_launch_work_log(wt_path)
             if launch_work is not None:
