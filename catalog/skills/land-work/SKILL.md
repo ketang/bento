@@ -38,7 +38,10 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
-  once verification finishes)
+  once verification finishes). The preview helper refuses to proceed if the
+  feature branch still tracks `.launch-work/log.md` or has any
+  `chore(launch-work-log):` commit in the merge range; run
+  `land-work-clean-log.py --apply` first.
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
@@ -206,7 +209,9 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
   or, on legacy branches, `<worktree>/.launch-work/log.md`) reports a
   `checkpoint` other than `ready-to-land`.
 - Do not skip the legacy log-cleanup pass when the working tree still tracks
-  `.launch-work/log.md`.
+  `.launch-work/log.md`. The preview helper enforces this and refuses any
+  candidate that tracks `.launch-work/log.md` or contains a
+  `chore(launch-work-log):` commit in the merge range.
 - Use `--keep-commits` only when the rebase reports a conflict, or when the
   user explicitly accepts log-commit clutter in the primary branch.
 - Launch-work scaffolding never lands on the integration branch. The current

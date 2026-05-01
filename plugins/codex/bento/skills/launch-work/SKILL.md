@@ -37,7 +37,11 @@ of launching work that benefit from repeatable checks:
   to verify the current checkout is the intended linked worktree on the intended
   branch
 - `launch-work/scripts/launch-work-log.py {init|update|read}` to manage the
-  branch-local progress log at `.launch-work/log.md`
+  branch-local progress log at `<worktree-git-dir>/launch-work/log.md` (i.e.
+  under `.git/worktrees/<name>/launch-work/log.md` for a linked worktree).
+  The log is **never** in the working tree and is **never** committed —
+  storing it under `$GIT_DIR` makes it structurally untrackable, which is the
+  invariant: launch-work scaffolding never lands on the integration branch.
 - `launch-work/scripts/launch-work-discover.py` to scan linked worktrees for
   in-flight progress logs
 
@@ -93,8 +97,9 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
    launch-work/scripts/launch-work-log.py init
    ```
 
-   This creates `.launch-work/log.md` and commits it with checkpoint
-   `worktree-ready`.
+   This creates `<worktree-git-dir>/launch-work/log.md` at checkpoint
+   `worktree-ready`. The log is not committed and does not appear in the
+   working tree.
 10. Install build/runtime dependencies in the new worktree before the first
     build, test, or typecheck. Prefer the repo's documented bootstrap command;
     otherwise detect by lockfile per
@@ -141,8 +146,10 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 
 ## Progress Log Cadence
 
-The progress log at `.launch-work/log.md` is the crash-recovery breadcrumb: a
-fresh agent reads it to resume in-flight work. Write rules:
+The progress log at `<worktree-git-dir>/launch-work/log.md` is the
+crash-recovery breadcrumb: a fresh agent reads it to resume in-flight work.
+The file lives under `$GIT_DIR`, not in the working tree, and is never
+committed. Write rules:
 
 - **Mandatory** at every checkpoint transition listed in the workflow: run
   `launch-work-log.py update --checkpoint <name>` before proceeding.
@@ -151,11 +158,18 @@ fresh agent reads it to resume in-flight work. Write rules:
   would be wrong if read by a recovery agent — pass `--slot <name> --content
   -` to the helper and pipe the new slot text on stdin.
 - Always rewrite the whole file via the helper. Never append. Never edit the
-  log file directly during checkpoint writes; the helper keeps the
-  `chore(launch-work-log):` commit-message prefix canonical, and `land-work`'s
-  rebase pass depends on it.
+  log file directly during checkpoint writes.
 - Skip trivial mid-step state (every test run, every file edited). The log is
   for recovery, not telemetry.
+
+### Legacy fallback
+
+Branches in flight before the move out of the working tree may still carry
+`<worktree>/.launch-work/log.md`. Read paths (`launch-work-log.py read`,
+`launch-work-discover.py`, `closure`) fall back to that location. Updates
+refuse to silently mix locations; clean the legacy log first via
+`land-work-clean-log.py --base <primary> --apply`, then run
+`launch-work-log.py init` to create the new `$GIT_DIR`-based log.
 
 ## Resume Protocol
 
@@ -191,9 +205,11 @@ When `launch-work-discover.py` reports an in-flight log for the current task:
 - If automated coverage is not feasible, state that explicitly and use the
   closest available verification path.
 - Never proceed past a checkpoint without writing the log first.
-- Never edit `.launch-work/log.md` directly during checkpoint writes; always
-  use `launch-work/scripts/launch-work-log.py update` so the commit message
-  format stays canonical.
+- Never edit the log file directly during checkpoint writes; always use
+  `launch-work/scripts/launch-work-log.py update` so the header stays
+  canonical. The log lives under `$GIT_DIR/launch-work/log.md`, not in the
+  working tree, and must never be committed or land on the integration
+  branch.
 - Never create a progress log on the primary branch.
 
 ## Stop Conditions
