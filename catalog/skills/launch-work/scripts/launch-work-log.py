@@ -1,7 +1,15 @@
 #!/usr/bin/env python3
 """Launch-work progress-log helper.
 
-Owns reads and writes of .launch-work/log.md plus its YAML-comment header.
+The log lives at $GIT_DIR/launch-work/log.md — under the per-worktree git
+directory, never inside the working tree. That makes the file structurally
+untrackable: no rebase pass, no removal commit, no risk of leaking
+chore(launch-work-log) commits onto the integration branch.
+
+A read-only fallback to the legacy <worktree>/.launch-work/log.md path lets
+in-flight branches finish without manual migration. Writes always go to the
+new location.
+
 See catalog/skills/launch-work/SKILL.md for the runtime contract."""
 
 from __future__ import annotations
@@ -25,9 +33,8 @@ CHECKPOINTS = (
     "ready-to-land",
 )
 
-LOG_DIR_NAME = ".launch-work"
-LOG_FILE_NAME = "log.md"
-LOG_REL_PATH = f"{LOG_DIR_NAME}/{LOG_FILE_NAME}"
+LOG_REL_PATH = "launch-work/log.md"
+LEGACY_LOG_REL_PATH = ".launch-work/log.md"
 
 HEADER_RE = re.compile(
     r"<!--\s*launch-work-log\s*\n"
@@ -60,9 +67,14 @@ def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProce
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, check=check)
 
 
-def _repo_root(cwd: Path) -> Path:
-    result = _git(cwd, "rev-parse", "--show-toplevel")
+def _git_dir(cwd: Path) -> Path:
+    """Resolved per-worktree git directory ($GIT_DIR for this worktree)."""
+    result = _git(cwd, "rev-parse", "--absolute-git-dir")
     return Path(result.stdout.strip())
+
+
+def _repo_root(cwd: Path) -> Path:
+    return Path(_git(cwd, "rev-parse", "--show-toplevel").stdout.strip())
 
 
 def _current_branch(cwd: Path) -> str:
@@ -78,6 +90,24 @@ def _primary_branch(cwd: Path) -> str:
         if _git(cwd, "show-ref", "--verify", f"refs/heads/{name}", check=False).returncode == 0:
             return name
     return "main"
+
+
+def _log_path(cwd: Path) -> Path:
+    return _git_dir(cwd) / LOG_REL_PATH
+
+
+def _legacy_log_path(cwd: Path) -> Path:
+    return _repo_root(cwd) / LEGACY_LOG_REL_PATH
+
+
+def _existing_log_for_read(cwd: Path) -> Path | None:
+    primary = _log_path(cwd)
+    if primary.is_file():
+        return primary
+    legacy = _legacy_log_path(cwd)
+    if legacy.is_file():
+        return legacy
+    return None
 
 
 def _replace_header(body: str, *, checkpoint: str, last_updated: str) -> str:
@@ -110,16 +140,10 @@ def _replace_slot(body: str, *, slot: str, content: str) -> str:
     return pattern.sub(replacement, body, count=1)
 
 
-def _commit(cwd: Path, *, message: str, paths: list[str]) -> None:
-    _git(cwd, "add", *paths)
-    _git(cwd, "commit", "-m", message)
-
-
 def cmd_init(args: argparse.Namespace) -> int:
     cwd = Path.cwd().resolve()
-    repo = _repo_root(cwd)
-    branch = _current_branch(repo)
-    primary = _primary_branch(repo)
+    branch = _current_branch(cwd)
+    primary = _primary_branch(cwd)
     if branch == primary:
         print(
             "launch-work-log: refusing to create a log on the primary branch "
@@ -128,10 +152,10 @@ def cmd_init(args: argparse.Namespace) -> int:
         )
         return 2
 
-    log_path = repo / LOG_REL_PATH
+    log_path = _log_path(cwd)
     if log_path.exists():
         print(
-            f"launch-work-log: {LOG_REL_PATH} already exists; use 'update' instead.",
+            f"launch-work-log: {log_path} already exists; use 'update' instead.",
             file=sys.stderr,
         )
         return 2
@@ -140,8 +164,6 @@ def cmd_init(args: argparse.Namespace) -> int:
     body = _replace_header(template, checkpoint="worktree-ready", last_updated=_now_iso_utc())
     log_path.parent.mkdir(parents=True, exist_ok=True)
     log_path.write_text(body, encoding="utf-8")
-
-    _commit(repo, message="chore(launch-work-log): worktree-ready", paths=[LOG_REL_PATH])
 
     print(json.dumps({"path": str(log_path), "checkpoint": "worktree-ready"}))
     return 0
@@ -156,11 +178,19 @@ def cmd_update(args: argparse.Namespace) -> int:
         )
         return 2
     cwd = Path.cwd().resolve()
-    repo = _repo_root(cwd)
-    log_path = repo / LOG_REL_PATH
+    log_path = _log_path(cwd)
     if not log_path.is_file():
+        legacy = _legacy_log_path(cwd)
+        if legacy.is_file():
+            print(
+                f"launch-work-log: log found at legacy path {legacy}; "
+                "remove it (e.g. via land-work-clean-log) and run 'init' to "
+                "create the new $GIT_DIR-based log before further updates.",
+                file=sys.stderr,
+            )
+            return 2
         print(
-            f"launch-work-log: {LOG_REL_PATH} not found; run 'init' first.",
+            f"launch-work-log: {log_path} not found; run 'init' first.",
             file=sys.stderr,
         )
         return 2
@@ -182,18 +212,15 @@ def cmd_update(args: argparse.Namespace) -> int:
     body = _replace_header(body, checkpoint=args.checkpoint, last_updated=_now_iso_utc())
     log_path.write_text(body, encoding="utf-8")
 
-    _commit(repo, message=f"chore(launch-work-log): {args.checkpoint}", paths=[LOG_REL_PATH])
-
     print(json.dumps({"path": str(log_path), "checkpoint": args.checkpoint}))
     return 0
 
 
 def cmd_read(args: argparse.Namespace) -> int:
     cwd = Path.cwd().resolve()
-    repo = _repo_root(cwd)
-    log_path = repo / LOG_REL_PATH
-    if not log_path.is_file():
-        print(f"launch-work-log: {LOG_REL_PATH} not found.", file=sys.stderr)
+    log_path = _existing_log_for_read(cwd)
+    if log_path is None:
+        print(f"launch-work-log: log not found under $GIT_DIR or legacy path.", file=sys.stderr)
         return 2
 
     body = log_path.read_text(encoding="utf-8")
@@ -214,9 +241,9 @@ def cmd_read(args: argparse.Namespace) -> int:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="launch-work-log")
     sub = parser.add_subparsers(dest="cmd", required=True)
-    sub.add_parser("init", help="create the initial log file and commit it")
+    sub.add_parser("init", help="create the initial log file under $GIT_DIR/launch-work/log.md")
 
-    update = sub.add_parser("update", help="rewrite the log header and commit")
+    update = sub.add_parser("update", help="rewrite the log header in place")
     update.add_argument("--checkpoint", required=True)
     update.add_argument("--slot", default=None)
     update.add_argument(
