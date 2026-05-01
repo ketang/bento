@@ -28,3 +28,16 @@ unless the repo explicitly documents that convention.
 
 If the repo overrides the root, prefer another dedicated durable worktree
 directory — not an ad hoc "nearby" folder.
+
+## Permission Pre-Authorization
+
+The bento `SessionStart` hook `ensure-worktree-permissions.py` adds the default
+root above, plus the parent directories of any existing linked worktrees in
+the current repo, to `permissions.additionalDirectories` in
+`~/.claude/settings.json`. This suppresses the per-file permission prompt for
+worktree access in subsequent sessions.
+
+Caveat: settings changes take effect on the next session, not the current
+one. The first worktree created under a non-default override path will still
+prompt during the session in which it was created; the next session will
+self-heal.
