@@ -34,6 +34,24 @@ acting. The helper's `--apply delete-local-merged-branches` mode is narrower:
 it may automatically remove a clean linked worktree only when the branch is
 `merged_checked_out` and the liveness verdict is `stale` or `unknown`.
 
+## Self-Invocation Flag
+
+Each worktree entry carries a `self_invocation` boolean. It is `true` when
+the calling agent's own process tree (the helper's PPID chain, walked via
+`/proc`) has a cwd inside that worktree. This identifies the worktree the
+agent is currently *living in*, distinguishing it from sibling worktrees that
+merely happen to be recently active.
+
+Self-invocation takes precedence over every other apply-mode skip reason. The
+helper emits the skip reason `self-invocation: helper invoked from inside
+this worktree; use land-work for own-work cleanup, not closure` so the
+caller is redirected to the right tool instead of seeing a generic liveness
+refusal.
+
+On non-Linux platforms or when `/proc` access is restricted, the helper
+falls back to checking the helper's own startup cwd; the flag may be
+`false` for ancestors that cannot be inspected.
+
 ## Apply Mode Behavior
 
 ### `--apply delete-local-merged-branches`
@@ -51,9 +69,9 @@ This worktree-before-branch order matches the shared invariant in
 `../../land-work/references/workflow-invariants.md` and avoids leaving
 orphaned linked worktrees in detached `HEAD` state.
 
-If liveness is unavailable, the worktree is dirty, or the verdict is
-`confirmed_live`, `possibly_live`, or `recently_active`, the helper skips that
-worktree and leaves the branch in place.
+If `self_invocation` is true, liveness is unavailable, the worktree is dirty,
+or the verdict is `confirmed_live`, `possibly_live`, or `recently_active`,
+the helper skips that worktree and leaves the branch in place.
 
 ### `--apply delete-local-patch-equivalent-branches`
 

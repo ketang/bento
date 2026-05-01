@@ -87,6 +87,7 @@ PLUGIN_DEFS = {
             "react-vite-mantine",
             "graphql-gqlgen-gql-tada",
             "dev-skill",
+            "bentobug",
         ],
         "hooks": "bento",
     },

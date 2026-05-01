@@ -37,6 +37,8 @@ state checks that should not rely on ad hoc prose reconstruction:
   that it is not stale relative to the primary branch
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
+  (and `--cleanup --preview-dir <path>` to remove that registered worktree
+  once verification finishes)
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
@@ -149,6 +151,14 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 
 ```bash
 land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
+```
+
+   - remove the preview worktree once verification has succeeded; the
+     directory is a registered git worktree and accumulates under `/tmp`
+     otherwise:
+
+```bash
+land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-dir>
 ```
 9. After the landing succeeds, close or update the tracker item through the
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
