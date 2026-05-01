@@ -343,7 +343,12 @@ class MergedCheckedOutTest(unittest.TestCase):
         self.assertFalse(worktree_path.exists())
         self.assertNotIn("feature-done", branches)
 
-    def test_apply_keeps_recently_active_merged_worktree_and_branch(self) -> None:
+    def test_apply_removes_recently_active_merged_worktree_and_branch(self) -> None:
+        # The merging agent's own activity (commit, file mtime) makes the
+        # just-merged worktree look recently_active. Because the branch is
+        # already landed, that recency does not represent a competing agent;
+        # closure must still clean the worktree up so the documented
+        # land-work -> closure handoff completes immediately.
         git(self.repo, "checkout", "-b", "feature-recent")
         self.commit_file("recent.txt", "recent\n", "add recent work")
         git(self.repo, "checkout", "main")
@@ -360,20 +365,15 @@ class MergedCheckedOutTest(unittest.TestCase):
                 "action": "delete_worktree",
                 "branch": "feature-recent",
                 "worktree": str(worktree_path),
-                "reason": "worktree liveness is recently_active",
             },
-            scan["skipped_actions"],
+            scan["applied_actions"],
         )
         self.assertIn(
-            {
-                "action": "delete_local_branch",
-                "branch": "feature-recent",
-                "reason": "branch still checked out in a retained worktree",
-            },
-            scan["skipped_actions"],
+            {"action": "delete_local_branch", "branch": "feature-recent"},
+            scan["applied_actions"],
         )
-        self.assertTrue(worktree_path.exists())
-        self.assertIn("feature-recent", branches)
+        self.assertFalse(worktree_path.exists())
+        self.assertNotIn("feature-recent", branches)
 
     def test_apply_keeps_dirty_merged_worktree_and_branch(self) -> None:
         git(self.repo, "checkout", "-b", "feature-dirty-merged")

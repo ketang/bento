@@ -18,7 +18,12 @@ from pathlib import Path
 
 APPLY_DELETE_LOCAL_MERGED = "delete-local-merged-branches"
 APPLY_DELETE_LOCAL_PATCH_EQUIVALENT = "delete-local-patch-equivalent-branches"
-WORKTREE_SAFE_TO_REMOVE_LIVENESS = {"stale", "unknown"}
+# For merged_checked_out branches the work is already on primary, so
+# timestamp-based recency is just the merging agent's own activity. Only a
+# confirmed_live process (an agent with cwd inside the worktree right now) is
+# a real signal that removal would step on someone. Dirty working tree is a
+# separate gate enforced earlier.
+WORKTREE_SAFE_TO_REMOVE_LIVENESS = {"stale", "unknown", "recently_active", "possibly_live"}
 
 # Hours during which agents are expected to be active.
 # Outside this window (11pm–8am) elapsed time is not counted toward recency.
