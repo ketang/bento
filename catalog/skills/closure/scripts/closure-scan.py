@@ -714,8 +714,14 @@ def classify_branches(
         elif merged_into_primary:
             classification = "merged_checked_out" if checked_out_elsewhere else "safe_to_delete"
         elif unique_patch_count == 0:
+            # All commits have a patch-id equivalent on primary. If the branch
+            # also has a linked worktree, this is the squash/rebase-landing
+            # pattern: tracker says CLOSED, diff is on primary under a
+            # different SHA, but the worktree was never cleaned up. Distinct
+            # from checked_out_in_worktree (which means real in-progress work)
+            # so the apply mode can remove worktree + force-delete branch.
             classification = (
-                "checked_out_in_worktree"
+                "patch_equivalent_checked_out"
                 if checked_out_elsewhere
                 else "patch_equivalent_review"
             )
@@ -770,6 +776,9 @@ def build_summary(
         ],
         "patch_equivalent_local_branches": [
             b["name"] for b in branches if b["classification"] == "patch_equivalent_review"
+        ],
+        "patch_equivalent_checked_out_local_branches": [
+            b["name"] for b in branches if b["classification"] == "patch_equivalent_checked_out"
         ],
         "checked_out_local_branches": [
             b["name"] for b in branches if b["classification"] == "checked_out_in_worktree"
@@ -979,25 +988,97 @@ def apply_delete_local_merged_branches(
 
 def apply_delete_patch_equivalent_branches(
     branches: list[dict[str, object]],
+    worktrees: list[dict[str, object]],
     cwd: Path,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """
-    Force-delete local branches classified as patch_equivalent_review.
+    Force-delete local branches classified as patch_equivalent_review or
+    patch_equivalent_checked_out.
 
     These branches have no unique patches relative to primary but were not
     merged via a merge commit (rebased or squash-merged), so git's ancestry
     check returns false and `git branch -d` would refuse them.  `git branch -D`
     is safe here because unique_patch_count == 0 guarantees all content is
     already on the primary branch.
+
+    For patch_equivalent_checked_out, the worktree is removed first using the
+    same safety gates as merged_checked_out (clean working tree, not the
+    current checkout, not self-invocation, not confirmed_live).
     """
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
 
+    branch_worktrees: dict[str, list[dict[str, object]]] = {}
+    for worktree in worktrees:
+        branch = worktree.get("branch")
+        if branch:
+            branch_worktrees.setdefault(str(branch), []).append(worktree)
+
     for branch in branches:
-        if branch["classification"] != "patch_equivalent_review":
+        classification = branch["classification"]
+        if classification not in ("patch_equivalent_review", "patch_equivalent_checked_out"):
             continue
 
         branch_name = str(branch["name"])
+
+        if classification == "patch_equivalent_checked_out":
+            checkout_records = branch_worktrees.get(branch_name, [])
+            blocked = False
+            for worktree in checkout_records:
+                reason = removable_merged_worktree_reason(worktree, cwd)
+                if reason is None:
+                    continue
+                blocked = True
+                skipped.append(
+                    {
+                        "action": "delete_worktree",
+                        "branch": branch_name,
+                        "worktree": str(worktree["path"]),
+                        "reason": reason,
+                    }
+                )
+            if blocked:
+                skipped.append(
+                    {
+                        "action": "delete_local_branch",
+                        "branch": branch_name,
+                        "reason": "branch still checked out in a retained worktree",
+                    }
+                )
+                continue
+
+            remove_failed = False
+            for worktree in checkout_records:
+                worktree_path = str(worktree["path"])
+                result = git("worktree", "remove", worktree_path, cwd=cwd, check=False)
+                if result.returncode == 0:
+                    applied.append(
+                        {
+                            "action": "delete_worktree",
+                            "branch": branch_name,
+                            "worktree": worktree_path,
+                        }
+                    )
+                    continue
+                remove_failed = True
+                skipped.append(
+                    {
+                        "action": "delete_worktree",
+                        "branch": branch_name,
+                        "worktree": worktree_path,
+                        "reason": result.stderr.strip() or "git worktree remove failed",
+                    }
+                )
+            if remove_failed:
+                skipped.append(
+                    {
+                        "action": "delete_local_branch",
+                        "branch": branch_name,
+                        "reason": "worktree removal failed",
+                    }
+                )
+                continue
+
         result = git("branch", "-D", branch_name, cwd=cwd, check=False)
         if result.returncode == 0:
             applied.append({"action": "delete_local_branch", "branch": branch_name})
@@ -1401,6 +1482,7 @@ def main() -> int:
         elif args.apply == APPLY_DELETE_LOCAL_PATCH_EQUIVALENT:
             applied_actions, skipped_actions = apply_delete_patch_equivalent_branches(
                 branches,
+                enriched_worktrees,
                 repo_root,
             )
 
