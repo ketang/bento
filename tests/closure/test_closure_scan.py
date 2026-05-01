@@ -667,6 +667,48 @@ class ClosureApplyLaunchWorkExclusionTest(unittest.TestCase):
         self.assertIn("feature-active", branches)
 
 
+class ClosureScanMissingWorktreeDirTest(unittest.TestCase):
+    """closure-scan must not crash when a registered worktree's directory has
+    been removed from disk (the prunable state left by interrupted land-work
+    runs). It should auto-prune or guard each per-worktree probe so the scan
+    completes."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        write_file(self.repo / "README.md", "root\n")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "initial")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_scan_completes_when_registered_worktree_dir_is_missing(self) -> None:
+        wt = Path(self.temp_dir.name) / "wt-ghost"
+        git(self.repo, "worktree", "add", "-b", "ghost-branch", str(wt), "main")
+
+        import shutil as _shutil
+        _shutil.rmtree(wt)
+        self.assertFalse(wt.exists())
+
+        # Without a fix, closure-scan raises FileNotFoundError before git
+        # can report the missing worktree, and the whole scan exits non-zero.
+        scan = json.loads(run([str(SCRIPT)], self.repo).stdout)
+
+        self.assertIn("worktrees", scan)
+        scanned_paths = {w["path"] for w in scan["worktrees"]}
+        self.assertNotIn(str(wt), scanned_paths)
+        warnings = scan.get("warnings", [])
+        self.assertTrue(
+            any("pruned" in w and "missing" in w for w in warnings),
+            f"expected prune warning, got {warnings}",
+        )
+
+
 class CorrelateBranchesTest(unittest.TestCase):
     """Tests for --correlate-branches signal emission on review_required branches."""
 
