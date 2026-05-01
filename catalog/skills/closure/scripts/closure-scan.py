@@ -828,6 +828,7 @@ def apply_delete_merged_checked_out_worktrees(
     worktrees: list[dict[str, object]],
     cwd: Path,
     target_branch: str | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -846,6 +847,18 @@ def apply_delete_merged_checked_out_worktrees(
 
         branch_name = str(branch["name"])
         checkout_records = branch_worktrees.get(branch_name, [])
+        # A ready-to-land log on a merged branch means land-work's cleanup
+        # pass did not run. Surface the anomaly without blocking the
+        # cleanup — auto-cleanup of the worktree is still the right call.
+        if warnings is not None:
+            for worktree in checkout_records:
+                lw = worktree.get("launch_work")
+                if isinstance(lw, dict) and lw.get("checkpoint") == "ready-to-land":
+                    warnings.append(
+                        f"ready-to-land launch-work log on merged branch {branch_name!r}; "
+                        f"land-work cleanup pass did not run for worktree "
+                        f"{worktree['path']}"
+                    )
         if not checkout_records:
             skipped.append(
                 {
@@ -935,6 +948,7 @@ def apply_delete_local_merged_branches(
     worktrees: list[dict[str, object]],
     cwd: Path,
     target_branch: str | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -960,7 +974,7 @@ def apply_delete_local_merged_branches(
         )
 
     merged_applied, merged_skipped = apply_delete_merged_checked_out_worktrees(
-        branches, worktrees, cwd, target_branch=target_branch
+        branches, worktrees, cwd, target_branch=target_branch, warnings=warnings,
     )
     applied.extend(merged_applied)
     skipped.extend(merged_skipped)
@@ -1478,6 +1492,7 @@ def main() -> int:
                 enriched_worktrees,
                 repo_root,
                 target_branch=args.target_branch,
+                warnings=warnings,
             )
         elif args.apply == APPLY_DELETE_LOCAL_PATCH_EQUIVALENT:
             applied_actions, skipped_actions = apply_delete_patch_equivalent_branches(
