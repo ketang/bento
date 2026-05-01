@@ -38,7 +38,10 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
-  once verification finishes)
+  once verification finishes). The preview helper refuses to proceed if the
+  feature branch still tracks `.launch-work/log.md` or has any
+  `chore(launch-work-log):` commit in the merge range; run
+  `land-work-clean-log.py --apply` first.
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
@@ -81,8 +84,11 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 
 2. Confirm the current branch is the intended landing branch and that the helper
    reports a clean feature-branch checkout.
-2a. If `.launch-work/log.md` is present, run the log-cleanup pass before
-    rebasing or verifying:
+2a. **Legacy migration only** — current launch-work stores the progress log
+    under `$GIT_DIR/launch-work/log.md`, which never enters the working tree
+    and never lands. If the working tree still carries a tracked
+    `.launch-work/log.md` (a branch started before the move), run the
+    log-cleanup pass before rebasing or verifying:
 
     - Verify the log's `checkpoint` is `ready-to-land`. If it is not, stop
       and ask the user — the work is not actually ready, or the agent forgot
@@ -199,11 +205,19 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
   landed candidate matches the verified preview.
 - Do not land changes that include deploy-critical artifacts without verifying
   the committed blob content matches what was tested locally.
-- Do not merge a feature branch with a `.launch-work/log.md` whose
-  `checkpoint` is not `ready-to-land`.
-- Do not skip the log-cleanup pass when `.launch-work/log.md` is present.
+- Do not merge a feature branch whose log (under `$GIT_DIR/launch-work/log.md`
+  or, on legacy branches, `<worktree>/.launch-work/log.md`) reports a
+  `checkpoint` other than `ready-to-land`.
+- Do not skip the legacy log-cleanup pass when the working tree still tracks
+  `.launch-work/log.md`. The preview helper enforces this and refuses any
+  candidate that tracks `.launch-work/log.md` or contains a
+  `chore(launch-work-log):` commit in the merge range.
 - Use `--keep-commits` only when the rebase reports a conflict, or when the
   user explicitly accepts log-commit clutter in the primary branch.
+- Launch-work scaffolding never lands on the integration branch. The current
+  log location (`$GIT_DIR/launch-work/log.md`) makes this structural; the
+  legacy cleanup pass exists only to migrate branches started before the
+  move.
 
 ## Tracker Handoff
 

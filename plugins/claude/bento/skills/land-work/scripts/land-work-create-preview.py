@@ -36,8 +36,41 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+LAUNCH_WORK_LOG_PATH = ".launch-work/log.md"
+LAUNCH_WORK_LOG_COMMIT_PREFIX = "chore(launch-work-log):"
+CLEAN_LOG_HINT = (
+    "run land-work/scripts/land-work-clean-log.py --base <primary> --apply first"
+)
+
+
 def default_preview_dir() -> Path:
     return Path(tempfile.mkdtemp(prefix="land-work-preview-", dir="/tmp")).resolve()
+
+
+def _detect_launch_work_log_artifacts(
+    checkout_root: Path, base_sha: str, feature_sha: str
+) -> list[str]:
+    """Return error strings if .launch-work/log.md or chore(launch-work-log)
+    commits would ride into the merge candidate."""
+    errors: list[str] = []
+    tracked = git_stdout(
+        "ls-tree", "-r", "--name-only", feature_sha, "--", LAUNCH_WORK_LOG_PATH,
+        cwd=checkout_root,
+    ).strip()
+    if tracked:
+        errors.append(
+            f"{LAUNCH_WORK_LOG_PATH} is tracked on the feature branch; "
+            f"{CLEAN_LOG_HINT}"
+        )
+    subjects = git_stdout(
+        "log", "--format=%s", f"{base_sha}..{feature_sha}", cwd=checkout_root,
+    ).splitlines()
+    if any(s.startswith(LAUNCH_WORK_LOG_COMMIT_PREFIX) for s in subjects):
+        errors.append(
+            f"{LAUNCH_WORK_LOG_COMMIT_PREFIX} commits present in merge range; "
+            f"{CLEAN_LOG_HINT}"
+        )
+    return errors
 
 
 def cleanup_preview(preview_dir: Path, checkout_root: Path) -> tuple[bool, list[str]]:
@@ -101,6 +134,9 @@ def main() -> int:
 
     base_sha = rev_parse(base_ref, checkout_root) if not errors else None
     feature_sha = rev_parse(feature_ref, checkout_root) if not errors else None
+
+    if not errors:
+        errors.extend(_detect_launch_work_log_artifacts(checkout_root, base_sha, feature_sha))
 
     if not errors:
         try:
