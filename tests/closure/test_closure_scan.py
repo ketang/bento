@@ -666,6 +666,56 @@ class ClosureApplyLaunchWorkExclusionTest(unittest.TestCase):
         self.assertTrue(wt.exists())
         self.assertIn("feature-active", branches)
 
+    def test_ready_to_land_log_on_merged_branch_emits_warning(self) -> None:
+        # SKILL.md: "A ready-to-land log on a merged branch is an anomaly —
+        # land-work's cleanup pass did not run." The cleanup must still
+        # proceed (auto-cleanup is reasonable), but the anomaly must be
+        # surfaced to the agent via the top-level warnings list.
+        old_date = "2020-01-01T12:00:00+00:00"
+        old_env = {"GIT_AUTHOR_DATE": old_date, "GIT_COMMITTER_DATE": old_date}
+
+        git(self.repo, "checkout", "-b", "feature-rtl")
+        write_file(self.repo / "work.txt", "work\n")
+        git(self.repo, "add", "work.txt")
+        git_with_env(self.repo, old_env, "commit", "-m", "add work")
+
+        log_path = self.repo / ".launch-work" / "log.md"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            LAUNCH_WORK_LOG_BODY.format(checkpoint="ready-to-land"), encoding="utf-8"
+        )
+        git(self.repo, "add", ".launch-work/log.md")
+        git_with_env(self.repo, old_env, "commit", "-m", "chore(launch-work-log): ready-to-land")
+
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-rtl", "-m", "merge feature-rtl")
+
+        wt = Path(self.temp_dir.name) / "wt-feature-rtl"
+        git(self.repo, "worktree", "add", str(wt), "feature-rtl")
+
+        scan = json.loads(
+            run([str(SCRIPT), "--apply", "delete-local-merged-branches"], self.repo).stdout
+        )
+        branches = git(self.repo, "branch", "--format=%(refname:short)").stdout.splitlines()
+
+        # Cleanup proceeds.
+        self.assertIn(
+            {"action": "delete_local_branch", "branch": "feature-rtl"},
+            scan["applied_actions"],
+        )
+        self.assertNotIn("feature-rtl", branches)
+        self.assertFalse(wt.exists())
+
+        # Anomaly is surfaced.
+        warnings = scan.get("warnings", [])
+        self.assertTrue(
+            any(
+                "ready-to-land" in w and "feature-rtl" in w
+                for w in warnings
+            ),
+            f"expected ready-to-land warning for feature-rtl, got {warnings}",
+        )
+
 
 class ClosureScanMissingWorktreeDirTest(unittest.TestCase):
     """closure-scan must not crash when a registered worktree's directory has
