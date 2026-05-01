@@ -15,15 +15,13 @@ HOOK_SCRIPT = (
     / "scripts"
     / "ensure-worktree-permissions.py"
 )
-DEFAULT_WORKTREE_ROOT = str(Path.home() / ".local" / "share" / "worktrees")
-
-
 class EnsureWorktreePermissionsHookTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
         self.tmp_path = Path(self.tmp.name).resolve()
         self.fake_home = self.tmp_path / "home"
         self.fake_home.mkdir()
+        self.default_root = str((self.fake_home / ".local" / "share" / "worktrees").resolve())
 
     def tearDown(self) -> None:
         self.tmp.cleanup()
@@ -61,7 +59,7 @@ class EnsureWorktreePermissionsHookTest(unittest.TestCase):
     def test_creates_settings_with_default_root(self) -> None:
         result = self._run()
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertIn(DEFAULT_WORKTREE_ROOT, self._list_dirs())
+        self.assertIn(self.default_root, self._list_dirs())
 
     def test_idempotent(self) -> None:
         self._run()
@@ -83,11 +81,11 @@ class EnsureWorktreePermissionsHookTest(unittest.TestCase):
         settings = self._read_settings()
         self.assertEqual(settings["model"], "opus")
         self.assertIn("/some/other/dir", settings["permissions"]["additionalDirectories"])
-        self.assertIn(DEFAULT_WORKTREE_ROOT, settings["permissions"]["additionalDirectories"])
+        self.assertIn(self.default_root, settings["permissions"]["additionalDirectories"])
         self.assertEqual(settings["permissions"]["allow"], ["Bash(ls:*)"])
 
     def test_skips_when_already_covered_by_parent(self) -> None:
-        parent = str(Path.home())
+        parent = str(self.fake_home.resolve())
         self._write_settings({"permissions": {"additionalDirectories": [parent]}})
         result = self._run()
         self.assertEqual(result.returncode, 0, msg=result.stderr)
@@ -118,14 +116,14 @@ class EnsureWorktreePermissionsHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         dirs = self._list_dirs()
         self.assertIn(str(observed_root), dirs)
-        self.assertIn(DEFAULT_WORKTREE_ROOT, dirs)
+        self.assertIn(self.default_root, dirs)
 
     def test_non_git_cwd_only_adds_default(self) -> None:
         non_git = self.tmp_path / "plain"
         non_git.mkdir()
         result = self._run(cwd=non_git)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
-        self.assertEqual(self._list_dirs(), [DEFAULT_WORKTREE_ROOT])
+        self.assertEqual(self._list_dirs(), [self.default_root])
 
 
 if __name__ == "__main__":
