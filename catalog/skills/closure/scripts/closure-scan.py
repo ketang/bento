@@ -32,7 +32,8 @@ RECENTLY_ACTIVE_THRESHOLD_S = 2 * 3600  # 2 active hours
 # How many calendar days back to scan for session logs.
 SESSION_SCAN_DAYS = 4
 
-LAUNCH_WORK_LOG_REL = Path(".launch-work") / "log.md"
+LAUNCH_WORK_LOG_REL = Path("launch-work") / "log.md"
+LAUNCH_WORK_LEGACY_LOG_REL = Path(".launch-work") / "log.md"
 LAUNCH_WORK_HEADER_RE = re.compile(
     r"<!--\s*launch-work-log\s*\n"
     r"last-updated:\s*(?P<last_updated>[^\n]+)\n"
@@ -42,9 +43,29 @@ LAUNCH_WORK_HEADER_RE = re.compile(
 )
 
 
+def _launch_work_log_path(worktree_path: Path) -> Path | None:
+    """Locate the launch-work log under the worktree's git-dir, falling back
+    to the legacy in-tree path. Returns None if neither exists."""
+    git_dir_proc = subprocess.run(
+        ["git", "rev-parse", "--absolute-git-dir"],
+        cwd=worktree_path,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if git_dir_proc.returncode == 0:
+        primary = Path(git_dir_proc.stdout.strip()) / LAUNCH_WORK_LOG_REL
+        if primary.is_file():
+            return primary
+    legacy = worktree_path / LAUNCH_WORK_LEGACY_LOG_REL
+    if legacy.is_file():
+        return legacy
+    return None
+
+
 def scan_launch_work_log(worktree_path: Path) -> dict[str, object] | None:
-    log_path = worktree_path / LAUNCH_WORK_LOG_REL
-    if not log_path.is_file():
+    log_path = _launch_work_log_path(worktree_path)
+    if log_path is None:
         return None
     try:
         body = log_path.read_text(encoding="utf-8", errors="replace")

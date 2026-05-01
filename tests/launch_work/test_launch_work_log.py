@@ -30,6 +30,14 @@ def init_feature_repo(parent: Path, name: str = "repo") -> Path:
     return repo
 
 
+def git_dir(cwd: Path) -> Path:
+    return Path(git(cwd, "rev-parse", "--absolute-git-dir").stdout.strip())
+
+
+def expected_log_path(repo: Path) -> Path:
+    return git_dir(repo) / "launch-work" / "log.md"
+
+
 class LaunchWorkLogInitTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
@@ -38,10 +46,10 @@ class LaunchWorkLogInitTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_init_creates_log_with_header_and_commits(self) -> None:
+    def test_init_writes_log_under_git_dir_without_committing(self) -> None:
         result = run([str(LOG_SCRIPT), "init"], cwd=self.repo)
         payload = json.loads(result.stdout)
-        log_path = self.repo / ".launch-work" / "log.md"
+        log_path = expected_log_path(self.repo)
 
         self.assertTrue(log_path.is_file())
         self.assertEqual(payload["path"], str(log_path))
@@ -52,8 +60,12 @@ class LaunchWorkLogInitTest(unittest.TestCase):
         self.assertRegex(body, r"last-updated: \d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
         self.assertIn("## Next action", body)
 
-        log_msg = git(self.repo, "log", "-1", "--format=%s").stdout.strip()
-        self.assertEqual(log_msg, "chore(launch-work-log): worktree-ready")
+        # No commit and no working-tree pollution.
+        last_msg = git(self.repo, "log", "-1", "--format=%s").stdout.strip()
+        self.assertEqual(last_msg, "initial")
+        status = git(self.repo, "status", "--porcelain").stdout.strip()
+        self.assertEqual(status, "")
+        self.assertFalse((self.repo / ".launch-work").exists())
 
     def test_init_refuses_when_log_already_exists(self) -> None:
         run([str(LOG_SCRIPT), "init"], cwd=self.repo)
@@ -77,15 +89,18 @@ class LaunchWorkLogUpdateTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_update_rewrites_checkpoint_and_commits(self) -> None:
+    def test_update_rewrites_checkpoint_without_committing(self) -> None:
         result = run([str(LOG_SCRIPT), "update", "--checkpoint", "deps-installed"], cwd=self.repo)
         self.assertEqual(result.returncode, 0)
 
-        body = (self.repo / ".launch-work/log.md").read_text(encoding="utf-8")
+        body = expected_log_path(self.repo).read_text(encoding="utf-8")
         self.assertIn("checkpoint: deps-installed", body)
 
-        last = git(self.repo, "log", "-1", "--format=%s").stdout.strip()
-        self.assertEqual(last, "chore(launch-work-log): deps-installed")
+        # Working tree must remain clean across updates.
+        status = git(self.repo, "status", "--porcelain").stdout.strip()
+        self.assertEqual(status, "")
+        last_msg = git(self.repo, "log", "-1", "--format=%s").stdout.strip()
+        self.assertEqual(last_msg, "initial")
 
     def test_update_rejects_unknown_checkpoint(self) -> None:
         result = run(
@@ -116,7 +131,7 @@ class LaunchWorkLogUpdateTest(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0)
 
-        body = (self.repo / ".launch-work/log.md").read_text(encoding="utf-8")
+        body = expected_log_path(self.repo).read_text(encoding="utf-8")
         self.assertIn("Wire the new endpoint into routing.", body)
         self.assertIn("checkpoint: tests-green", body)
 
@@ -135,12 +150,51 @@ class LaunchWorkLogReadTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertEqual(payload["checkpoint"], "worktree-ready")
         self.assertRegex(payload["last_updated"], r"\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}Z")
-        self.assertEqual(payload["path"], str(self.repo / ".launch-work/log.md"))
+        self.assertEqual(payload["path"], str(expected_log_path(self.repo)))
 
     def test_read_when_log_missing_exits_nonzero(self) -> None:
-        (self.repo / ".launch-work/log.md").unlink()
+        expected_log_path(self.repo).unlink()
         result = run([str(LOG_SCRIPT), "read"], cwd=self.repo, check=False)
         self.assertNotEqual(result.returncode, 0)
+
+
+class LaunchWorkLogLegacyFallbackTest(unittest.TestCase):
+    """Branches in flight before the move out of the working tree must remain
+    readable. 'read' falls back to <worktree>/.launch-work/log.md; 'update'
+    refuses to silently mix locations."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = init_feature_repo(Path(self.temp_dir.name))
+        legacy = self.repo / ".launch-work" / "log.md"
+        legacy.parent.mkdir(parents=True, exist_ok=True)
+        legacy.write_text(
+            "<!-- launch-work-log\n"
+            "last-updated: 2026-01-15T10:00:00Z\n"
+            "checkpoint: tests-green\n"
+            "-->\n\n"
+            "# Launch-Work Progress Log\n\n"
+            "## Next action\n\nresume\n",
+            encoding="utf-8",
+        )
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_read_falls_back_to_legacy_in_tree_path(self) -> None:
+        result = run([str(LOG_SCRIPT), "read"], cwd=self.repo)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["checkpoint"], "tests-green")
+        self.assertEqual(payload["path"], str(self.repo / ".launch-work/log.md"))
+
+    def test_update_refuses_when_only_legacy_log_present(self) -> None:
+        result = run(
+            [str(LOG_SCRIPT), "update", "--checkpoint", "verification-passed"],
+            cwd=self.repo,
+            check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("legacy path", result.stderr)
 
 
 if __name__ == "__main__":

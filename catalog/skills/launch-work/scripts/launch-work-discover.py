@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Scan linked worktrees for .launch-work/log.md files.
+"""Scan linked worktrees for launch-work progress logs.
+
+The log lives at <worktree-git-dir>/launch-work/log.md. A read-only fallback
+to <worktree>/.launch-work/log.md handles in-flight branches that pre-date
+the move out of the working tree.
 
 Emits a JSON object with a 'logs' list, one entry per worktree containing a
 progress log. See catalog/skills/launch-work/SKILL.md for the runtime
@@ -15,7 +19,8 @@ import sys
 from pathlib import Path
 
 
-LOG_REL_PATH = ".launch-work/log.md"
+LOG_REL_PATH = "launch-work/log.md"
+LEGACY_LOG_REL_PATH = ".launch-work/log.md"
 HEADER_RE = re.compile(
     r"<!--\s*launch-work-log\s*\n"
     r"last-updated:\s*(?P<last_updated>[^\n]+)\n"
@@ -25,13 +30,13 @@ HEADER_RE = re.compile(
 )
 
 
-def _git(cwd: Path, *args: str) -> subprocess.CompletedProcess[str]:
+def _git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
     return subprocess.run(
         ["git", *args],
         cwd=cwd,
         capture_output=True,
         text=True,
-        check=True,
+        check=check,
     )
 
 
@@ -57,9 +62,23 @@ def _list_worktrees(cwd: Path) -> list[dict[str, str]]:
     return entries
 
 
+def _resolve_log_path(worktree: Path) -> Path | None:
+    """Return the log path under the worktree's git-dir, falling back to the
+    legacy in-tree path. Returns None if neither exists."""
+    git_dir_result = _git(worktree, "rev-parse", "--absolute-git-dir", check=False)
+    if git_dir_result.returncode == 0:
+        primary = Path(git_dir_result.stdout.strip()) / LOG_REL_PATH
+        if primary.is_file():
+            return primary
+    legacy = worktree / LEGACY_LOG_REL_PATH
+    if legacy.is_file():
+        return legacy
+    return None
+
+
 def _read_log_header(worktree: Path) -> dict[str, str] | None:
-    log_path = worktree / LOG_REL_PATH
-    if not log_path.is_file():
+    log_path = _resolve_log_path(worktree)
+    if log_path is None:
         return None
     body = log_path.read_text(encoding="utf-8", errors="replace")
     match = HEADER_RE.search(body)

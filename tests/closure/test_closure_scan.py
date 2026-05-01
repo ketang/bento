@@ -571,6 +571,37 @@ class ClosureScanLaunchWorkLogTest(unittest.TestCase):
         record = self._worktree_record(scan, wt)
         self.assertNotIn("launch_work", record)
 
+    def test_launch_work_field_resolved_via_git_dir(self) -> None:
+        # The canonical location is <git-dir>/launch-work/log.md, never the
+        # working tree. Closure must find a log there even when the working
+        # tree has no .launch-work directory.
+        wt = Path(self.temp_dir.name) / "wt-git-dir-log"
+        git(self.repo, "worktree", "add", "-b", "feature-gd", str(wt), "main")
+        git_dir = Path(
+            run(["git", "rev-parse", "--absolute-git-dir"], wt).stdout.strip()
+        )
+        log_path = git_dir / "launch-work" / "log.md"
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        log_path.write_text(
+            LAUNCH_WORK_LOG_BODY.format(checkpoint="ready-to-land"), encoding="utf-8"
+        )
+
+        scan = self._scan()
+        record = self._worktree_record(scan, wt)
+
+        self.assertEqual(
+            record["launch_work"],
+            {
+                "present": True,
+                "last_updated": "2026-04-26T12:00:00Z",
+                "checkpoint": "ready-to-land",
+            },
+        )
+        # Working tree must remain clean — the log lives outside it.
+        self.assertFalse((wt / ".launch-work").exists())
+        status = run(["git", "status", "--porcelain"], wt).stdout.strip()
+        self.assertEqual(status, "")
+
 
 class ClosureApplyLaunchWorkExclusionTest(unittest.TestCase):
     """A worktree with an in-flight launch-work log (checkpoint != ready-to-land)
