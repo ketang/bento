@@ -28,7 +28,7 @@ Use this skill only when the project documents Beads as the issue tracker.
    record that and continue without inventing extra transitions.
 6. Do not close the issue when branch work is merely complete.
 7. Close or update the issue only after the verified landing to the repo's
-   primary branch succeeds.
+   primary branch succeeds. See "Closure Evidence Rule" below — non-negotiable.
 8. If work is abandoned or handed off without landing, clear or adjust the
    active-work status using the repo's documented policy instead of closing the
    issue.
@@ -37,6 +37,35 @@ Use this skill only when the project documents Beads as the issue tracker.
 10. If cleanup evidence shows the task is superseded, abandoned, or only
     partially landed, update or leave the issue open according to repo policy
     instead of closing it.
+
+## Closure Evidence Rule
+
+Never close a Beads issue without proof its branch is reachable from the
+integration branch. Closing without landing silently breaks dependents: a
+downstream issue marked ready will be claimed and fail on first reference to
+unlanded code.
+
+Required before `bd close <id>`:
+
+1. Capture the merge SHA from `land-work` (or `git rev-parse <integration-branch>`
+   immediately after the merge).
+2. Verify ancestry:
+
+   ```bash
+   git merge-base --is-ancestor <merge-sha> <integration-branch>
+   ```
+
+   Exit code `0` means landed. Any non-zero exit means refuse to close.
+3. Only then run:
+
+   ```bash
+   bd close <id> --reason "<merge-sha> landed on <integration-branch>"
+   ```
+
+If the ancestry check fails, do not close. Direct the user to land the branch
+first. Do not bypass with `bd update <id> --status closed`, and do not close
+on cleanup evidence alone. The rule applies even when the closing agent just
+ran `land-work` itself — capture the SHA and run the check anyway.
 
 ## Policy Notes
 
@@ -63,8 +92,11 @@ bd ready
 bd show <id>
 bd create --title "..." --description "..."
 bd update <id> --status <status>
-bd close <id>
+bd close <id> --reason "<merge-sha> landed on <integration-branch>"
 ```
+
+Prefer `bd close --reason` over `bd update <id> --status closed`. The former
+records the landing evidence on the issue; the latter loses that audit trail.
 
 ## Dependency Links
 
