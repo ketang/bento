@@ -86,10 +86,36 @@ This apply mode deletes:
 For merged, clean, stale-or-unknown linked worktrees, this helper apply mode is
 the approved automatic cleanup path.
 
+### Routine post-landing cleanup for your own branch
+
+Single-target apply mode is **not** the routine cleanup path for the agent
+that just landed its own branch. That agent should run direct cleanup from
+the primary checkout instead:
+
+```bash
+git worktree remove <worktree-path>
+```
+
+```bash
+git branch -d <feature-branch>
+```
+
+`land-work` step 10 prescribes this direct sequence. Closure's liveness gate
+treats a recently-active worktree (yours, just-used) as ineligible for
+automatic deletion, so handing your own just-landed branch to closure
+typically results in a `skipped_actions` entry rather than cleanup.
+
+Single-target apply mode is for stale, ambiguous, or other-agent leftovers —
+a worktree whose owner died, a branch whose merge state needs the helper's
+classification, or a fallback diagnostic when direct cleanup failed and you
+need closure's structured report on why. It is not the routine just-landed
+cleanup path for the active landing agent.
+
 ### Single-Target Mode
 
-When another skill (notably `land-work`) already knows the exact branch to
-clean up after a successful merge, scope the apply pass with `--target-branch`:
+When another skill needs to clean up a specific stale, ambiguous, or
+other-agent leftover branch, or needs a fallback diagnostic after direct
+cleanup fails, scope the apply pass with `--target-branch`:
 
 ```bash
 closure/scripts/closure-scan.py --target-branch <name> --apply delete-local-merged-branches
@@ -104,9 +130,10 @@ not eligible (wrong classification), the helper records a single
 `skipped_actions` entry with the classification in the reason and exits 0; the
 caller decides what to do with that signal.
 
-Use single-target mode for handoffs from skills that have already verified the
-landing. The wide-net workflow below is for repo-wide cleanup passes, not for
-single-branch tear-down.
+Use single-target mode for stale/ambiguous/other-agent leftovers or fallback
+diagnostics — not for the active landing agent's routine cleanup of its own
+just-landed branch (see the section above). The wide-net workflow below is
+for repo-wide cleanup passes, not for single-branch tear-down.
 
 If the user also wants patch-equivalent branches removed (work landed via
 rebase or squash with no merge commit):

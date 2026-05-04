@@ -170,22 +170,32 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the
    detected primary branch.
-10. Clean up the merged feature branch and its linked worktree by handing off
-    to `closure` in single-target mode. Return to the repo root on the primary
-    branch first (you cannot remove the worktree you are standing in), then
-    run:
+10. Clean up the merged feature branch and its linked worktree directly. This
+    is the routine post-landing path for the agent that just landed its own
+    work. Return to the repo root on the primary branch first (you cannot
+    remove the worktree you are standing in), then run, in order, as separate
+    commands:
 
     ```bash
-    closure/scripts/closure-scan.py --target-branch <feature-branch> --apply delete-local-merged-branches
+    git worktree remove <worktree-path>
     ```
 
-    The helper enforces the ordering rule from
-    `references/workflow-invariants.md`: it removes the linked worktree before
-    deleting the branch. Inspect `applied_actions` and `skipped_actions` in
-    the output. If the helper skipped because of liveness, dirty state, or an
-    in-flight `.launch-work/log.md`, resolve that condition and re-run rather
-    than constructing manual `git branch -D` or `git worktree remove`
-    commands.
+    ```bash
+    git branch -d <feature-branch>
+    ```
+
+    The ordering rule from `references/workflow-invariants.md` is structural:
+    remove the linked worktree before deleting the branch. `git branch -d`
+    (lowercase `-d`) refuses to delete an unmerged branch, so it is the safe
+    default after a verified merge.
+
+    Reach for `closure` only as a fallback for stale or ambiguous leftovers
+    (a worktree that was not yours, a branch whose merge state is unclear, or
+    direct cleanup that failed for a reason you cannot explain). For your own
+    just-landed branch, do not invoke
+    `closure/scripts/closure-scan.py --target-branch <name> --apply delete-local-merged-branches` —
+    closure's liveness gate is built around recently-active worktrees and
+    will skip your own.
 
 ## Non-Negotiable Rules
 
