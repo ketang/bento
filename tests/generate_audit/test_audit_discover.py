@@ -1,5 +1,8 @@
 import json
+import os
+import shutil
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,8 +12,8 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "catalog/skills/generate-audit/scripts/audit-discover.py"
 
 
-def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
+def run(cmd: list[str], cwd: Path, check: bool = True, env: dict | None = None) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True, env=env)
 
 
 def git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -37,8 +40,13 @@ class AuditDiscoverTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def run_helper(self) -> dict:
-        result = run([str(SCRIPT)], self.repo)
+    def run_helper(self, path_override: str | None = None) -> dict:
+        env = None
+        if path_override is not None:
+            env = {**os.environ, "PATH": path_override}
+        # Invoke via the current interpreter so PATH overrides do not break
+        # shebang resolution of /usr/bin/env python3.
+        result = run([sys.executable, str(SCRIPT)], self.repo, env=env)
         return json.loads(result.stdout)
 
     def test_discovers_typescript_repo_shape_and_workflow_surfaces(self) -> None:
@@ -219,9 +227,9 @@ class AuditDiscoverTest(unittest.TestCase):
         payload = self.run_helper()
 
         sa = payload["static_analysis"]
-        tools = [t["tool"] for t in sa["detected_tools"]]
+        tools = [t["tool"] for t in sa["applicable_tools"]]
         self.assertIn("golangci-lint", tools)
-        entry = next(t for t in sa["detected_tools"] if t["tool"] == "golangci-lint")
+        entry = next(t for t in sa["applicable_tools"] if t["tool"] == "golangci-lint")
         self.assertEqual(entry["config"], ".golangci.yml")
         self.assertEqual(entry["run"], "golangci-lint run ./...")
 
@@ -231,7 +239,7 @@ class AuditDiscoverTest(unittest.TestCase):
         payload = self.run_helper()
 
         sa = payload["static_analysis"]
-        tools = [t["tool"] for t in sa["detected_tools"]]
+        tools = [t["tool"] for t in sa["applicable_tools"]]
         self.assertIn("govulncheck", tools)
         self.assertIn("gofmt", tools)
 
@@ -264,9 +272,9 @@ class AuditDiscoverTest(unittest.TestCase):
         payload = self.run_helper()
 
         sa = payload["static_analysis"]
-        tools = [t["tool"] for t in sa["detected_tools"]]
+        tools = [t["tool"] for t in sa["applicable_tools"]]
         self.assertIn("eslint", tools)
-        entry = next(t for t in sa["detected_tools"] if t["tool"] == "eslint")
+        entry = next(t for t in sa["applicable_tools"] if t["tool"] == "eslint")
         self.assertIn("eslint", entry["run"])
 
     def test_static_analysis_detects_tsc_in_typescript_repo(self) -> None:
@@ -275,7 +283,7 @@ class AuditDiscoverTest(unittest.TestCase):
 
         payload = self.run_helper()
 
-        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        tools = [t["tool"] for t in payload["static_analysis"]["applicable_tools"]]
         self.assertIn("tsc", tools)
 
     def test_static_analysis_missing_by_language_typescript_without_eslint(self) -> None:
@@ -296,7 +304,7 @@ class AuditDiscoverTest(unittest.TestCase):
 
         payload = self.run_helper()
 
-        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        tools = [t["tool"] for t in payload["static_analysis"]["applicable_tools"]]
         self.assertIn("ruff", tools)
 
     def test_static_analysis_missing_by_language_python_without_ruff(self) -> None:
@@ -313,9 +321,46 @@ class AuditDiscoverTest(unittest.TestCase):
 
         payload = self.run_helper()
 
-        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        tools = [t["tool"] for t in payload["static_analysis"]["applicable_tools"]]
         self.assertIn("clippy", tools)
         self.assertIn("cargo-audit", tools)
+
+    # ── Static analysis: installed vs applicable ────────────────────────────
+
+    def test_installed_tools_excludes_tools_absent_from_path(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+
+        # Locate the git binary so the helper can still init/inspect the repo,
+        # then point PATH at a directory containing only that one symlink. No
+        # audit tools (go, govulncheck, gocyclo, deadcode, ...) are reachable.
+        git_path = shutil.which("git")
+        self.assertIsNotNone(git_path, "git must be on PATH for this test")
+        sandbox = Path(self.temp_dir.name) / "minimal-bin"
+        sandbox.mkdir()
+        os.symlink(git_path, sandbox / "git")
+        payload = self.run_helper(path_override=str(sandbox))
+
+        sa = payload["static_analysis"]
+        applicable = [t["tool"] for t in sa["applicable_tools"]]
+        installed = [t["tool"] for t in sa["installed_tools"]]
+        self.assertIn("govulncheck", applicable)
+        self.assertIn("gocyclo", applicable)
+        self.assertIn("deadcode", applicable)
+        for tool in ("govulncheck", "gocyclo", "deadcode"):
+            self.assertNotIn(tool, installed)
+
+    def test_installed_tools_subset_of_applicable_in_real_env(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+
+        payload = self.run_helper()
+
+        sa = payload["static_analysis"]
+        applicable_keys = {(t["tool"], t.get("config")) for t in sa["applicable_tools"]}
+        installed_keys = {(t["tool"], t.get("config")) for t in sa["installed_tools"]}
+        self.assertTrue(installed_keys.issubset(applicable_keys))
+        for entry in sa["installed_tools"]:
+            self.assertIn("binary", entry)
+            self.assertTrue(entry["binary"])
 
     # ── Static analysis: cross-language secrets ──────────────────────────────
 
@@ -324,7 +369,7 @@ class AuditDiscoverTest(unittest.TestCase):
 
         payload = self.run_helper()
 
-        tools = [t["tool"] for t in payload["static_analysis"]["detected_tools"]]
+        tools = [t["tool"] for t in payload["static_analysis"]["applicable_tools"]]
         self.assertIn("gitleaks", tools)
 
     def test_static_analysis_secrets_missing_cross_language_when_no_tool(self) -> None:
