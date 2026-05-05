@@ -6,6 +6,7 @@ import json
 import os
 import re
 import shlex
+import shutil
 import subprocess
 import sys
 from pathlib import Path
@@ -160,6 +161,29 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("shellcheck", None, [],
      "find . -name '*.sh' -not -path './.git/*' | xargs shellcheck", True),
 ]
+
+# Map tool_name → the binary whose presence on PATH proves the tool is
+# installed and runnable. Default (when not in this map) is tool_name itself.
+# For tools invoked via a wrapper (npx, cargo subcommands, go test), the wrapper
+# is what gates execution — checking the wrapper here is what matters.
+TOOL_BINARY_OVERRIDES: dict[str, str] = {
+    "go-test-cover": "go",
+    "clippy": "cargo",
+    "clippy-cognitive-complexity": "cargo",
+    "cargo-audit": "cargo-audit",
+    "cargo-tarpaulin": "cargo-tarpaulin",
+    "pytest-cov": "pytest",
+    "eslint": "npx",
+    "tsc": "npx",
+    "knip": "npx",
+    "prettier": "npx",
+    "jscpd": "npx",
+}
+
+
+def tool_binary(tool_name: str) -> str:
+    return TOOL_BINARY_OVERRIDES.get(tool_name, tool_name)
+
 
 # Tools that form alternative groups: detecting any one covers the category.
 # Used to suppress alternatives from missing_by_language once any in the group is found.
@@ -536,7 +560,7 @@ def known_repo_commands(
     ]
     known.extend(
         entry["run"]
-        for entry in static_analysis["detected_tools"]
+        for entry in static_analysis["applicable_tools"]
         if isinstance(entry, dict) and isinstance(entry.get("run"), str)
     )
     known.extend(
@@ -692,7 +716,8 @@ def detect_static_analysis_tools(
     repo_root: Path, file_set: set[str], languages: list[str]
 ) -> dict[str, object]:
     lang_set = set(languages)
-    detected: list[dict[str, str | None]] = []
+    applicable: list[dict[str, str | None]] = []
+    installed: list[dict[str, str | None]] = []
     detected_names: set[tuple[str | None, str]] = set()  # (language, tool_name)
 
     for tool_name, language, config_candidates, run_cmd, zero_config in STATIC_TOOLS:
@@ -706,7 +731,11 @@ def detect_static_analysis_tools(
             if config_found is None:
                 continue
 
-        detected.append({"tool": tool_name, "config": config_found, "run": run_cmd})
+        binary = tool_binary(tool_name)
+        entry = {"tool": tool_name, "config": config_found, "run": run_cmd, "binary": binary}
+        applicable.append(entry)
+        if shutil.which(binary):
+            installed.append(entry)
         detected_names.add((language, tool_name))
 
     # Config-required tools absent for each detected language
@@ -737,7 +766,8 @@ def detect_static_analysis_tools(
         missing_cross_language.append(secrets_group[0] if secrets_group else "gitleaks")
 
     return {
-        "detected_tools": detected,
+        "applicable_tools": applicable,
+        "installed_tools": installed,
         "missing_by_language": missing_by_language,
         "missing_cross_language": missing_cross_language,
     }

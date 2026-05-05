@@ -56,9 +56,13 @@ assumptions as findings.
 ## Static Analysis Surface
 
 Read `generate-audit/references/static-analysis-tools.md`. Cross-reference
-`static_analysis.detected_tools`, note gaps from `missing_by_language` and
-`missing_cross_language`, read each detected tool's config file, and flag
-disabled rules, raised thresholds, or excluded paths as findings.
+`static_analysis.installed_tools` (tools that will actually run) against
+`static_analysis.applicable_tools` (tools that fit the repo but may be
+absent from `PATH`), note gaps from `missing_by_language` and
+`missing_cross_language`, read each installed tool's config file, and flag
+disabled rules, raised thresholds, or excluded paths as findings. Tools in
+`applicable_tools` but not `installed_tools` are recommendations, not run
+candidates.
 
 ## Quality Standards Binding
 

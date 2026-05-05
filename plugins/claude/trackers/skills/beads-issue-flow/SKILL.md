@@ -98,6 +98,22 @@ bd close <id> --reason "<merge-sha> landed on <integration-branch>"
 Prefer `bd close --reason` over `bd update <id> --status closed`. The former
 records the landing evidence on the issue; the latter loses that audit trail.
 
+### Closure
+
+Three valid closure forms, in order of preference:
+
+1. **Canonical:** `bd close <id> --reason "..."` — purpose-built; `--reason`
+   (`-r`) matches the mental model and records landing evidence.
+2. **Atomic fallback:** `bd update <id> --status closed --notes "..."` — use
+   only when also setting other fields in the same call (e.g.,
+   `--add-label`, `--assignee`). On `update`, `--notes` is the only
+   message-bearing flag; `--reason`, `-m`, and `--message` do not exist.
+3. **Append a note:** `bd note <id> "..."` — shorthand for
+   `bd update <id> --append-notes "..."`. No `-m` here either.
+
+Common agent miss: `bd update <id> --status closed --reason "..." -m "..."`
+fails — neither `--reason` nor `-m` exists on `update`. Use form 1 instead.
+
 ## Dependency Links
 
 When creating a blocks relationship, prefer:

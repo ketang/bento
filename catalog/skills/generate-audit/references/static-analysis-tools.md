@@ -6,17 +6,19 @@ description: Per-tool run commands, output interpretation, and recommendation gu
 # Static Analysis Tools
 
 This reference is loaded during audit generation to govern the **static
-analysis** audit phase. For each tool in `static_analysis.detected_tools`,
+analysis** audit phase. For each tool in `static_analysis.installed_tools`,
 emit a concrete run block using the template below. For tools in
-`missing_by_language` and `missing_cross_language`, emit a recommendations block.
+`static_analysis.applicable_tools` that are absent from `installed_tools`
+(language fit but not on `PATH`), and for tools in `missing_by_language` and
+`missing_cross_language`, emit a recommendations block instead.
 
 ## Run Block Template
 
-For each detected tool, emit:
+For each installed tool, emit:
 
 ```markdown
 ### <tool-name>
-- **Command:** `<run command from detected_tools entry>`
+- **Command:** `<run command from installed_tools entry>`
 - **Config:** `<config file>` — note any disabled rules, raised thresholds, or
   excluded paths; these are findings if they weaken the analysis
 - **Surface:** <interpretation guidance below>
@@ -219,7 +221,7 @@ emit:
 
 ## Model-Based Fallback
 
-When `static_analysis.detected_tools` is empty, perform a full model-based
+When `static_analysis.installed_tools` is empty, perform a full model-based
 quality pass using `quality-standards.md` as the primary code quality phase —
 not a fallback footnote. Sample from `risk_surfaces`, apply all thresholds, and
 name smells by the catalog.

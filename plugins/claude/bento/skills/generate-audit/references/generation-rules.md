@@ -15,12 +15,31 @@
 
 ## Static Analysis Output
 
-- For each detected tool: emit a concrete run block with command, output
-  interpretation, and severity mapping (see `static-analysis-tools.md`).
-- For each missing tool: emit a recommendations block with install
-  instructions. Recommend only the highest-value missing tool per gap, not
-  every alternative. Do not recommend tools that conflict with existing ones.
-- Do not emit tool run blocks for tools absent from `detected_tools`.
+Discovery emits two adjacent fields:
+
+- `applicable_tools` — language fit + (when required) config-file fit. The
+  tool *would be appropriate* for this repo.
+- `installed_tools` — the subset of `applicable_tools` whose binary is on
+  `PATH` (verified via `shutil.which`). The tool *can actually run* in this
+  environment.
+
+Rules:
+
+- For each entry in `installed_tools`: emit a concrete run block with
+  command, output interpretation, and severity mapping (see
+  `static-analysis-tools.md`).
+- For each entry in `applicable_tools` that is **not** in `installed_tools`:
+  emit a recommendation block with install instructions. The tool fits the
+  repo but is not installed, so it cannot run as part of this audit. Treat
+  this exactly like the `missing_by_language` recommendation path; do not
+  emit a run block claiming the tool ran.
+- For each entry in `missing_by_language` and `missing_cross_language`: emit
+  a recommendation block. Recommend only the highest-value missing tool per
+  gap, not every alternative. Do not recommend tools that conflict with
+  existing ones.
+- Never emit a run block for a tool absent from `installed_tools`. A clean
+  audit must reflect tools that actually executed, not tools that *could*
+  have executed in a differently-provisioned environment.
 - If a tool's config file disables or weakens rules, flag it as a finding,
   not merely a note.
 
