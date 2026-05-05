@@ -198,7 +198,11 @@ class BuildPluginsTest(unittest.TestCase):
         launch_text = (skills_dir / "launch-work" / "SKILL.md").read_text(encoding="utf-8")
         land_text = (skills_dir / "land-work" / "SKILL.md").read_text(encoding="utf-8")
         contract_text = contract.read_text(encoding="utf-8")
-        combined_text = "\n".join([launch_text, land_text, contract_text])
+        generated_bento_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(skills_dir.rglob("*.md"))
+        )
+        combined_text = "\n".join([launch_text, land_text, contract_text, generated_bento_text])
         normalized_text = re.sub(r"\s+", " ", combined_text)
 
         self.assertIn("Project Hook Contract", contract_text)
