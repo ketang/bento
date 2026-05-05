@@ -29,7 +29,7 @@ class CodexInstallerTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
-    def test_home_install_writes_paths_relative_to_marketplace_file_and_enables_bento(self) -> None:
+    def test_home_install_writes_paths_relative_to_marketplace_file_and_enables_codex_plugins(self) -> None:
         install_root = self.root / "home"
         plugin_root, marketplace_path, codex_cache_root, codex_config_path, _result = self.run_installer(
             "home",
@@ -59,8 +59,14 @@ class CodexInstallerTest(unittest.TestCase):
         self.assertEqual(len(bento_cache_versions), 1)
         self.assertEqual((bento_cache_versions[0] / "README.txt").read_text(encoding="utf-8"), "bento\n")
         self.assertTrue((bento_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
+        bugshot_cache_versions = list((codex_cache_root / "bugshot").iterdir())
+        self.assertEqual(len(bugshot_cache_versions), 1)
+        self.assertEqual((bugshot_cache_versions[0] / "README.txt").read_text(encoding="utf-8"), "bugshot\n")
+        self.assertTrue((bugshot_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse((codex_cache_root / "trackers").exists())
-        self.assertIn('[plugins."bento@bento"]\nenabled = true', codex_config_path.read_text(encoding="utf-8"))
+        config_text = codex_config_path.read_text(encoding="utf-8")
+        self.assertIn('[plugins."bento@bento"]\nenabled = true', config_text)
+        self.assertIn('[plugins."bugshot@bento"]\nenabled = true', config_text)
 
     def test_project_install_writes_paths_relative_to_marketplace_file(self) -> None:
         install_root = self.root / "project"
@@ -102,7 +108,8 @@ class CodexInstallerTest(unittest.TestCase):
 
         config_text = codex_config_path.read_text(encoding="utf-8")
         self.assertEqual(config_text.count('[plugins."bento@bento"]'), 1)
-        self.assertEqual(config_text.count("enabled = true"), 2)
+        self.assertEqual(config_text.count('[plugins."bugshot@bento"]'), 1)
+        self.assertEqual(config_text.count("enabled = true"), 3)
 
     def test_home_install_seeds_agent_plugins_handoff_template(self) -> None:
         install_root = self.root / "home-seed"
