@@ -364,9 +364,6 @@ primary-branch shell state.
   branch deletion must go through the helper's apply modes
   (`--apply delete-local-merged-branches` or
   `--apply delete-local-patch-equivalent-branches`). Manually scripted
-  deletion loops bypass the helper's safety checks and can trigger Claude Code
-  rendering errors.
-- **Never combine multiple shell operations in one `Bash` command** using
-  `&&`, pipes, `$(...)`, or inline interpreters. Issue one command per tool
-  call. Compound commands can trigger Claude Code "Unhandled node type"
-  errors.
+  deletion loops bypass the helper's safety checks.
+- **Never combine multiple shell operations in one command** using `&&`, pipes,
+  `$(...)`, or inline interpreters. Issue one command per tool call.

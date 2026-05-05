@@ -116,19 +116,32 @@ Create or update skills under:
 
 ```text
 catalog/skills/<skill-name>/
-└── SKILL.md
+├── SKILL.md
+├── CLAUDE.md
+└── CODEX.md
 ```
+
+`SKILL.md` is the shared skill contract. Keep it reusable across coding-agent
+runtimes. Use optional platform overlays for runtime-specific invocation,
+tooling, or packaging requirements:
+
+- `CLAUDE.md` is appended only to generated Claude skill payloads.
+- `CODEX.md` is appended only to generated Codex skill payloads.
 
 Skills may also include companion files such as:
 
 ```text
 catalog/skills/<skill-name>/
 ├── SKILL.md
+├── CLAUDE.md
+├── CODEX.md
 ├── scripts/
 └── references/
 ```
 
-These companion files are copied into generated plugins along with `SKILL.md`.
+These companion files are copied into generated plugins along with the composed
+`SKILL.md`. Platform overlay files are source-only sidecars and are not copied
+as separate generated files.
 
 Use companion scripts for deterministic subproblems that are too stateful or
 fragile to leave as prose. Good script candidates include repo discovery,
@@ -177,6 +190,8 @@ ignores generated outputs such as `plugins/` and marketplace manifests.
 Then `scripts/build-plugins`:
 
 - materializes generated plugin directories under `plugins/`
+- composes generated skill payloads from shared `SKILL.md` plus the target
+  platform overlay when present
 - writes each plugin's `.claude-plugin/plugin.json`
 - writes each plugin's `.codex-plugin/plugin.json`
 - generates Codex-facing assets under each plugin's `assets/`

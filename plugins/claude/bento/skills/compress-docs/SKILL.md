@@ -2,17 +2,17 @@
 name: compress-docs
 description: |
   Use when the user wants to reduce the token footprint of documentation
-  Claude ingests at session start. Scans CLAUDE.md, AGENTS.md, GEMINI.md,
-  their referenced files, and user-global instructions; identifies
+  coding agents load at session start. Scans CLAUDE.md, AGENTS.md, GEMINI.md,
+  their referenced files, and configured user-global instructions; identifies
   duplication, dead references, and verbose prose; produces a reviewable
   compression plan with a preserved-claims guardrail.
 ---
 
 # Compress-Docs
 
-Use this skill to reduce the token footprint of documentation Claude
-ingests at session start, without losing load-bearing content. This is
-a meta-skill: it produces a reviewable plan, not immediate edits.
+Use this skill to reduce the token footprint of documentation loaded by coding
+agents at session start, without losing load-bearing content. This is a
+meta-skill: it produces a reviewable plan, not immediate edits.
 
 ## When to use
 

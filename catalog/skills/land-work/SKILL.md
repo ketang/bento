@@ -62,10 +62,8 @@ verifier after merge before closing tracker work.
 
 Do not generate landing as a single shell one-liner.
 
-Never combine fetch/reset/merge/verify/push in one `Bash` command, especially
+Never combine fetch/reset/merge/verify/push in one shell command, especially
 with `&&`, pipes, `$(...)`, or inline interpreters like `python3 -c`.
-Compound multi-line shell commands trigger Claude Code "Unhandled node type"
-rendering errors and must be avoided entirely.
 
 Prefer:
 1. the repo's landing helper, or

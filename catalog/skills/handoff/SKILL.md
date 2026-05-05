@@ -27,7 +27,7 @@ purpose of the prompt.
 - A long-idle resumption ("pick up next week"). `/handoff` is not designed for
   state that must survive long gaps.
 - Subagent dispatch. The skill writes a file the user will read or copy; it
-  does not feed the prompt to the Agent tool.
+  does not invoke a subagent or teammate directly.
 - Inside an active expedition. Defer to the expedition skill's session-end
   protocol (update `docs/expeditions/<name>/handoff.md` via
   `expedition/scripts/expedition.py`).

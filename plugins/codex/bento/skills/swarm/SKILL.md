@@ -47,7 +47,7 @@ to gather tasks, then normalize them into the triage input format.
 If a batch overflows the current run, persist remaining task IDs in
 runtime-local state so a later invocation can resume without re-querying the
 tracker. See `swarm/references/continuation-state.md` for runtime state roots,
-`continue.txt`/`handoff.md` formats, and the Claude Code session-ID pre-flight.
+`continue.txt`/`handoff.md` formats, and any runtime-specific pre-flight.
 
 ## Companion Skills
 
@@ -141,12 +141,9 @@ is tracker-agnostic; tracker-specific skills convert tasks into this format.
 
 ## Phase 2: Teammate Launch
 
-Use the runtime's managed multi-agent flow, not ad hoc background workers:
-
-- Claude Code: `TeamCreate` + one `TaskCreate` per approved item + `Agent`
-  with both `team_name` and a descriptive `name` set.
-- Codex: `spawn_agent` per approved item, then `send_input` / `wait_agent` /
-  `close_agent` for lifecycle.
+Use the runtime's managed multi-agent flow, not ad hoc background workers.
+Follow the runtime-specific launch and lifecycle requirements supplied with the
+generated skill payload.
 
 For each launched task: exactly one branch, exactly one worktree, and the
 prompt must include task details, expected scope, overlap risks, required
@@ -194,8 +191,8 @@ Land one completed branch at a time onto the landing target (default: the detect
    safely landed or explicitly deferred. Never discard a teammate's work
    before then.
 
-When the last Claude Code teammate in the batch is done, delete the team. In
-Codex, close each spawned agent when its task is landed or deferred.
+When teammates are safely landed or explicitly deferred, close the runtime
+resources that were created for them.
 
 ## Phase 5: Final Validation
 
@@ -242,3 +239,13 @@ using this protocol. Visual review is one example, not the only one.
    - **What to look for** — the specific check the human is performing.
    - **How to reply** — what answer shape the teammate needs back
      (approve / revise with notes / reject).
+
+## Codex Requirements
+
+Launch teammates with Codex sub-agents:
+
+- Use `spawn_agent` for each approved work item.
+- Use `send_input` when a running teammate needs additional instruction.
+- Use `wait_agent` sparingly, only when the next critical-path step is blocked
+  on the result.
+- Use `close_agent` when a teammate's task is landed or explicitly deferred.

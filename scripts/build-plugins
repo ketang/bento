@@ -220,6 +220,7 @@ PLATFORMS = ("claude", "codex")
 SKILL_PLATFORM_DEFAULT = ("claude", "codex")
 HOOK_PLATFORM_DEFAULT = ("claude",)
 PACKAGING_FILENAME = "packaging.json"
+SKILL_OVERLAY_FILENAMES = tuple(f"{platform.upper()}.md" for platform in PLATFORMS)
 
 
 def plugin_dir(plugin: str, platform: str) -> Path:
@@ -283,11 +284,29 @@ def copy_skills(plugin: str, platform: str) -> None:
     target_dir = plugin_dir(plugin, platform) / "skills"
     for skill in skills_for(plugin, platform):
         ensure_skill_exists(skill)
+        source_dir = CATALOG_DIR / skill
+        destination_dir = target_dir / skill
         shutil.copytree(
-            CATALOG_DIR / skill,
-            target_dir / skill,
-            ignore=shutil.ignore_patterns("__pycache__", "*.pyc", PACKAGING_FILENAME),
+            source_dir,
+            destination_dir,
+            ignore=shutil.ignore_patterns(
+                "__pycache__",
+                "*.pyc",
+                PACKAGING_FILENAME,
+                *SKILL_OVERLAY_FILENAMES,
+            ),
         )
+        write_composed_skill_md(source_dir, destination_dir, platform)
+
+
+def write_composed_skill_md(source_dir: Path, destination_dir: Path, platform: str) -> None:
+    shared = (source_dir / "SKILL.md").read_text(encoding="utf-8")
+    overlay_path = source_dir / f"{platform.upper()}.md"
+    if not overlay_path.exists():
+        return
+    overlay = overlay_path.read_text(encoding="utf-8")
+    composed = shared.rstrip() + "\n\n" + overlay.strip() + "\n"
+    (destination_dir / "SKILL.md").write_text(composed, encoding="utf-8")
 
 
 def external_skills_for(plugin: str, platform: str) -> list[dict]:
