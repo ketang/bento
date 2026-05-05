@@ -18,7 +18,12 @@ from pathlib import Path
 
 APPLY_DELETE_LOCAL_MERGED = "delete-local-merged-branches"
 APPLY_DELETE_LOCAL_PATCH_EQUIVALENT = "delete-local-patch-equivalent-branches"
-WORKTREE_SAFE_TO_REMOVE_LIVENESS = {"stale", "unknown"}
+# For merged_checked_out branches the work is already on primary, so
+# timestamp-based recency is just the merging agent's own activity. Only a
+# confirmed_live process (an agent with cwd inside the worktree right now) is
+# a real signal that removal would step on someone. Dirty working tree is a
+# separate gate enforced earlier.
+WORKTREE_SAFE_TO_REMOVE_LIVENESS = {"stale", "unknown", "recently_active", "possibly_live"}
 
 # Hours during which agents are expected to be active.
 # Outside this window (11pm–8am) elapsed time is not counted toward recency.
@@ -46,6 +51,8 @@ LAUNCH_WORK_HEADER_RE = re.compile(
 def _launch_work_log_path(worktree_path: Path) -> Path | None:
     """Locate the launch-work log under the worktree's git-dir, falling back
     to the legacy in-tree path. Returns None if neither exists."""
+    if not worktree_path.is_dir():
+        return None
     git_dir_proc = subprocess.run(
         ["git", "rev-parse", "--absolute-git-dir"],
         cwd=worktree_path,
@@ -136,6 +143,22 @@ def detect_primary_branch(cwd: Path) -> tuple[str, list[str]]:
         return current_branch, warnings
 
     raise RuntimeError("unable to detect primary branch")
+
+
+def prune_missing_worktrees(cwd: Path) -> list[str]:
+    """Run `git worktree prune --verbose` and return its reported lines.
+
+    Worktree directories left over from interrupted runs (e.g. land-work
+    previews under /tmp) cause every per-worktree probe to crash with
+    FileNotFoundError when subprocess.run is given a missing cwd. Pruning
+    once at scan start removes these registrations before any probe runs.
+    """
+    result = git("worktree", "prune", "--verbose", cwd=cwd, check=False)
+    if result.returncode != 0:
+        return []
+    # `git worktree prune --verbose` reports prunes on stderr in git >= 2.20.
+    output = (result.stdout or "") + (result.stderr or "")
+    return [line.strip() for line in output.splitlines() if line.strip()]
 
 
 def parse_worktrees_raw(cwd: Path) -> list[dict[str, object]]:
@@ -304,8 +327,10 @@ def worktree_activity_ts(
     predate the current agent run.  Note: on WSL, file mtimes can be
     unreliable for files written from the Windows side.
 
-    source is one of: 'commit', 'file_mtime'
+    source is one of: 'commit', 'file_mtime', 'missing'
     """
+    if not worktree_path.is_dir():
+        return 0.0, "missing"
     raw_ts = try_git_stdout("log", "-1", "--format=%ct", "HEAD", cwd=worktree_path)
     commit_ts = float(raw_ts) if raw_ts else 0.0
     best_ts = commit_ts
@@ -689,8 +714,14 @@ def classify_branches(
         elif merged_into_primary:
             classification = "merged_checked_out" if checked_out_elsewhere else "safe_to_delete"
         elif unique_patch_count == 0:
+            # All commits have a patch-id equivalent on primary. If the branch
+            # also has a linked worktree, this is the squash/rebase-landing
+            # pattern: tracker says CLOSED, diff is on primary under a
+            # different SHA, but the worktree was never cleaned up. Distinct
+            # from checked_out_in_worktree (which means real in-progress work)
+            # so the apply mode can remove worktree + force-delete branch.
             classification = (
-                "checked_out_in_worktree"
+                "patch_equivalent_checked_out"
                 if checked_out_elsewhere
                 else "patch_equivalent_review"
             )
@@ -746,6 +777,9 @@ def build_summary(
         "patch_equivalent_local_branches": [
             b["name"] for b in branches if b["classification"] == "patch_equivalent_review"
         ],
+        "patch_equivalent_checked_out_local_branches": [
+            b["name"] for b in branches if b["classification"] == "patch_equivalent_checked_out"
+        ],
         "checked_out_local_branches": [
             b["name"] for b in branches if b["classification"] == "checked_out_in_worktree"
         ],
@@ -794,6 +828,7 @@ def apply_delete_merged_checked_out_worktrees(
     worktrees: list[dict[str, object]],
     cwd: Path,
     target_branch: str | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -812,6 +847,18 @@ def apply_delete_merged_checked_out_worktrees(
 
         branch_name = str(branch["name"])
         checkout_records = branch_worktrees.get(branch_name, [])
+        # A ready-to-land log on a merged branch means land-work's cleanup
+        # pass did not run. Surface the anomaly without blocking the
+        # cleanup — auto-cleanup of the worktree is still the right call.
+        if warnings is not None:
+            for worktree in checkout_records:
+                lw = worktree.get("launch_work")
+                if isinstance(lw, dict) and lw.get("checkpoint") == "ready-to-land":
+                    warnings.append(
+                        f"ready-to-land launch-work log on merged branch {branch_name!r}; "
+                        f"land-work cleanup pass did not run for worktree "
+                        f"{worktree['path']}"
+                    )
         if not checkout_records:
             skipped.append(
                 {
@@ -901,6 +948,7 @@ def apply_delete_local_merged_branches(
     worktrees: list[dict[str, object]],
     cwd: Path,
     target_branch: str | None = None,
+    warnings: list[str] | None = None,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
@@ -926,7 +974,7 @@ def apply_delete_local_merged_branches(
         )
 
     merged_applied, merged_skipped = apply_delete_merged_checked_out_worktrees(
-        branches, worktrees, cwd, target_branch=target_branch
+        branches, worktrees, cwd, target_branch=target_branch, warnings=warnings,
     )
     applied.extend(merged_applied)
     skipped.extend(merged_skipped)
@@ -954,25 +1002,97 @@ def apply_delete_local_merged_branches(
 
 def apply_delete_patch_equivalent_branches(
     branches: list[dict[str, object]],
+    worktrees: list[dict[str, object]],
     cwd: Path,
 ) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
     """
-    Force-delete local branches classified as patch_equivalent_review.
+    Force-delete local branches classified as patch_equivalent_review or
+    patch_equivalent_checked_out.
 
     These branches have no unique patches relative to primary but were not
     merged via a merge commit (rebased or squash-merged), so git's ancestry
     check returns false and `git branch -d` would refuse them.  `git branch -D`
     is safe here because unique_patch_count == 0 guarantees all content is
     already on the primary branch.
+
+    For patch_equivalent_checked_out, the worktree is removed first using the
+    same safety gates as merged_checked_out (clean working tree, not the
+    current checkout, not self-invocation, not confirmed_live).
     """
     applied: list[dict[str, str]] = []
     skipped: list[dict[str, str]] = []
 
+    branch_worktrees: dict[str, list[dict[str, object]]] = {}
+    for worktree in worktrees:
+        branch = worktree.get("branch")
+        if branch:
+            branch_worktrees.setdefault(str(branch), []).append(worktree)
+
     for branch in branches:
-        if branch["classification"] != "patch_equivalent_review":
+        classification = branch["classification"]
+        if classification not in ("patch_equivalent_review", "patch_equivalent_checked_out"):
             continue
 
         branch_name = str(branch["name"])
+
+        if classification == "patch_equivalent_checked_out":
+            checkout_records = branch_worktrees.get(branch_name, [])
+            blocked = False
+            for worktree in checkout_records:
+                reason = removable_merged_worktree_reason(worktree, cwd)
+                if reason is None:
+                    continue
+                blocked = True
+                skipped.append(
+                    {
+                        "action": "delete_worktree",
+                        "branch": branch_name,
+                        "worktree": str(worktree["path"]),
+                        "reason": reason,
+                    }
+                )
+            if blocked:
+                skipped.append(
+                    {
+                        "action": "delete_local_branch",
+                        "branch": branch_name,
+                        "reason": "branch still checked out in a retained worktree",
+                    }
+                )
+                continue
+
+            remove_failed = False
+            for worktree in checkout_records:
+                worktree_path = str(worktree["path"])
+                result = git("worktree", "remove", worktree_path, cwd=cwd, check=False)
+                if result.returncode == 0:
+                    applied.append(
+                        {
+                            "action": "delete_worktree",
+                            "branch": branch_name,
+                            "worktree": worktree_path,
+                        }
+                    )
+                    continue
+                remove_failed = True
+                skipped.append(
+                    {
+                        "action": "delete_worktree",
+                        "branch": branch_name,
+                        "worktree": worktree_path,
+                        "reason": result.stderr.strip() or "git worktree remove failed",
+                    }
+                )
+            if remove_failed:
+                skipped.append(
+                    {
+                        "action": "delete_local_branch",
+                        "branch": branch_name,
+                        "reason": "worktree removal failed",
+                    }
+                )
+                continue
+
         result = git("branch", "-D", branch_name, cwd=cwd, check=False)
         if result.returncode == 0:
             applied.append({"action": "delete_local_branch", "branch": branch_name})
@@ -1269,6 +1389,11 @@ def main() -> int:
         repo_root = detect_repo_root(cwd)
         primary_branch, warnings = detect_primary_branch(repo_root)
         current_branch = git_stdout("branch", "--show-current", cwd=repo_root)
+        pruned = prune_missing_worktrees(repo_root)
+        if pruned:
+            warnings.append(
+                f"pruned {len(pruned)} worktree registration(s) whose directories were missing"
+            )
         raw_worktrees = parse_worktrees_raw(repo_root)
         checked_out_in_worktrees = {
             str(wt["branch"])
@@ -1293,6 +1418,11 @@ def main() -> int:
         for wt in raw_worktrees:
             wt_path = Path(str(wt["path"])).resolve()
             wt_entry: dict[str, object] = dict(wt)
+            wt_entry["path_missing"] = not wt_path.is_dir()
+            if wt_entry["path_missing"]:
+                warnings.append(
+                    f"worktree path missing on disk after prune: {wt_path}"
+                )
 
             try:
                 wt_dirty = working_tree_entries(wt_path)
@@ -1362,10 +1492,12 @@ def main() -> int:
                 enriched_worktrees,
                 repo_root,
                 target_branch=args.target_branch,
+                warnings=warnings,
             )
         elif args.apply == APPLY_DELETE_LOCAL_PATCH_EQUIVALENT:
             applied_actions, skipped_actions = apply_delete_patch_equivalent_branches(
                 branches,
+                enriched_worktrees,
                 repo_root,
             )
 

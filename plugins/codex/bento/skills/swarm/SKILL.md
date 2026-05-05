@@ -204,3 +204,41 @@ After all approved tasks are landed:
 1. Run the project's full aggregate quality gate.
 2. Confirm generated assets, schemas, or walkthrough artifacts are updated.
 3. Summarize what landed, what was deferred, and any follow-up risks.
+
+## Human-Gated Handoff
+
+Backgrounded teammates cannot reach the user directly — the user typically
+only watches the lead's window. Any teammate step that requires human
+attention (visual review, manual test approval, destructive-op confirmation,
+ambiguous-scope escalation, a project-supplied hook that exits with a
+"requires human handoff" status — see `bento-2xe`) routes through the lead
+using this protocol. Visual review is one example, not the only one.
+
+1. **Teammate parks and idles.** When the teammate hits a human-gated step,
+   it leaves the work in a safe state: branch unmerged, tracker issue still
+   open and in-progress, linked worktree intact, no destructive cleanup, no
+   `land-work` invocation. It SendMessages the lead with a structured
+   handoff (see format below) and then idles. It does not poll, retry, or
+   advance until the lead routes a decision back.
+
+2. **Lead serializes user attention.** The lead is the single user-attention
+   surface. When handoff messages arrive, the lead surfaces ONE review
+   request at a time in its own window, or sends a single batched message
+   with explicit ordering when several are pending. Multiple teammates must
+   never ping the user in parallel through different channels.
+
+3. **Lead routes the decision back.** The user replies to the lead. The
+   lead SendMessages the originating teammate with the decision (approve /
+   revise / reject, plus any specifics). The teammate never reads the user
+   directly and never assumes silence means approval.
+
+4. **Handoff message format.** Every handoff includes:
+   - **Branch name** (exact ref).
+   - **Tracker ID** (e.g., beads issue ID).
+   - **Summary** — one line on what the teammate did.
+   - **Command for the human** — exact command to run (e.g.,
+     `bugshot:vizdiff`, `pnpm test:manual auth-flow`, `git diff main..<branch>
+     -- path/`).
+   - **What to look for** — the specific check the human is performing.
+   - **How to reply** — what answer shape the teammate needs back
+     (approve / revise with notes / reject).
