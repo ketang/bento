@@ -188,6 +188,32 @@ class BuildPluginsTest(unittest.TestCase):
             normalized_skill_text = re.sub(r"\s+", " ", skill_text)
             self.assertIn(expected_phrase, normalized_skill_text)
 
+    def test_workflow_hook_contract_is_documented_without_tool_specific_names(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        skills_dir = self.root / "plugins" / "claude" / "bento" / "skills"
+        contract = skills_dir / "launch-work" / "references" / "project-hooks.md"
+        self.assertTrue(contract.exists())
+
+        launch_text = (skills_dir / "launch-work" / "SKILL.md").read_text(encoding="utf-8")
+        land_text = (skills_dir / "land-work" / "SKILL.md").read_text(encoding="utf-8")
+        contract_text = contract.read_text(encoding="utf-8")
+        generated_bento_text = "\n".join(
+            path.read_text(encoding="utf-8")
+            for path in sorted(skills_dir.rglob("*.md"))
+        )
+        combined_text = "\n".join([launch_text, land_text, contract_text, generated_bento_text])
+        normalized_text = re.sub(r"\s+", " ", combined_text)
+
+        self.assertIn("Project Hook Contract", contract_text)
+        self.assertIn("agent-plugins/bento/bento/hooks/launch-work", contract_text)
+        self.assertIn("agent-plugins/bento/bento/hooks/land-work", contract_text)
+        self.assertIn("BENTO_HOOK_REQUIRES_HUMAN=75", contract_text)
+        self.assertIn("runs the `launch-work` hook phase after worktree verification and before dependency installation", normalized_text)
+        self.assertIn("runs the `land-work` hook phase before creating or verifying the merge preview", normalized_text)
+        for forbidden in ("bugshot", "vizdiff", "playwright"):
+            self.assertNotIn(forbidden, combined_text.lower())
+
     def test_bugshot_not_in_bento_external_skills(self) -> None:
         module = load_build_plugins_module()
         bento_skills = module.EXTERNAL_SKILLS.get("bento", [])

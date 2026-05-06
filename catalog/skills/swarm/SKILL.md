@@ -237,8 +237,8 @@ using this protocol. Visual review is one example, not the only one.
    - **Tracker ID** (e.g., beads issue ID).
    - **Summary** — one line on what the teammate did.
    - **Command for the human** — exact command to run (e.g.,
-     `bugshot:vizdiff`, `pnpm test:manual auth-flow`, `git diff main..<branch>
-     -- path/`).
+     `pnpm test:manual auth-flow`, `git diff main..<branch> -- path/`, or a
+     project-specific review command).
    - **What to look for** — the specific check the human is performing.
    - **How to reply** — what answer shape the teammate needs back
      (approve / revise with notes / reject).

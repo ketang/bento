@@ -84,7 +84,12 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 
 2. Confirm the current branch is the intended landing branch and that the helper
    reports a clean feature-branch checkout.
-2a. **Legacy migration only** — current launch-work stores the progress log
+2a. Read `../launch-work/references/project-hooks.md` and run the `land-work`
+    project hook phase before creating or verifying the merge preview, rebasing,
+    or merging. If no executable hooks are discovered, continue unchanged. If a
+    hook exits non-zero, follow the contract's abort or human-handoff semantics
+    before proceeding.
+2b. **Legacy migration only** — current launch-work stores the progress log
     under `$GIT_DIR/launch-work/log.md`, which never enters the working tree
     and never lands. If the working tree still carries a tracked
     `.launch-work/log.md` (a branch started before the move), run the
@@ -213,6 +218,9 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 - Do not bypass exact-candidate verification after manual conflict resolution.
 - Do not use a repo-specific merge helper autonomously unless it can prove the
   landed candidate matches the verified preview.
+- Do not skip discovered project hooks. A `75` exit code is a human handoff,
+  not a destructive failure; preserve the branch and linked worktree and
+  surface the hook's stdout.
 - Do not land changes that include deploy-critical artifacts without verifying
   the committed blob content matches what was tested locally.
 - Do not merge a feature branch whose log (under `$GIT_DIR/launch-work/log.md`

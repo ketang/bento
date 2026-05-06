@@ -35,8 +35,8 @@ Counter-triggers — do not invoke even if "bento" appears:
   bento; the bug is in their code, not in bento.
 - The user reports a bug in a non-bento tool (Claude Code itself, a third-
   party plugin, an external CLI) that bento merely orchestrates.
-- The bug is in a `bugshot` review or a `storystore` artifact — those
-  belong to their own report flows when present.
+- The bug is in an external review tool or generated artifact from another
+  repository — those belong to their own report flows when present.
 - The note is empty, vague ("it's broken"), or only a pasted error with no
   context. Ask the user for one concrete sentence first; do not capture.
 
