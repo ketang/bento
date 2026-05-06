@@ -128,6 +128,10 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("tsc",     "TypeScript", ["tsconfig.json"], "npx tsc --noEmit", False),
     ("knip",    "TypeScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
     ("knip",    "JavaScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
+    # depcheck runs zero-config; package.json (implied by language detection) is
+    # the trigger. Complementary to knip: dependency drift, not unused exports.
+    ("depcheck", "TypeScript", [], "npx depcheck", True),
+    ("depcheck", "JavaScript", [], "npx depcheck", True),
     ("prettier", "TypeScript",
      [".prettierrc", ".prettierrc.json", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.yml",
       ".prettierrc.yaml", "prettier.config.js", "prettier.config.cjs"],
@@ -178,6 +182,7 @@ TOOL_BINARY_OVERRIDES: dict[str, str] = {
     "knip": "npx",
     "prettier": "npx",
     "jscpd": "npx",
+    "depcheck": "npx",
 }
 
 

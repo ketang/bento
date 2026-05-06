@@ -83,6 +83,15 @@ Unused exports → audit `warning`. Unused dependencies → audit `note`. Review
 false positives for dynamic imports before reporting.
 Run: `npx knip`
 
+### depcheck
+Missing dependency (imported but not declared in `package.json`) → audit
+`error`; the repo only resolves it locally via transitive hoisting and
+breaks for downstream consumers. Unused declared dependency → audit `note`;
+review for dynamic loads (`require(name)`, plugin globs) before reporting.
+Complementary to `knip`, not an alternative: `knip` finds unused exports in
+code, `depcheck` finds drift between code and `package.json`.
+Run: `npx depcheck`
+
 ### prettier
 Any file failing the check → audit `warning` per file.
 Run: `npx prettier --check .`
