@@ -758,6 +758,25 @@ def detect_static_analysis_tools(
             if tool_name not in missing_by_language[language]:
                 missing_by_language[language].append(tool_name)
 
+    # actionlint: trigger on presence of any GitHub Actions workflow file.
+    # Not driven by language or config-file detection, so it sits outside the
+    # STATIC_TOOLS schema.
+    has_workflows = any(
+        path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
+        for path in file_set
+    )
+    if has_workflows:
+        actionlint_entry = {
+            "tool": "actionlint",
+            "config": None,
+            "run": "actionlint",
+            "binary": "actionlint",
+        }
+        applicable.append(actionlint_entry)
+        if shutil.which("actionlint"):
+            installed.append(actionlint_entry)
+        detected_names.add((None, "actionlint"))
+
     # Config-required cross-language secrets tools not detected
     secrets_group = TOOL_ALTERNATIVE_GROUPS.get((None, "secrets"), [])
     secrets_detected = any((None, t) in detected_names for t in secrets_group)

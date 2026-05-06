@@ -73,7 +73,9 @@ Include only modules that fit the discovered repo:
 
 Omit modules that do not match the repo. Do not invent a frontend UX section
 for a backend-only service, or a migration section for a repo with no
-database. **Secrets scan is never optional.**
+database. **Secrets scan is never optional.** When recommending CI for a
+repo with no `.github/workflows/`, include `actionlint` in the proposed
+setup so new workflows are linted from day one.
 
 ## Output Shape
 

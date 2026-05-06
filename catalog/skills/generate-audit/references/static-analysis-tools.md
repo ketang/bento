@@ -186,6 +186,14 @@ Any `error` or `warning` finding → audit `warning`. Focus on files in `scripts
 and CI workflow scripts first.
 Run: `find . -name '*.sh' -not -path './.git/*' | xargs shellcheck`
 
+### actionlint
+Detected when `.github/workflows/` contains any `*.yml` or `*.yaml` workflow.
+Any error → audit `warning` (workflow bugs are noisy in CI but rarely
+catastrophic). Shellcheck-class issues inside `run:` blocks → match the
+shellcheck severity mapping above. Near-zero false positive rate; treat
+findings as real.
+Run: `actionlint`
+
 ## Recommendations Block Template
 
 For each tool in `missing_by_language` and `missing_cross_language`, emit one
@@ -212,6 +220,23 @@ emit:
   Setup: create `clippy.toml` with `cognitive-complexity-threshold = 15`
   Enable: `cargo clippy -- -W clippy::cognitive_complexity`
 ```
+
+### actionlint recommendation text
+
+When `actionlint` is applicable (repo has `.github/workflows/`) but not
+installed, emit:
+
+```markdown
+- **actionlint** — catches GitHub Actions workflow errors (deprecated action
+  versions, undefined expressions, mismatched `needs:` graphs, shell issues
+  in `run:` blocks) that GitHub's UI hides until they fire in CI.
+  Install: `go install github.com/rhysd/actionlint/cmd/actionlint@latest`
+  First run: `actionlint`
+```
+
+When the audit recommends adding CI to a repo with no `.github/workflows/`,
+include `actionlint` in the proposed setup so new workflows are linted from
+day one (e.g., a workflow step running `actionlint` on push).
 
 ### Do not recommend
 - A tool that conflicts with an already-configured alternative (e.g. do not
