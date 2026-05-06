@@ -247,6 +247,18 @@ class BuildPluginsTest(unittest.TestCase):
         for forbidden in ("bugshot", "vizdiff", "playwright"):
             self.assertNotIn(forbidden, combined_text.lower())
 
+    def test_build_repo_copies_land_work_codex_execution_guidance(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        skill_text = (
+            self.root / "plugins" / "codex" / "bento" / "skills" / "land-work" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        normalized_skill_text = re.sub(r"\s+", " ", skill_text)
+
+        self.assertIn("Do not search the whole plugin cache", normalized_skill_text)
+        self.assertIn("For Codex, avoid shell pipelines for discovery", normalized_skill_text)
+        self.assertIn("git worktree list --porcelain", normalized_skill_text)
+
     def test_bugshot_not_in_bento_external_skills(self) -> None:
         module = load_build_plugins_module()
         bento_skills = module.EXTERNAL_SKILLS.get("bento", [])
