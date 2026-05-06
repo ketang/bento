@@ -30,6 +30,12 @@ For each installed tool, emit:
 Surface all `error`-level findings as audit errors. Surface `warning`-level as
 audit warnings. Note the active linter set from `.golangci.yml`; a sparse set
 (e.g. only `errcheck` enabled) is itself a `warning`-level finding.
+
+Recommended baseline `linters: enable:` includes `errorlint`. It catches
+`if err == sentinel` against wrappable sentinels, type assertions instead of
+`errors.As`, and `%s`/`%v` formatting where `%w` was intended. Any errorlint
+finding → audit `error`. Promote to high-priority recommendation when the
+repo has > 10 `fmt.Errorf("...: %w", err)` sites.
 Run: `golangci-lint run ./...`
 
 ### govulncheck
