@@ -717,6 +717,26 @@ def detect_risk_surfaces(files: list[str]) -> dict[str, list[str]]:
     return {key: unique_sorted(value) for key, value in output.items()}
 
 
+_GO_ERROR_WRAP_PATTERN = re.compile(r'fmt\.Errorf\([^)]*%w')
+
+
+def go_error_wrapping_count(repo_root: Path, file_set: set[str]) -> int:
+    """Count `fmt.Errorf(...: %w...)` sites across .go files.
+
+    High counts indicate the codebase relies on wrapped errors, which gates
+    `errorlint` as a high-priority recommendation in the golangci-lint baseline.
+    """
+    count = 0
+    for path in file_set:
+        if not path.endswith(".go"):
+            continue
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        count += len(_GO_ERROR_WRAP_PATTERN.findall(content))
+    return count
+
+
 def detect_static_analysis_tools(
     repo_root: Path, file_set: set[str], languages: list[str]
 ) -> dict[str, object]:
@@ -789,11 +809,18 @@ def detect_static_analysis_tools(
     if not secrets_detected:
         missing_cross_language.append(secrets_group[0] if secrets_group else "gitleaks")
 
+    language_signals: dict[str, dict[str, object]] = {}
+    if "Go" in lang_set:
+        language_signals["Go"] = {
+            "error_wrapping_count": go_error_wrapping_count(repo_root, file_set),
+        }
+
     return {
         "applicable_tools": applicable,
         "installed_tools": installed,
         "missing_by_language": missing_by_language,
         "missing_cross_language": missing_cross_language,
+        "language_signals": language_signals,
     }
 
 
