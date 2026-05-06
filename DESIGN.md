@@ -57,7 +57,8 @@ Generated plugins live at `plugins/<name>/` with:
 - `.claude-plugin/plugin.json` — Claude metadata (name, description, version, author)
 - `.codex-plugin/plugin.json` — Codex metadata and interface presentation fields
 - `assets/` — generated Codex-facing icon, logo, and screenshot assets
-- `skills/<skill-name>/SKILL.md` — copied from the canonical catalog
+- `skills/<skill-name>/SKILL.md` — composed from the canonical shared skill
+  contract and any target-platform overlay
 
 For Codex, these generated artifacts expose installable skills, apps, MCP
 servers, hooks, and UI metadata. They do not currently define custom slash
@@ -130,8 +131,18 @@ for the full specification.
 
 ## Skill implementation pattern
 
-Canonical skills should keep the reusable capability contract in `SKILL.md` and
-move only the brittle, repeatable parts of execution into companion files under
+Canonical skills should keep the reusable capability contract in `SKILL.md`.
+When a skill needs runtime-specific instructions, keep those requirements in an
+optional platform overlay under the same skill directory:
+
+- `CLAUDE.md` for Claude-specific requirements
+- `CODEX.md` for Codex-specific requirements
+
+Generated skill payloads compose `SKILL.md` plus the overlay for the target
+platform. Overlay files are not copied as separate files into generated
+plugins.
+
+Move only the brittle, repeatable parts of execution into companion files under
 the same skill directory.
 
 Use scripts or tools when the logic is:

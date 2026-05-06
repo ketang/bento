@@ -165,6 +165,39 @@ class BuildPluginsTest(unittest.TestCase):
             copied = self.root / "plugins" / platform / "bento" / "skills" / "closure" / "packaging.json"
             self.assertFalse(copied.exists(), copied)
 
+    def test_platform_overlay_is_composed_into_generated_skill_md(self) -> None:
+        skill_dir = self.root / "catalog" / "skills" / "closure"
+        (skill_dir / "CLAUDE.md").write_text("Claude-only requirements.\n", encoding="utf-8")
+        (skill_dir / "CODEX.md").write_text("Codex-only requirements.\n", encoding="utf-8")
+
+        self.module.build_repo(run_verification=False)
+
+        claude_text = (
+            self.root / "plugins" / "claude" / "bento" / "skills" / "closure" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        codex_text = (
+            self.root / "plugins" / "codex" / "bento" / "skills" / "closure" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("# Closure", claude_text)
+        self.assertIn("Claude-only requirements.", claude_text)
+        self.assertNotIn("Codex-only requirements.", claude_text)
+        self.assertIn("# Closure", codex_text)
+        self.assertIn("Codex-only requirements.", codex_text)
+        self.assertNotIn("Claude-only requirements.", codex_text)
+
+    def test_platform_overlay_sidecars_are_not_copied_into_output(self) -> None:
+        skill_dir = self.root / "catalog" / "skills" / "closure"
+        (skill_dir / "CLAUDE.md").write_text("Claude-only requirements.\n", encoding="utf-8")
+        (skill_dir / "CODEX.md").write_text("Codex-only requirements.\n", encoding="utf-8")
+
+        self.module.build_repo(run_verification=False)
+
+        for platform in ("claude", "codex"):
+            generated_skill = self.root / "plugins" / platform / "bento" / "skills" / "closure"
+            self.assertFalse((generated_skill / "CLAUDE.md").exists())
+            self.assertFalse((generated_skill / "CODEX.md").exists())
+
     def test_invalid_platform_in_sidecar_raises(self) -> None:
         packaging = self.root / "catalog" / "skills" / "closure" / "packaging.json"
         packaging.write_text(json.dumps({"platforms": ["klingon"]}), encoding="utf-8")
