@@ -773,6 +773,36 @@ def detect_risk_surfaces(files: list[str]) -> dict[str, list[str]]:
 _GO_ERROR_WRAP_PATTERN = re.compile(r'fmt\.Errorf\([^)]*%w')
 _GO_GO_STATEMENT_PATTERN = re.compile(r'(?m)^\s*go\s+(?:func\b|[A-Za-z_][A-Za-z0-9_.]*\s*\()')
 _GO_GOLEAK_IMPORT_PATTERN = re.compile(r'"go\.uber\.org/goleak"')
+_GOLDEN_FIXTURE_DIRS = ("testdata/fixtures/", "testdata/inputs/", "testdata/cases/")
+_GOLDEN_EXPECTED_DIRS = ("testdata/golden/", "testdata/expected/", "testdata/want/")
+_GOLDEN_LIB_PATTERN = re.compile(
+    r'cupaloy|goldie|cmp\.Diff\([^)]*testdata|\.golden\b|\.want\b'
+)
+_GOLDEN_TEST_FILE_SUFFIXES = ("_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js", "_test.py")
+
+
+def golden_file_signal(repo_root: Path, file_set: set[str]) -> dict[str, object]:
+    """Detect input→output projects missing a golden-file harness.
+
+    Audit consumer treats `has_fixture_tree=True` with the other two False as
+    a test-strategy `warning`-level gap.
+    """
+    has_fixture = any(p.startswith(_GOLDEN_FIXTURE_DIRS) for p in file_set)
+    has_expected = any(p.startswith(_GOLDEN_EXPECTED_DIRS) for p in file_set)
+    has_lib = False
+    if has_fixture and not has_expected:
+        for path in file_set:
+            if not path.endswith(_GOLDEN_TEST_FILE_SUFFIXES):
+                continue
+            content = read_text_if_reasonable(repo_root / path)
+            if content and _GOLDEN_LIB_PATTERN.search(content):
+                has_lib = True
+                break
+    return {
+        "has_fixture_tree": has_fixture,
+        "has_expected_tree": has_expected,
+        "has_golden_lib_usage": has_lib,
+    }
 
 
 def go_goroutine_packages(repo_root: Path, file_set: set[str]) -> list[dict[str, object]]:
@@ -906,6 +936,9 @@ def detect_static_analysis_tools(
         "missing_by_language": missing_by_language,
         "missing_cross_language": missing_cross_language,
         "language_signals": language_signals,
+        "test_strategy_signals": {
+            "golden_file": golden_file_signal(repo_root, file_set),
+        },
     }
 
 
