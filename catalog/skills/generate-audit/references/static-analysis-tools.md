@@ -194,6 +194,28 @@ Score > 15 → audit `warning`; > 30 → audit `error`. Enable in `.flake8` /
 `setup.cfg`.
 Run: `flake8 --max-cognitive-complexity=15`
 
+### golden-file harness
+Pattern, not a tool. For input→output transformation projects (compilers,
+formatters, refactoring tools, transpilers, generators, linters), the
+strongest correctness signal is "given fixture input, produce identical
+expected output." Detection: presence of a fixture tree (e.g.
+`testdata/fixtures/`) but no expected-output tree (`testdata/golden/`,
+`testdata/expected/`, `testdata/want/`) and no test code referencing
+`goldie`, `cupaloy`, `*.golden`/`*.want` files, or `cmp.Diff`-against-fixture.
+
+Absence in an input→output project → audit `warning` test-strategy gap.
+Coverage % alone misses this — the lines may be covered, but only via
+`strings.Contains` assertions that don't catch unrelated mutations.
+
+Two-stage workflow:
+- `go test` runs all golden directories, copies `input/`, executes the
+  recorded command, diffs against `expected/`.
+- `go test -update` regenerates `expected/`; reviewer scrutinizes the diff
+  in PR before committing.
+
+Library is project choice (cupaloy, goldie, hand-rolled `cmp.Diff`); recommend
+the pattern, not a specific library.
+
 ### lizard
 Cross-language complexity analyzer (Python-based; supports Go, Java, JS, TS,
 Python, C/C++, Rust, Swift, etc.). Reports cyclomatic complexity, length,

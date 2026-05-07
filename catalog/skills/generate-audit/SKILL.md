@@ -61,6 +61,9 @@ Include only modules that fit the discovered repo:
 - contract or schema consistency
 - duplication (cross-file clone detection)
 - test coverage (gap analysis against risk surfaces; no blanket % target)
+- test strategy diversity (unit / property-based / golden-file / fuzz —
+  surface absence in repos where the pattern fits, e.g. golden-file harness
+  for input→output transformation tools)
 - documentation coverage (exported/public symbol coverage)
 - docs truthfulness
 - documentation utility
