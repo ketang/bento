@@ -115,7 +115,7 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("dupl",          "Go", [".dupl"], "dupl ./...", False),
     ("gocyclo",       "Go", [], "gocyclo -over 10 ./...", True),
     ("deadcode",      "Go", [], "deadcode ./...", True),
-    ("nancy",         "Go", ["nancy.ignore"], "go list -json -deps ./... | nancy sleuth", False),
+    # nancy superseded by osv-scanner (cross-language; see below).
     # ── TypeScript / JavaScript ─────────────────────────────────────────────
     ("eslint", "TypeScript",
      [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
@@ -153,6 +153,13 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("cargo-audit",               "Rust", [], "cargo audit", True),
     ("rustfmt",                   "Rust", [".rustfmt.toml", "rustfmt.toml"], "cargo fmt --check", False),
     ("cargo-tarpaulin",           "Rust", [], "cargo tarpaulin", True),
+    # ── Cross-language: vulnerability scanning ─────────────────────────────
+    # Triggered whenever any dependency manifest is present; supersedes nancy.
+    ("osv-scanner", None, [
+        "go.mod", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "Cargo.lock", "requirements.txt", "Pipfile.lock", "pom.xml",
+        "Gemfile.lock", "osv-scanner.toml",
+    ], "osv-scanner --recursive .", False),
     # ── Cross-language: secrets ─────────────────────────────────────────────
     ("gitleaks",       None, [".gitleaks.toml", ".gitleaks.json", ".gitleaksignore"],
      "gitleaks detect --source . --verbose", False),

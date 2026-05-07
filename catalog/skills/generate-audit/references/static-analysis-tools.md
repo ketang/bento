@@ -86,9 +86,16 @@ Any clone above the threshold → audit `note`. Review before flagging — some
 duplication (e.g. test fixtures) is intentional.
 Run: `dupl ./...`
 
-### nancy
-Any vulnerable dependency → audit `error`. Run after `go list -json -deps ./...`.
-Run: `go list -json -deps ./... | nancy sleuth`
+### osv-scanner
+Cross-language vulnerability scanner. Reads `go.mod`, `package-lock.json`,
+`yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `requirements.txt`, `Pipfile.lock`,
+`pom.xml`, `Gemfile.lock`, and SBOMs in one pass against the OSV database.
+Preferred over per-language scanners; supersedes `nancy` for Go.
+
+Reached vulnerability (when reachability is determinable, e.g. paired with
+`govulncheck` on Go) → audit `error`. Unreached vulnerability → `warning`.
+Pair with `govulncheck` for Go reachability analysis.
+Run: `osv-scanner --recursive .`
 
 ### eslint
 `error`-level findings → audit errors. `warning`-level → audit warnings. Note
