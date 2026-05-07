@@ -47,6 +47,23 @@ Run: `govulncheck ./...`
 Any output (unformatted files listed) → audit `warning` per file.
 Run: `gofmt -l .`
 
+### goleak
+Test-time goroutine leak check. Not a CLI tool; enabled per package via
+`goleak.VerifyTestMain(m)` in `TestMain`, or `defer goleak.VerifyNone(t)` per
+test. Catches goroutines that outlive their owning test (e.g. background loops
+not stopped by `Shutdown`). Different failure mode from `-race`.
+
+Any leak at test time → audit `error`. Absence in packages that spawn
+goroutines in non-test code (`go func`, `go name(...)`) → `warning`-level
+recommendation gap; surface each such package with the suggested `TestMain`
+snippet:
+
+```go
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+```
+
+Import: `go.uber.org/goleak`.
+
 ### go-test-cover
 Report coverage % per package from the func output. Flag packages in
 `risk_surfaces` with coverage below 60% as `warning`; below 30% as `error`.

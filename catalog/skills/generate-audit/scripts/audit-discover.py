@@ -718,6 +718,37 @@ def detect_risk_surfaces(files: list[str]) -> dict[str, list[str]]:
 
 
 _GO_ERROR_WRAP_PATTERN = re.compile(r'fmt\.Errorf\([^)]*%w')
+_GO_GO_STATEMENT_PATTERN = re.compile(r'(?m)^\s*go\s+(?:func\b|[A-Za-z_][A-Za-z0-9_.]*\s*\()')
+_GO_GOLEAK_IMPORT_PATTERN = re.compile(r'"go\.uber\.org/goleak"')
+
+
+def go_goroutine_packages(repo_root: Path, file_set: set[str]) -> list[dict[str, object]]:
+    """Find Go packages that spawn goroutines in non-test code without goleak.
+
+    Returns one entry per package directory with `go func` or `go name(...)` in
+    a non-test .go file and no `go.uber.org/goleak` import in any sibling
+    `_test.go` file.
+    """
+    has_goroutine: dict[str, bool] = {}
+    has_goleak: dict[str, bool] = {}
+    for path in file_set:
+        if not path.endswith(".go"):
+            continue
+        pkg_dir = str(Path(path).parent)
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        if path.endswith("_test.go"):
+            if _GO_GOLEAK_IMPORT_PATTERN.search(content):
+                has_goleak[pkg_dir] = True
+        else:
+            if _GO_GO_STATEMENT_PATTERN.search(content):
+                has_goroutine[pkg_dir] = True
+    return [
+        {"package": pkg, "has_goleak": has_goleak.get(pkg, False)}
+        for pkg in sorted(has_goroutine)
+        if not has_goleak.get(pkg, False)
+    ]
 
 
 def go_error_wrapping_count(repo_root: Path, file_set: set[str]) -> int:
@@ -813,6 +844,7 @@ def detect_static_analysis_tools(
     if "Go" in lang_set:
         language_signals["Go"] = {
             "error_wrapping_count": go_error_wrapping_count(repo_root, file_set),
+            "goroutine_packages_missing_goleak": go_goroutine_packages(repo_root, file_set),
         }
 
     return {
