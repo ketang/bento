@@ -53,7 +53,10 @@ Use the JSON output as the starting point, then fill gaps using
 
 Include only modules that fit the discovered repo:
 
-- build health
+- build health (for Go repos where `static_analysis.language_signals.Go.concurrency_signals`
+  is non-empty, run `go test -race -timeout 120s ./...` in place of plain `go test ./...` —
+  any race finding is `error`-level, and missing `-race` in repo CI is `warning`-level
+  whenever the codebase has goroutines)
 - static analysis (run detected tools; emit run blocks per `static-analysis-tools.md`)
 - code quality (model-based review using thresholds and smell catalog from `quality-standards.md`)
 - dependency health (outdated packages, unused dependencies, license compliance)
