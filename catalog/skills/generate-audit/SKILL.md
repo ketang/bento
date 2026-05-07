@@ -63,7 +63,8 @@ Include only modules that fit the discovered repo:
 - test coverage (gap analysis against risk surfaces; no blanket % target)
 - test strategy diversity (unit / property-based / golden-file / fuzz —
   surface absence in repos where the pattern fits, e.g. golden-file harness
-  for input→output transformation tools)
+  for input→output transformation tools, property-based tests for
+  parser/serializer/transform packages with crisp invariants)
 - documentation coverage (exported/public symbol coverage)
 - docs truthfulness
 - documentation utility

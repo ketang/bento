@@ -780,6 +780,53 @@ _GOLDEN_LIB_PATTERN = re.compile(
 )
 _GOLDEN_TEST_FILE_SUFFIXES = ("_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js", "_test.py")
 
+_GO_PUBLIC_PURE_FN_PATTERN = re.compile(
+    r'^func\s+[A-Z][A-Za-z0-9_]*\s*\([^)]*\)\s*\([^)]*\berror\b[^)]*\)',
+    re.MULTILINE,
+)
+_PROPERTY_LIB_PATTERNS: dict[str, re.Pattern[str]] = {
+    "Go": re.compile(r'"pgregory\.net/rapid"|"github\.com/leanovate/gopter"'),
+    "Rust": re.compile(r'(?:^|\n)\s*use\s+(?:proptest|quickcheck)\b'),
+    "Python": re.compile(r'(?:^|\n)\s*(?:import\s+hypothesis|from\s+hypothesis\b)'),
+    "TypeScript": re.compile(r"['\"]fast-check['\"]"),
+    "JavaScript": re.compile(r"['\"]fast-check['\"]"),
+    "Java": re.compile(r'net\.jqwik|junit-quickcheck'),
+}
+
+
+def property_based_signal(
+    repo_root: Path, file_set: set[str], languages: list[str]
+) -> dict[str, dict[str, object]]:
+    """Detect pure-function-heavy public APIs without a property-based library.
+
+    Per-language summary. Audit consumer raises `warning` when
+    `candidate_pure_function_count > 0` and `library_detected = False` for a
+    language that overlaps risk surfaces.
+    """
+    out: dict[str, dict[str, object]] = {}
+    for lang in languages:
+        pattern = _PROPERTY_LIB_PATTERNS.get(lang)
+        if pattern is None:
+            continue
+        candidate_count = 0
+        library_detected = False
+        for path in file_set:
+            if lang == "Go" and path.endswith(".go") and not path.endswith("_test.go"):
+                content = read_text_if_reasonable(repo_root / path)
+                if content:
+                    candidate_count += len(_GO_PUBLIC_PURE_FN_PATTERN.findall(content))
+                    if pattern.search(content):
+                        library_detected = True
+            elif path.endswith((".rs", ".py", ".ts", ".tsx", ".js", ".java", ".kt")):
+                content = read_text_if_reasonable(repo_root / path)
+                if content and pattern.search(content):
+                    library_detected = True
+        out[lang] = {
+            "candidate_pure_function_count": candidate_count,
+            "library_detected": library_detected,
+        }
+    return out
+
 
 def golden_file_signal(repo_root: Path, file_set: set[str]) -> dict[str, object]:
     """Detect input→output projects missing a golden-file harness.
@@ -938,6 +985,7 @@ def detect_static_analysis_tools(
         "language_signals": language_signals,
         "test_strategy_signals": {
             "golden_file": golden_file_signal(repo_root, file_set),
+            "property_based": property_based_signal(repo_root, file_set, languages),
         },
     }
 

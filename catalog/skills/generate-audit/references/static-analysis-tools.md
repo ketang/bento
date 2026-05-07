@@ -216,6 +216,31 @@ Two-stage workflow:
 Library is project choice (cupaloy, goldie, hand-rolled `cmp.Diff`); recommend
 the pattern, not a specific library.
 
+### property-based testing
+Pattern, not a single tool. Different oracle from fuzzing: fuzzing asks
+"does it crash?"; property-based asks "does invariant `I(f(x))` hold for `x`
+drawn from domain `D`?" Catches correctness bugs that complete cleanly.
+
+Sweet spot: parsers, serializers, refactoring tools, format converters, math
+kernels, bytewise transforms — packages whose public API is pure functions
+with crisp invariants (round-trip identity, range preservation, length
+deltas, idempotence under inverse).
+
+Detection: high count of public functions with signature
+`func(...) (T, error)` where args are byte/string/int and `T` is a value
+type, and zero imports of a property-based library. Audit `warning`-level
+recommendation gap when this holds in a risk-surface package.
+
+Libraries:
+- Go: `pgregory.net/rapid` (preferred). `pkg/gopter` is older alternative.
+- Rust: `proptest`, `quickcheck`.
+- Python: `hypothesis`.
+- TypeScript / JavaScript: `fast-check`.
+- Java: `jqwik`, `junit-quickcheck`.
+
+Recommend the pattern with a list of concrete property candidates derived
+from the package's public API; do not pick the library for the project.
+
 ### lizard
 Cross-language complexity analyzer (Python-based; supports Go, Java, JS, TS,
 Python, C/C++, Rust, Swift, etc.). Reports cyclomatic complexity, length,
