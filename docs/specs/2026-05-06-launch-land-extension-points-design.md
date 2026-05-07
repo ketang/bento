@@ -19,10 +19,11 @@ Both are optional. Repos with no hooks and no actions behave exactly as today.
 
 ## Motivation
 
-The existing `project-hooks.md` contract supports a single mid-skill injection
-point per phase. That is enough for "run a check before deps" or "run a check
-before the merge preview," but it does not cover real needs that arise *at the
-skill boundaries*:
+The existing `project-hooks.md` contract supports a single injection point
+per phase, located early in each skill ("after worktree verify" for
+launch-work; "before merge preview" for land-work). That is enough for "run
+a check before deps" or "run a check before the merge preview," but it does
+not cover real needs that arise *at the skill boundaries*:
 
 - **After launch-work completes** — e.g., post-setup verification, project
   scaffolding, or a per-task seed action that should run once the worktree and
@@ -40,8 +41,8 @@ as a brief skill fragment than as a script.
 
 - Preserve the existing `project-hooks.md` contract verbatim for repos that
   already use it.
-- Give projects a way to inject logic at three positions per skill — `pre`,
-  `main`, `post` — for both hooks and actions.
+- Give projects a way to inject logic at two positions per skill — `pre` and
+  `post` — for both hooks and actions.
 - Support two extension flavors:
   - **Hooks**: opaque executables, exit-code semantics, env-var protocol.
   - **Actions**: markdown prose, additive and modifying, with an optional
@@ -69,9 +70,9 @@ The current contract is in
   `$XDG_CONFIG_HOME/agent-plugins/bento/bento/hooks/<phase>/`, then
   `~/.config/agent-plugins/bento/bento/hooks/<phase>/`.
 - `<phase>` is `launch-work` or `land-work`.
-- One injection moment per phase, mid-skill:
-  - `launch-work` runs the hook phase after worktree verification, before deps.
-  - `land-work` runs the hook phase before merge preview, rebase, or merge.
+- One injection moment per phase:
+  - `launch-work` runs hooks after worktree verification, before deps.
+  - `land-work` runs hooks before merge preview, rebase, or merge.
 - Env vars: `BENTO_HOOK_PHASE`, `BENTO_HOOK_REPO_ROOT`, `BENTO_HOOK_BRANCH`,
   `BENTO_HOOK_BASE_REF`, `BENTO_HOOK_BASE_SHA`, `BENTO_HOOK_HEAD_SHA`,
   `BENTO_HOOK_RUNTIME`, `BENTO_HOOK_TASK_ID`, `BENTO_HOOK_REQUIRES_HUMAN=75`.
@@ -84,54 +85,74 @@ The current contract is in
 
 ### Directory layout
 
+The structure groups by skill (`launch-work`, `land-work`), then by extension
+flavor (`hooks`, `actions`), then by position (`pre`, `post`). All extensions
+that affect a given skill live under one subtree, so a project's customization
+of `launch-work` is visible at a glance.
+
 ```
 .agent-plugins/bento/bento/
-├── hooks/
-│   ├── launch-work/
-│   │   ├── pre/      # skill entry, before discover/verify
-│   │   ├── main/     # existing timing: after worktree verify, before deps
-│   │   └── post/     # after ready-to-land checkpoint, before skill returns
-│   └── land-work/
-│       ├── pre/      # skill entry, before any preflight
-│       ├── main/     # existing timing: before merge preview/rebase/merge
-│       └── post/     # after merge succeeds, before skill returns
-└── actions/
-    ├── launch-work/
-    │   ├── pre/      # skill entry, before any setup
-    │   └── post/     # after ready-to-land, before skill returns
-    └── land-work/
-        ├── pre/      # skill entry, before any preflight
-        └── post/     # after merge succeeds, before skill returns
+├── launch-work/
+│   ├── hooks/
+│   │   ├── pre/     # after worktree verify, before deps install
+│   │   └── post/    # after ready-to-land checkpoint, before skill returns
+│   └── actions/
+│       ├── pre/     # after worktree verify, before deps install
+│       └── post/    # after ready-to-land, before skill returns
+└── land-work/
+    ├── hooks/
+    │   ├── pre/     # before merge preview/rebase/merge
+    │   └── post/    # after merge succeeds, before skill returns
+    └── actions/
+        ├── pre/     # before merge preview/rebase/merge
+        └── post/    # after merge succeeds, before skill returns
 ```
 
-Same XDG discovery chain as today applies under each subtree.
+Same XDG discovery chain as today: repo-scoped first, then
+`$XDG_CONFIG_HOME/agent-plugins/bento/bento/...`, then
+`~/.config/agent-plugins/bento/bento/...` when `XDG_CONFIG_HOME` is unset.
 
-**Actions deliberately do not have a `main/` slot.** Mid-skill is hook
-territory (deterministic gates that can abort the skill). Actions stay at
-boundaries to keep the model clean: hooks gate, actions guide.
+Hooks and actions share the same `pre`/`post` timings within a skill — when
+both exist at the same position, hooks run first, then actions (see
+"Discovery and ordering").
 
 ### Backwards compatibility
 
-A flat `hooks/launch-work/` or `hooks/land-work/` (no `pre/`, `main/`, `post/`
-subdirectories) is interpreted as legacy-equivalent of the new `main/` slot.
-Existing repos keep working without changes. A one-release deprecation note
-in `project-hooks.md` invites authors to move scripts into `main/`.
+The legacy path `<…>/hooks/<phase>/<executable>` (no skill-grouped subtree, no
+position subdir) is interpreted as `<phase>/hooks/pre/<executable>` — the
+existing single hook moment maps onto the new `pre` slot, since `pre` fires
+at exactly the same point in each skill (after worktree verify for
+launch-work; before merge preview for land-work).
+
+The discovery rules check both the new path and the legacy path. A repo with
+hooks at the legacy path keeps working without changes. A one-release
+deprecation note in `project-hooks.md` directs authors to move executables
+into `<phase>/hooks/pre/`.
 
 ### Position semantics
 
 | Skill | Position | Fires at | Worktree exists? | Abort effect |
 |---|---|---|---|---|
-| launch-work | pre | skill entry, before discover | no | full halt; nothing has been created yet |
-| launch-work | main | after worktree verify, before deps | yes | full halt; worktree preserved |
-| launch-work | post | after ready-to-land checkpoint | yes | full halt; work stays on the branch, user does not proceed to land-work |
-| land-work | pre | skill entry, before preflight | yes (feature) | full halt; merge has not started |
-| land-work | main | before merge preview/rebase/merge | yes (feature) | full halt; merge has not started |
-| land-work | post | after merge succeeds | yes (feature) | advisory only; merge stands |
+| launch-work | pre | after worktree verify, before deps install | yes | full halt; worktree preserved |
+| launch-work | post | after ready-to-land checkpoint, before skill returns | yes | full halt; work stays on the branch, user does not proceed to land-work |
+| land-work | pre | before merge preview/rebase/merge | yes (feature) | full halt; merge has not started |
+| land-work | post | after merge succeeds, before skill returns | yes (feature) | advisory only; merge stands |
 
 "Abort" means an exit-75/non-zero (hooks) or matched stop condition (actions)
 halts the skill before the next normal step. "Full halt" preserves the branch
 and linked worktree and does not perform destructive cleanup. "Advisory only"
 means the skill surfaces the message but does not roll anything back.
+
+The two real motivating extensions map cleanly:
+
+- **After launch-work executes** → `launch-work/actions/post/` (or
+  `launch-work/hooks/post/` for a script).
+- **Before land-work executes** → `land-work/actions/pre/` (or
+  `land-work/hooks/pre/` for a script).
+
+There is intentionally no slot before worktree creation in launch-work, nor a
+slot earlier than the existing land-work timing. Adding a third position
+later would be backwards-compatible if a real need surfaces.
 
 `launch-work/post` and `land-work/pre` are the slots motivated by the two
 real extensions:
@@ -157,22 +178,40 @@ For each position slot:
 2. If all hooks at the position pass (exit 0), actions are discovered and
    applied.
 
-Within a directory:
+#### Numeric prefix ordering convention
 
-- Files are sorted lexicographically.
-- Hidden files (leading dot), editor backups, and files whose names contain
-  path separators are ignored.
+Hook and action filenames must begin with a two-digit decimal prefix and a
+separator, e.g.:
+
+```
+10-check-lockfile.sh
+20-warn-on-uncommitted-config.md
+99-final-report.sh
+```
+
+The skill sorts files by ascending numeric prefix; ties (same number, e.g.
+`30-foo.sh` and `30-bar.sh`) break by lexicographic filename order. The
+convention mirrors `/etc/init.d` and `/etc/cron.d` — leave gaps (10, 20,
+30…) so later additions can slot between existing items without renumbering.
+
+Files that don't start with `<two-digit>-` are **ignored** with a soft
+warning logged to the skill's stderr at discovery time. This is strict
+enough to prevent accidental ordering surprises and lenient enough that
+adding a `README.md` next to the actions doesn't break discovery.
+
+Other discovery rules:
+
+- Hidden files (leading dot), editor backups (trailing `~`, `.bak`,
+  `.swp`), and filenames containing path separators are ignored without
+  warning.
 - For hooks: only regular executable files are run. Non-executable files,
   symlinks to non-existent targets, and directories are ignored.
 - For actions: only files ending in `.md` are loaded. Other extensions and
   directories are ignored.
 
-The working directory for hook execution depends on the position:
-
-- `launch-work/pre` runs from the **primary checkout** (worktree does not yet
-  exist).
-- All other positions run from the **linked worktree** (or feature-branch
-  worktree for `land-work/*`).
+The working directory for hook execution is the **linked worktree** for
+`launch-work/*` and the **feature-branch worktree** for `land-work/*`. All
+positions in this design fire after the relevant worktree exists.
 
 ### Hook execution — extended env protocol
 
@@ -181,15 +220,15 @@ Existing variables stay. Additions and clarifications:
 | Variable | Meaning |
 |---|---|
 | `BENTO_HOOK_PHASE` | `launch-work` or `land-work` (existing) |
-| `BENTO_HOOK_POSITION` | `pre`, `main`, or `post` (new) |
+| `BENTO_HOOK_POSITION` | `pre` or `post` (new) |
 | `BENTO_HOOK_REPO_ROOT` | Absolute repo root (existing) |
-| `BENTO_HOOK_WORKTREE` | Absolute path to the worktree, or empty if none yet (new) |
-| `BENTO_HOOK_BRANCH` | Current task or feature branch, empty if none yet |
+| `BENTO_HOOK_WORKTREE` | Absolute path to the worktree (new; always set in this design) |
+| `BENTO_HOOK_BRANCH` | Current task or feature branch |
 | `BENTO_HOOK_BASE_REF` | Primary-branch ref name |
 | `BENTO_HOOK_BASE_SHA` | SHA of base ref when known |
 | `BENTO_HOOK_HEAD_SHA` | SHA of feature-branch head when known |
-| `BENTO_HOOK_MERGE_SHA` | SHA of the merge commit; set only in `land-work/post` (new) |
-| `BENTO_HOOK_LANDED` | `1` only in `land-work/post` once merge is complete (new) |
+| `BENTO_HOOK_MERGE_SHA` | SHA of the merge commit; set only in `land-work/hooks/post` (new) |
+| `BENTO_HOOK_LANDED` | `1` only in `land-work/hooks/post` once merge is complete (new) |
 | `BENTO_HOOK_RUNTIME` | `claude`, `codex`, `unknown` |
 | `BENTO_HOOK_TASK_ID` | Tracker item ID when available |
 | `BENTO_HOOK_TTY` | `1` if stdin is a TTY, else `0` (new) |
@@ -240,7 +279,7 @@ Unchanged from the existing contract:
 - any other non-zero — failure; halt, surface stdout and stderr, preserve
   branch and linked worktree.
 
-For `land-work/post` only, exit `75` and other non-zero are **advisory**:
+For `land-work/hooks/post` only, exit `75` and other non-zero are **advisory**:
 
 - The merge has already happened; nothing is rolled back.
 - The skill surfaces the message and marks itself complete-with-warnings.
@@ -254,6 +293,9 @@ lexicographic order within the directory) and applies it as additive guidance
 for the rest of the position's work. Actions are *not* concatenated and
 applied as one blob — they are applied in order, each one modifying the
 agent's understanding before the next one is read.
+
+**Filename:** must follow the `<two-digit>-<slug>.md` convention from the
+discovery section (e.g., `30-warn-on-uncommitted-config.md`).
 
 **Authoring shape (recommended, not enforced):**
 
@@ -283,8 +325,8 @@ Examples:
 - The current branch's parent is not the documented primary branch.
 ```
 
-For `land-work/post`, stop conditions are advisory only, matching the
-hook-exit advisory rule.
+For `land-work/actions/post`, stop conditions are advisory only, matching
+the hook-exit advisory rule.
 
 **Constraints on actions (documented in the contract, not machine-enforced):**
 
@@ -302,14 +344,14 @@ skill continues to its next normal step without remarking on the absence.
 ### Documentation locations
 
 - `catalog/skills/launch-work/references/project-hooks.md` is updated to
-  describe the new position layout, the legacy-flat-directory fallback, and
-  the new env vars (`POSITION`, `WORKTREE`, `MERGE_SHA`, `LANDED`, `TTY`,
-  `TIMEOUT`).
+  describe the new path layout (`<skill>/hooks/<position>/`), the
+  numeric-prefix filename convention, the legacy-path fallback, and the new
+  env vars (`POSITION`, `WORKTREE`, `MERGE_SHA`, `LANDED`, `TTY`, `TIMEOUT`).
 - New file `catalog/skills/launch-work/references/project-actions.md`
-  describes action discovery, ordering, the `## Stop conditions` convention,
-  and authoring guidance.
+  describes action discovery, the same numeric-prefix convention, the
+  `## Stop conditions` convention, and authoring guidance.
 - Both `launch-work/SKILL.md` and `land-work/SKILL.md` get updated workflow
-  steps that reference the new positions and both reference files.
+  steps that reference `pre/` and `post/` positions and both reference files.
 
 ### Helper scripts
 
@@ -326,27 +368,31 @@ A small new helper, `bento-extensions-discover.py` (placement TBD between
 
 - Enumerate hooks and actions for a `(phase, position)` pair across the
   XDG chain.
-- Apply the same exclusion rules (hidden, non-executable, non-md) consistently.
+- Apply the numeric-prefix sort and the exclusion rules (hidden,
+  non-executable, non-md, missing prefix) consistently.
+- Surface the soft warning for files that don't match the prefix convention.
 - Emit JSON the skill text can iterate over.
 
-This helper is optional for the first cut — the workflow text can use plain
-`find`/`ls` invocations — but it pays back as soon as a third or fourth
-position is added or as soon as the discovery rules grow.
+This helper is recommended over inline `find`/`ls` because the prefix-sort
+and the missing-prefix warning are easy to get subtly wrong in shell.
 
 ## Verification strategy
 
-- Unit-style tests (shell or Python, matching repo norms) for discovery
-  ordering, exclusion rules, and the legacy-flat-directory fallback.
-- A scenario test that creates a no-op hook in each of the six hook positions
-  and confirms each fires exactly once at the documented timing.
+- Unit-style tests (shell or Python, matching repo norms) for:
+  - numeric-prefix sort ordering, including ties and gaps;
+  - missing-prefix soft-warning behavior;
+  - the exclusion rules (hidden, backups, non-executable, non-md);
+  - the legacy `hooks/<phase>/` → `<phase>/hooks/pre/` fallback.
+- A scenario test that creates a no-op hook in each of the four hook
+  positions and confirms each fires exactly once at the documented timing.
 - A scenario test that creates an action with a `## Stop conditions` block
-  in each action position and confirms the agent halts when the condition
-  matches and proceeds when it does not. (May require a small harness; see
-  open questions.)
-- A scenario test for the `land-work/post` advisory rule: a non-zero exit
-  surfaces the message but does not unwind the merge.
-- A backwards-compatibility test: a flat `hooks/launch-work/` directory (no
-  position subdirs) runs at the legacy `main/` timing.
+  in each of the four action positions and confirms the agent halts when
+  the condition matches and proceeds when it does not. (May require a small
+  harness; see open questions.)
+- A scenario test for the `land-work/hooks/post` advisory rule: a non-zero
+  exit surfaces the message but does not unwind the merge.
+- A backwards-compatibility test: a legacy `hooks/launch-work/<exec>` path
+  runs at the new `launch-work/hooks/pre/` timing.
 
 ## Constraints and risks
 
@@ -363,9 +409,15 @@ position is added or as soon as the discovery rules grow.
 - **No timeout means a misbehaving hook can hang the skill indefinitely.**
   Mitigation: opt-in `BENTO_HOOK_TIMEOUT`; document Ctrl-C as the universal
   escape; log heartbeats.
-- **Discovery cost scales with positions.** Six hook positions + four action
-  positions = ten directory scans per skill invocation. All are short-circuit
-  (skip if directory absent). Unlikely to matter in practice.
+- **Discovery cost scales with positions.** Four hook positions + four action
+  positions = eight directory scans per skill invocation, plus the legacy
+  fallback. All are short-circuit (skip if directory absent). Unlikely to
+  matter in practice.
+- **Numeric-prefix soft warnings can be missed.** A repo author who drops a
+  file into a position dir without the prefix may not notice the warning if
+  it's buried in skill output. Mitigation: hook the discovery helper into
+  the launch-work progress log so missing-prefix warnings show up in
+  recovery context.
 
 ## Open questions
 
@@ -382,11 +434,16 @@ position is added or as soon as the discovery rules grow.
 
 ## Migration
 
-- One release where both flat `hooks/<phase>/` and `hooks/<phase>/main/` are
-  accepted; the contract documents the flat form as deprecated.
-- One release later, drop the flat-form fallback and require the position
-  subdirectory. Repos that haven't migrated by then get a clear error message
-  pointing at the contract.
+- **First release:** both legacy `hooks/<phase>/<exec>` and new
+  `<phase>/hooks/pre/<exec>` are accepted. The contract documents the
+  legacy form as deprecated. Existing executables continue to work without
+  the numeric prefix during this window — the prefix is enforced only for
+  files at the new path. Authors are invited to move their executables and
+  add the prefix at the same time.
+- **Second release:** drop the legacy-path fallback. The new path is
+  required. Files without the numeric prefix are ignored with a hard
+  warning. Repos that haven't migrated get a clear error message pointing
+  at the contract.
 - No migration is needed for new action support, since actions are net-new.
 
 ## Out of scope
