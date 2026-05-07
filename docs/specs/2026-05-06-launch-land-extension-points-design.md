@@ -116,19 +116,6 @@ Hooks and actions share the same `pre`/`post` timings within a skill — when
 both exist at the same position, hooks run first, then actions (see
 "Discovery and ordering").
 
-### Backwards compatibility
-
-The legacy path `<…>/hooks/<phase>/<executable>` (no skill-grouped subtree, no
-position subdir) is interpreted as `<phase>/hooks/pre/<executable>` — the
-existing single hook moment maps onto the new `pre` slot, since `pre` fires
-at exactly the same point in each skill (after worktree verify for
-launch-work; before merge preview for land-work).
-
-The discovery rules check both the new path and the legacy path. A repo with
-hooks at the legacy path keeps working without changes. A one-release
-deprecation note in `project-hooks.md` directs authors to move executables
-into `<phase>/hooks/pre/`.
-
 ### Position semantics
 
 | Skill | Position | Fires at | Worktree exists? | Abort effect |
@@ -151,8 +138,8 @@ The two real motivating extensions map cleanly:
   `land-work/hooks/pre/` for a script).
 
 There is intentionally no slot before worktree creation in launch-work, nor a
-slot earlier than the existing land-work timing. Adding a third position
-later would be backwards-compatible if a real need surfaces.
+slot earlier than the existing land-work timing. A third position can be
+added later if a real need surfaces.
 
 `launch-work/post` and `land-work/pre` are the slots motivated by the two
 real extensions:
@@ -343,10 +330,10 @@ skill continues to its next normal step without remarking on the absence.
 
 ### Documentation locations
 
-- `catalog/skills/launch-work/references/project-hooks.md` is updated to
+- `catalog/skills/launch-work/references/project-hooks.md` is rewritten to
   describe the new path layout (`<skill>/hooks/<position>/`), the
-  numeric-prefix filename convention, the legacy-path fallback, and the new
-  env vars (`POSITION`, `WORKTREE`, `MERGE_SHA`, `LANDED`, `TTY`, `TIMEOUT`).
+  numeric-prefix filename convention, and the new env vars (`POSITION`,
+  `WORKTREE`, `MERGE_SHA`, `LANDED`, `TTY`, `TIMEOUT`).
 - New file `catalog/skills/launch-work/references/project-actions.md`
   describes action discovery, the same numeric-prefix convention, the
   `## Stop conditions` convention, and authoring guidance.
@@ -380,9 +367,8 @@ and the missing-prefix warning are easy to get subtly wrong in shell.
 
 - Unit-style tests (shell or Python, matching repo norms) for:
   - numeric-prefix sort ordering, including ties and gaps;
-  - missing-prefix soft-warning behavior;
-  - the exclusion rules (hidden, backups, non-executable, non-md);
-  - the legacy `hooks/<phase>/` → `<phase>/hooks/pre/` fallback.
+  - missing-prefix warning behavior;
+  - the exclusion rules (hidden, backups, non-executable, non-md).
 - A scenario test that creates a no-op hook in each of the four hook
   positions and confirms each fires exactly once at the documented timing.
 - A scenario test that creates an action with a `## Stop conditions` block
@@ -391,8 +377,6 @@ and the missing-prefix warning are easy to get subtly wrong in shell.
   harness; see open questions.)
 - A scenario test for the `land-work/hooks/post` advisory rule: a non-zero
   exit surfaces the message but does not unwind the merge.
-- A backwards-compatibility test: a legacy `hooks/launch-work/<exec>` path
-  runs at the new `launch-work/hooks/pre/` timing.
 
 ## Constraints and risks
 
@@ -410,9 +394,8 @@ and the missing-prefix warning are easy to get subtly wrong in shell.
   Mitigation: opt-in `BENTO_HOOK_TIMEOUT`; document Ctrl-C as the universal
   escape; log heartbeats.
 - **Discovery cost scales with positions.** Four hook positions + four action
-  positions = eight directory scans per skill invocation, plus the legacy
-  fallback. All are short-circuit (skip if directory absent). Unlikely to
-  matter in practice.
+  positions = eight directory scans per skill invocation. All are
+  short-circuit (skip if directory absent). Unlikely to matter in practice.
 - **Numeric-prefix soft warnings can be missed.** A repo author who drops a
   file into a position dir without the prefix may not notice the warning if
   it's buried in skill output. Mitigation: hook the discovery helper into
@@ -431,20 +414,6 @@ and the missing-prefix warning are easy to get subtly wrong in shell.
    Defer specifics to plan.
 3. **Heartbeat cadence.** 60s first, then 5min repeating? Configurable? Defer
    to plan.
-
-## Migration
-
-- **First release:** both legacy `hooks/<phase>/<exec>` and new
-  `<phase>/hooks/pre/<exec>` are accepted. The contract documents the
-  legacy form as deprecated. Existing executables continue to work without
-  the numeric prefix during this window — the prefix is enforced only for
-  files at the new path. Authors are invited to move their executables and
-  add the prefix at the same time.
-- **Second release:** drop the legacy-path fallback. The new path is
-  required. Files without the numeric prefix are ignored with a hard
-  warning. Repos that haven't migrated get a clear error message pointing
-  at the contract.
-- No migration is needed for new action support, since actions are net-new.
 
 ## Out of scope
 
