@@ -81,6 +81,14 @@ Functions with cyclomatic complexity > 10 → audit `warning`. Complexity > 20
 `quality-standards.md`. Report each function with its score; do not average.
 Run: `gocyclo -over 10 ./...`
 
+### gocognit
+Cognitive complexity for Go. Different metric from cyclomatic: weights nesting
+and breaks in control flow that hurt readability; chained guard clauses don't
+add. Recommend running both — they catch different shapes. Score > 15 → audit
+`warning`; > 30 → audit `error`. Pin tool version in CI; cognitive scoring has
+more interpretation calls than cyclomatic.
+Run: `gocognit -over 15 .` (or enable as `gocognit` in `.golangci.yml`)
+
 ### dupl
 Any clone above the threshold → audit `note`. Review before flagging — some
 duplication (e.g. test fixtures) is intentional.
@@ -121,6 +129,12 @@ review for dynamic loads (`require(name)`, plugin globs) before reporting.
 Complementary to `knip`, not an alternative: `knip` finds unused exports in
 code, `depcheck` finds drift between code and `package.json`.
 Run: `npx depcheck`
+
+### eslint-sonarjs
+ESLint plugin providing `sonarjs/cognitive-complexity` for TS/JS. Score > 15
+→ audit `warning`; > 30 → audit `error`. Configure threshold in ESLint config.
+Complementary to ESLint's built-in `complexity` (cyclomatic).
+Run: enabled via ESLint config; run with `npx eslint . --format=compact`
 
 ### prettier
 Any file failing the check → audit `warning` per file.
@@ -166,6 +180,28 @@ Grade the cyclomatic complexity of each function. Grade B (CC 6–10) → audit
 `quality-standards.md`. Report each function with its score and grade; do not
 average across the module.
 Run: `radon cc . --min B -s`
+
+### pmd-cognitive-complexity
+PMD's `CognitiveComplexity` rule for Java. Score > 15 → audit `warning`;
+> 30 → audit `error`. Run via Maven or Gradle PMD plugin. Complementary to
+PMD's `CyclomaticComplexity`.
+- Maven: `mvn pmd:check` (with cognitive-complexity rule enabled)
+- Gradle: `./gradlew pmdMain`
+
+### flake8-cognitive-complexity
+flake8 plugin (`CCR001`) adding cognitive complexity to Python lint runs.
+Score > 15 → audit `warning`; > 30 → audit `error`. Enable in `.flake8` /
+`setup.cfg`.
+Run: `flake8 --max-cognitive-complexity=15`
+
+### lizard
+Cross-language complexity analyzer (Python-based; supports Go, Java, JS, TS,
+Python, C/C++, Rust, Swift, etc.). Reports cyclomatic complexity, length,
+parameter count. Useful as a fallback when per-language tools aren't
+available, or for polyglot repos. CCN > 10 → audit `warning`; > 20 → `error`.
+Note: lizard reports cyclomatic, not cognitive — use as a coverage backstop,
+not a substitute for `gocognit`/`sonarjs`/`pmd-cognitive-complexity`.
+Run: `lizard .`
 
 ### spotbugs
 Bytecode analyzer for Java. HIGH-priority finding → audit `error`;

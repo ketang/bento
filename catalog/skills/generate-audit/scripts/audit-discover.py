@@ -114,6 +114,7 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
      "go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out", True),
     ("dupl",          "Go", [".dupl"], "dupl ./...", False),
     ("gocyclo",       "Go", [], "gocyclo -over 10 ./...", True),
+    ("gocognit",      "Go", [], "gocognit -over 15 .", True),
     ("deadcode",      "Go", [], "deadcode ./...", True),
     # nancy superseded by osv-scanner (cross-language; see below).
     # ── TypeScript / JavaScript ─────────────────────────────────────────────
@@ -128,6 +129,17 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("tsc",     "TypeScript", ["tsconfig.json"], "npx tsc --noEmit", False),
     ("knip",    "TypeScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
     ("knip",    "JavaScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
+    # eslint-sonarjs adds cognitive complexity to ESLint; activated via plugin
+    # entry in eslint config. Detection: presence of eslint config (sufficient
+    # baseline; specific plugin presence isn't probed here).
+    ("eslint-sonarjs", "TypeScript",
+     [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
+      ".eslintrc.yaml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"],
+     "npx eslint . --format=compact", False),
+    ("eslint-sonarjs", "JavaScript",
+     [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
+      ".eslintrc.yaml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"],
+     "npx eslint . --format=compact", False),
     # depcheck runs zero-config; package.json (implied by language detection) is
     # the trigger. Complementary to knip: dependency drift, not unused exports.
     ("depcheck", "TypeScript", [], "npx depcheck", True),
@@ -146,6 +158,8 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("interrogate", "Python", [".interrogate.ini"], "interrogate .", False),
     ("vulture",     "Python", ["whitelist.py"], "vulture .", False),
     ("radon",       "Python", [], "radon cc . --min B -s", True),
+    ("flake8-cognitive-complexity", "Python", [".flake8", "setup.cfg", "tox.ini"],
+     "flake8 --max-cognitive-complexity=15", False),
     # ── Rust ────────────────────────────────────────────────────────────────
     ("clippy",                    "Rust", [], "cargo clippy -- -D warnings", True),
     ("clippy-cognitive-complexity","Rust", ["clippy.toml", ".clippy.toml"],
@@ -161,6 +175,7 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("checkstyle",       "Java", ["pom.xml", "checkstyle.xml"],
      "mvn checkstyle:check", False),
     ("spotless",         "Java", ["pom.xml"], "mvn spotless:check", False),
+    ("pmd-cognitive-complexity", "Java", ["pom.xml"], "mvn pmd:check", False),
     # error-prone is a compile-time javac plugin; surface as recommendation
     # rather than a separate run. No CLI invocation in this row.
     ("error-prone",      "Java", ["pom.xml"], "mvn compile (with error-prone javac plugin)", False),
@@ -173,6 +188,8 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
      "./gradlew checkstyleMain", False),
     ("spotless",         "Java", ["build.gradle", "build.gradle.kts"],
      "./gradlew spotlessCheck", False),
+    ("pmd-cognitive-complexity", "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew pmdMain", False),
     # ── Cross-language: vulnerability scanning ─────────────────────────────
     # Triggered whenever any dependency manifest is present; supersedes nancy.
     ("osv-scanner", None, [
@@ -180,6 +197,10 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
         "Cargo.lock", "requirements.txt", "Pipfile.lock", "pom.xml",
         "Gemfile.lock", "osv-scanner.toml",
     ], "osv-scanner --recursive .", False),
+    # ── Cross-language: complexity fallback ─────────────────────────────────
+    # lizard is a polyglot complexity scanner. Useful as a fallback for repos
+    # that lack per-language cognitive-complexity tooling.
+    ("lizard", None, [], "lizard .", True),
     # ── Cross-language: secrets ─────────────────────────────────────────────
     ("gitleaks",       None, [".gitleaks.toml", ".gitleaks.json", ".gitleaksignore"],
      "gitleaks detect --source . --verbose", False),
@@ -210,6 +231,8 @@ TOOL_BINARY_OVERRIDES: dict[str, str] = {
     "prettier": "npx",
     "jscpd": "npx",
     "depcheck": "npx",
+    "eslint-sonarjs": "npx",
+    "flake8-cognitive-complexity": "flake8",
 }
 
 
