@@ -773,6 +773,16 @@ def detect_risk_surfaces(files: list[str]) -> dict[str, list[str]]:
 _GO_ERROR_WRAP_PATTERN = re.compile(r'fmt\.Errorf\([^)]*%w')
 _GO_GO_STATEMENT_PATTERN = re.compile(r'(?m)^\s*go\s+(?:func\b|[A-Za-z_][A-Za-z0-9_.]*\s*\()')
 _GO_GOLEAK_IMPORT_PATTERN = re.compile(r'"go\.uber\.org/goleak"')
+# Concurrency primitives — literal substring match per issue spec. Empty
+# results imply `go test -race` is overkill; non-empty results mean the
+# auditor should prefer `go test -race -timeout 120s ./...` for build health.
+_GO_CONCURRENCY_NEEDLES: list[tuple[str, str]] = [
+    ("go_func", "go func"),
+    ("sync_mutex", "sync.Mutex"),
+    ("channel", "chan "),
+    ("sync_once", "sync.Once"),
+    ("sync_atomic", "sync/atomic"),
+]
 _GOLDEN_FIXTURE_DIRS = ("testdata/fixtures/", "testdata/inputs/", "testdata/cases/")
 _GOLDEN_EXPECTED_DIRS = ("testdata/golden/", "testdata/expected/", "testdata/want/")
 _GOLDEN_LIB_PATTERN = re.compile(
@@ -881,6 +891,28 @@ def go_goroutine_packages(repo_root: Path, file_set: set[str]) -> list[dict[str,
     ]
 
 
+def go_concurrency_signals(repo_root: Path, file_set: set[str]) -> list[dict[str, object]]:
+    """Find non-test Go files using concurrency primitives.
+
+    Returns one entry per non-test `.go` file that matches at least one
+    primitive in `_GO_CONCURRENCY_NEEDLES`, with the list of detected
+    primitive names. Empty result → `go test -race` is overkill for the
+    repo; non-empty → recommend `go test -race -timeout 120s ./...` in the
+    build-health phase.
+    """
+    results: list[dict[str, object]] = []
+    for path in sorted(file_set):
+        if not path.endswith(".go") or path.endswith("_test.go"):
+            continue
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        detected = [name for name, needle in _GO_CONCURRENCY_NEEDLES if needle in content]
+        if detected:
+            results.append({"path": path, "signals": detected})
+    return results
+
+
 def go_error_wrapping_count(repo_root: Path, file_set: set[str]) -> int:
     """Count `fmt.Errorf(...: %w...)` sites across .go files.
 
@@ -975,6 +1007,7 @@ def detect_static_analysis_tools(
         language_signals["Go"] = {
             "error_wrapping_count": go_error_wrapping_count(repo_root, file_set),
             "goroutine_packages_missing_goleak": go_goroutine_packages(repo_root, file_set),
+            "concurrency_signals": go_concurrency_signals(repo_root, file_set),
         }
 
     return {

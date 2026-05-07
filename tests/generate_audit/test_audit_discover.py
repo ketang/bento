@@ -388,6 +388,76 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertNotIn("trufflehog", missing_xl)
         self.assertNotIn("detect-secrets", missing_xl)
 
+    # ── Static analysis: Go concurrency signals ──────────────────────────────
+
+    def test_go_concurrency_signals_present_when_primitives_used(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+        write(
+            self.repo / "internal/server/server.go",
+            "\n".join(
+                [
+                    "package server",
+                    "",
+                    "import (",
+                    "\t\"sync\"",
+                    "\t\"sync/atomic\"",
+                    ")",
+                    "",
+                    "var mu sync.Mutex",
+                    "var counter atomic.Int64",
+                    "var done = make(chan struct{})",
+                    "var once sync.Once",
+                    "",
+                    "func Run() {",
+                    "\tgo func() { _ = 1 }()",
+                    "}",
+                ]
+            )
+            + "\n",
+        )
+
+        payload = self.run_helper()
+
+        signals = payload["static_analysis"]["language_signals"]["Go"]["concurrency_signals"]
+        self.assertNotEqual(signals, [])
+        entry = next(
+            (item for item in signals if item["path"] == "internal/server/server.go"),
+            None,
+        )
+        self.assertIsNotNone(entry, f"expected an entry for internal/server/server.go in {signals!r}")
+        detected = set(entry["signals"])
+        self.assertEqual(
+            detected,
+            {"go_func", "sync_mutex", "channel", "sync_once", "sync_atomic"},
+        )
+
+    def test_go_concurrency_signals_empty_for_non_concurrent_go(self) -> None:
+        write(self.repo / "go.mod", "module example.com/test\n\ngo 1.22\n")
+        write(
+            self.repo / "internal/util/util.go",
+            "package util\n\nfunc Add(a, b int) int { return a + b }\n",
+        )
+        # Concurrency primitives in a *_test.go file must not count: race
+        # detection guidance is driven by production code, not test setup.
+        write(
+            self.repo / "internal/util/util_test.go",
+            "\n".join(
+                [
+                    "package util",
+                    "",
+                    "import \"sync\"",
+                    "",
+                    "var _ = sync.Mutex{}",
+                ]
+            )
+            + "\n",
+        )
+
+        payload = self.run_helper()
+
+        signals = payload["static_analysis"]["language_signals"]["Go"]["concurrency_signals"]
+        self.assertEqual(signals, [])
+
 
 if __name__ == "__main__":
     unittest.main()
