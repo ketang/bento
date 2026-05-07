@@ -31,11 +31,28 @@ Surface all `error`-level findings as audit errors. Surface `warning`-level as
 audit warnings. Note the active linter set from `.golangci.yml`; a sparse set
 (e.g. only `errcheck` enabled) is itself a `warning`-level finding.
 
-Recommended baseline `linters: enable:` includes `errorlint`. It catches
-`if err == sentinel` against wrappable sentinels, type assertions instead of
-`errors.As`, and `%s`/`%v` formatting where `%w` was intended. Any errorlint
-finding → audit `error`. Promote to high-priority recommendation when the
-repo has > 10 `fmt.Errorf("...: %w", err)` sites.
+Recommended baseline `.golangci.yml` keeps the golangci-lint defaults
+(`errcheck`, `staticcheck`, `unused`, `govet`, `gosimple`, `ineffassign`) and
+additionally enables `errorlint`, `wrapcheck`, `exhaustive`, `prealloc`,
+`gocritic`, `revive`, and `misspell`. Where the project tolerates the
+analysis cost, also enable Uber's `nilaway` — optional but high signal on
+nil-deref bugs. `errcheck` must remain enabled and must not be globally
+silenced via `// nolint:errcheck`; each suppression should justify the
+swallowed error.
+
+A `.golangci.yml` that *disables* any of `errcheck`, `staticcheck`, `unused`,
+or `govet` → audit `error`-level misconfiguration; those defaults are
+load-bearing for correctness.
+
+`errorlint` catches `if err == sentinel` against wrappable sentinels, type
+assertions instead of `errors.As`, and `%s`/`%v` formatting where `%w` was
+intended. `wrapcheck` flags errors returned across package boundaries
+without wrapping. Any `errorlint` or `wrapcheck` finding → audit `error`.
+Promote `errorlint` to a high-priority recommendation when the repo has > 10
+`fmt.Errorf("...: %w", err)` sites. Absence of both `errorlint` *and*
+`wrapcheck` from `linters: enable:` in a Go repo with > 20
+`fmt.Errorf("...%w", err)` call sites → audit `warning`-level recommendation
+gap.
 Run: `golangci-lint run ./...`
 
 ### govulncheck
