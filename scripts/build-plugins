@@ -89,7 +89,7 @@ PLUGIN_DEFS = {
             "dev-skill",
             "bentobug",
         ],
-        "hooks": "bento",
+        "hooks": ["bento", "telemetry"],
     },
     "trackers": {
         "description": "Tracker skills for Beads and GitHub Issues workflows",
@@ -271,13 +271,14 @@ def skills_for(plugin: str, platform: str) -> list[str]:
     ]
 
 
-def hook_for(plugin: str, platform: str) -> str | None:
-    hook_name = PLUGIN_DEFS[plugin].get("hooks")
-    if not hook_name:
-        return None
-    if platform not in hook_platforms(hook_name):
-        return None
-    return hook_name
+def hooks_for(plugin: str, platform: str) -> list[str]:
+    hook_names = PLUGIN_DEFS[plugin].get("hooks", [])
+    if isinstance(hook_names, str):
+        hook_names = [hook_names]
+    return [
+        hook_name for hook_name in hook_names
+        if platform in hook_platforms(hook_name)
+    ]
 
 
 def copy_skills(plugin: str, platform: str) -> None:
@@ -378,17 +379,44 @@ def copy_included_paths(source: Path, destination: Path, include: list[str]) -> 
 
 
 def copy_hooks(plugin: str, platform: str) -> None:
-    hook_name = hook_for(plugin, platform)
-    if not hook_name:
+    hook_names = hooks_for(plugin, platform)
+    if not hook_names:
         return
-    src = HOOKS_CATALOG_DIR / hook_name
-    if not src.exists():
-        raise SystemExit(f"Missing hook catalog source: {src}")
-    shutil.copytree(
-        src,
-        plugin_dir(plugin, platform) / "hooks",
-        ignore=shutil.ignore_patterns("__pycache__", "*.pyc", PACKAGING_FILENAME),
-    )
+    target = plugin_dir(plugin, platform) / "hooks"
+    merged_hooks: dict[str, list] = {}
+    for hook_name in hook_names:
+        src = HOOKS_CATALOG_DIR / hook_name
+        if not src.exists():
+            raise SystemExit(f"Missing hook catalog source: {src}")
+        for child in src.iterdir():
+            if child.name in {PACKAGING_FILENAME, "__pycache__", "hooks.json"}:
+                continue
+            destination = target / child.name
+            if child.is_dir():
+                shutil.copytree(
+                    child,
+                    destination,
+                    dirs_exist_ok=True,
+                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                )
+            else:
+                destination.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(child, destination)
+        hooks_json = src / "hooks.json"
+        if hooks_json.exists():
+            merge_hook_payload(merged_hooks, json.loads(hooks_json.read_text(encoding="utf-8")))
+    if merged_hooks:
+        json_dump(target / "hooks.json", {"hooks": merged_hooks})
+
+
+def merge_hook_payload(merged_hooks: dict[str, list], payload: dict) -> None:
+    hooks = payload.get("hooks", {})
+    if not isinstance(hooks, dict):
+        raise SystemExit("Hook payload must contain a hooks object")
+    for event_name, entries in hooks.items():
+        if not isinstance(entries, list):
+            raise SystemExit(f"Hook event {event_name!r} must be a list")
+        merged_hooks.setdefault(event_name, []).extend(entries)
 
 
 def claude_manifest(plugin: str) -> dict:
@@ -610,7 +638,7 @@ def write_assets(plugin: str, platform: str) -> None:
 def plugin_has_content(plugin: str, platform: str) -> bool:
     return (
         bool(skills_for(plugin, platform))
-        or hook_for(plugin, platform) is not None
+        or bool(hooks_for(plugin, platform))
         or bool(external_skills_for(plugin, platform))
     )
 
