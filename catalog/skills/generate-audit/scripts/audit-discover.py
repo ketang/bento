@@ -153,6 +153,26 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("cargo-audit",               "Rust", [], "cargo audit", True),
     ("rustfmt",                   "Rust", [".rustfmt.toml", "rustfmt.toml"], "cargo fmt --check", False),
     ("cargo-tarpaulin",           "Rust", [], "cargo tarpaulin", True),
+    # ── Java (Maven) ────────────────────────────────────────────────────────
+    ("spotbugs",         "Java", ["pom.xml"],
+     "mvn com.github.spotbugs:spotbugs-maven-plugin:check", False),
+    ("dependency-check", "Java", ["pom.xml"],
+     "mvn org.owasp:dependency-check-maven:check", False),
+    ("checkstyle",       "Java", ["pom.xml", "checkstyle.xml"],
+     "mvn checkstyle:check", False),
+    ("spotless",         "Java", ["pom.xml"], "mvn spotless:check", False),
+    # error-prone is a compile-time javac plugin; surface as recommendation
+    # rather than a separate run. No CLI invocation in this row.
+    ("error-prone",      "Java", ["pom.xml"], "mvn compile (with error-prone javac plugin)", False),
+    # ── Java (Gradle) ───────────────────────────────────────────────────────
+    ("spotbugs",         "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew spotbugsMain", False),
+    ("dependency-check", "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew dependencyCheckAnalyze", False),
+    ("checkstyle",       "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew checkstyleMain", False),
+    ("spotless",         "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew spotlessCheck", False),
     # ── Cross-language: vulnerability scanning ─────────────────────────────
     # Triggered whenever any dependency manifest is present; supersedes nancy.
     ("osv-scanner", None, [
@@ -380,6 +400,9 @@ def detect_languages(files: set[str]) -> list[str]:
         languages.append("TypeScript")
     if "pyproject.toml" in files or any(path.endswith(".py") for path in files):
         languages.append("Python")
+    java_build_files = {"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}
+    if java_build_files & files or any(path.endswith((".java", ".kt")) for path in files):
+        languages.append("Java")
     return unique_sorted(languages)
 
 

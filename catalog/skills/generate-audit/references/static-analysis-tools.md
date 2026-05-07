@@ -167,6 +167,35 @@ Grade the cyclomatic complexity of each function. Grade B (CC 6–10) → audit
 average across the module.
 Run: `radon cc . --min B -s`
 
+### spotbugs
+Bytecode analyzer for Java. HIGH-priority finding → audit `error`;
+MEDIUM → `warning`; LOW → `note`. Run via Maven plugin or Gradle task:
+- Maven: `mvn com.github.spotbugs:spotbugs-maven-plugin:check`
+- Gradle: `./gradlew spotbugsMain`
+
+### dependency-check
+OWASP CVE scanner for Java dependencies. Any reported CVE → audit `error`
+regardless of severity. Configure suppression file for false positives.
+- Maven: `mvn org.owasp:dependency-check-maven:check`
+- Gradle: `./gradlew dependencyCheckAnalyze`
+
+### error-prone
+Google's compile-time bug pattern checker for Java. Treated as a `javac`
+plugin, not a separate run. Any error-prone finding surfaced during
+compilation → audit `error`. Recommend enabling on the build's `compile` task.
+
+### checkstyle
+Style/format linter. Any error → audit `warning`. Threshold and ruleset are
+project-defined; report against the project's configured rules.
+- Maven: `mvn checkstyle:check`
+- Gradle: `./gradlew checkstyleMain`
+
+### spotless
+Format enforcement (Google Java Format, etc.). Any formatting drift → audit
+`warning` per file.
+- Maven: `mvn spotless:check`
+- Gradle: `./gradlew spotlessCheck`
+
 ### clippy
 Any `deny`-level finding → audit `error`. `warn`-level → audit `warning`. Note
 `#[allow(...)]` attributes that suppress important lints. `clippy::cognitive_complexity`
