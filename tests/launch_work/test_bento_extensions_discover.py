@@ -3,6 +3,7 @@ import stat
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 import sys
 
@@ -95,8 +96,7 @@ class DiscoveryTest(unittest.TestCase):
     def test_xdg_chain_orders_repo_first_then_user(self) -> None:
         repo = self.root / "repo"
         user = self.root / "userhome"
-        os.environ["XDG_CONFIG_HOME"] = str(user / ".config")
-        try:
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(user / ".config")}):
             _write(
                 repo / ".agent-plugins/bento/bento/launch-work/hooks/pre/10-repo.sh",
                 executable=True,
@@ -110,5 +110,3 @@ class DiscoveryTest(unittest.TestCase):
                 [p.name for p in result.files],
                 ["10-repo.sh", "10-user.sh"],
             )
-        finally:
-            del os.environ["XDG_CONFIG_HOME"]

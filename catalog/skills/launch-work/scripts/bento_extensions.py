@@ -19,7 +19,6 @@ import re
 import stat
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Iterable
 
 
 PREFIX_RE = re.compile(r"^(\d{2})-(.+)$")
