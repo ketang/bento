@@ -268,6 +268,23 @@ with the version file update.
 
 See [hooks/README.md](hooks/README.md) for the exact format.
 
+## Project extensions for `launch-work` and `land-work`
+
+The `launch-work` and `land-work` skills support project-supplied
+extensions at the `pre` and `post` positions of each skill. Extensions
+come in two flavors:
+
+- **Hooks** — executable scripts (any language) that gate the skill via
+  exit codes. See
+  [`catalog/skills/launch-work/references/project-hooks.md`](catalog/skills/launch-work/references/project-hooks.md).
+- **Actions** — markdown files the agent reads and applies as additive
+  guidance. See
+  [`catalog/skills/launch-work/references/project-actions.md`](catalog/skills/launch-work/references/project-actions.md).
+
+Both are optional. Repos with no hooks or actions installed run the
+skills exactly as before. For a worked example, see
+[`docs/extensions.md`](docs/extensions.md).
+
 ## Structure
 
 ```text
