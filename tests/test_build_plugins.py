@@ -127,6 +127,39 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue((claude_bento_hooks / "scripts" / "auto-allow.py").exists())
         self.assertFalse((codex_bento / "hooks").exists())
 
+    def test_bento_claude_plugin_packages_telemetry_hook_support(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        claude_bento_hooks = self.root / "plugins" / "claude" / "bento" / "hooks"
+        hooks_json = json.loads((claude_bento_hooks / "hooks.json").read_text(encoding="utf-8"))
+        post_tool_use = hooks_json["hooks"]["PostToolUse"]
+        commands = [
+            hook["command"]
+            for entry in post_tool_use
+            if entry.get("matcher") == "Bash"
+            for hook in entry["hooks"]
+        ]
+
+        self.assertTrue((claude_bento_hooks / "scripts" / "auto-allow.py").exists())
+        self.assertTrue((claude_bento_hooks / "scripts" / "seed-agent-plugins.py").exists())
+        self.assertTrue((claude_bento_hooks / "scripts" / "ensure-worktree-permissions.py").exists())
+        self.assertIn(
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/record-bash.py",
+            commands,
+        )
+        self.assertTrue((claude_bento_hooks / "scripts" / "bento_telemetry.py").exists())
+        for script_name in ["record-bash.py", "bento-telemetry.py"]:
+            script = claude_bento_hooks / "scripts" / script_name
+            self.assertTrue(script.exists(), script)
+            self.assertTrue(os.access(script, os.X_OK), script)
+
+    def test_codex_bento_plugin_does_not_package_claude_telemetry_hooks(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        codex_bento = self.root / "plugins" / "codex" / "bento"
+
+        self.assertFalse((codex_bento / "hooks").exists())
+
     def test_session_id_not_in_claude_marketplace_when_claude_empty(self) -> None:
         # Force session-id to have no Claude artifacts, confirm it drops out
         # of the Claude marketplace entries.

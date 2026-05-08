@@ -89,11 +89,36 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 
 2. Confirm the current branch is the intended landing branch and that the helper
    reports a clean feature-branch checkout.
-2a. Read `../launch-work/references/project-hooks.md` and run the `land-work`
-    project hook phase before creating or verifying the merge preview, rebasing,
-    or merging. If no executable hooks are discovered, continue unchanged. If a
-    hook exits non-zero, follow the contract's abort or human-handoff semantics
-    before proceeding.
+2a. Read `../launch-work/references/project-hooks.md` and
+    `../launch-work/references/project-actions.md`. Run the **`pre`**
+    extensions before creating or verifying the merge preview, rebasing, or
+    merging:
+
+    ```bash
+    ../launch-work/scripts/bento-extensions.py run-hooks \
+      --repo-root <repo-root> \
+      --skill land-work \
+      --position pre \
+      --branch <feature-branch> \
+      --worktree <feature-worktree> \
+      --base-ref <primary-branch> \
+      --base-sha <leased-sha> \
+      --head-sha $(git rev-parse HEAD) \
+      --runtime claude
+    ```
+
+    Then discover and apply `pre` prose actions:
+
+    ```bash
+    ../launch-work/scripts/bento-extensions.py discover \
+      --repo-root <repo-root> \
+      --skill land-work \
+      --kind actions \
+      --position pre
+    ```
+
+    Read each listed file in order and apply. If a hook exits non-zero or a
+    `## Stop conditions` predicate matches, halt; the merge has not started.
 2b. **Legacy migration only** — current launch-work stores the progress log
     under `$GIT_DIR/launch-work/log.md`, which never enters the working tree
     and never lands. If the working tree still carries a tracked
@@ -176,6 +201,37 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
 ```bash
 land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-dir>
 ```
+8a. Run the **`post`** extensions in **advisory mode** (the merge has
+    already succeeded; abort cannot reverse it):
+
+    ```bash
+    ../launch-work/scripts/bento-extensions.py run-hooks \
+      --repo-root <repo-root> \
+      --skill land-work \
+      --position post \
+      --advisory \
+      --branch <feature-branch> \
+      --worktree <feature-worktree> \
+      --base-ref <primary-branch> \
+      --base-sha <new-base-sha> \
+      --merge-sha $(git rev-parse <primary-branch>) \
+      --landed 1 \
+      --runtime claude
+    ```
+
+    Then discover and apply `post` prose actions (also advisory):
+
+    ```bash
+    ../launch-work/scripts/bento-extensions.py discover \
+      --repo-root <repo-root> \
+      --skill land-work \
+      --kind actions \
+      --position post
+    ```
+
+    Surface any non-zero hook exits or matched `## Stop conditions`
+    predicates to the user as warnings; do not unwind the merge, do not
+    block tracker mutations.
 9. After the landing succeeds, close or update the tracker item through the
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the
@@ -223,9 +279,10 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 - Do not bypass exact-candidate verification after manual conflict resolution.
 - Do not use a repo-specific merge helper autonomously unless it can prove the
   landed candidate matches the verified preview.
-- Do not skip discovered project hooks. A `75` exit code is a human handoff,
-  not a destructive failure; preserve the branch and linked worktree and
-  surface the hook's stdout.
+- Do not skip discovered project hooks or actions at the `pre` and `post`
+  positions. At `pre`, a `75` exit (hooks) or matched stop condition
+  (actions) halts before the merge starts and is a human handoff. At
+  `post`, both are advisory: surface the message and continue.
 - Do not land changes that include deploy-critical artifacts without verifying
   the committed blob content matches what was tested locally.
 - Do not merge a feature branch whose log (under `$GIT_DIR/launch-work/log.md`
