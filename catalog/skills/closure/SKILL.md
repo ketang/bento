@@ -132,8 +132,11 @@ caller decides what to do with that signal.
 
 Use single-target mode for stale/ambiguous/other-agent leftovers or fallback
 diagnostics — not for the active landing agent's routine cleanup of its own
-just-landed branch (see the section above). The wide-net workflow below is
-for repo-wide cleanup passes, not for single-branch tear-down.
+just-landed branch (see the section above). Passing `--target-branch` only
+narrows the helper's scan and apply scope; it does not override the
+same-session prohibition for the caller's own active or just-finished
+worktree. The wide-net workflow below is for repo-wide cleanup passes, not for
+single-branch tear-down.
 
 If the user also wants patch-equivalent branches removed (work landed via
 rebase or squash with no merge commit):
