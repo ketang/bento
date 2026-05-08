@@ -114,8 +114,9 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
      "go test -coverprofile=coverage.out ./... && go tool cover -func=coverage.out", True),
     ("dupl",          "Go", [".dupl"], "dupl ./...", False),
     ("gocyclo",       "Go", [], "gocyclo -over 10 ./...", True),
+    ("gocognit",      "Go", [], "gocognit -over 15 .", True),
     ("deadcode",      "Go", [], "deadcode ./...", True),
-    ("nancy",         "Go", ["nancy.ignore"], "go list -json -deps ./... | nancy sleuth", False),
+    # nancy superseded by osv-scanner (cross-language; see below).
     # ── TypeScript / JavaScript ─────────────────────────────────────────────
     ("eslint", "TypeScript",
      [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
@@ -128,6 +129,21 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("tsc",     "TypeScript", ["tsconfig.json"], "npx tsc --noEmit", False),
     ("knip",    "TypeScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
     ("knip",    "JavaScript", ["knip.json", "knip.ts", ".knip.json", "knip.jsonc"], "npx knip", False),
+    # eslint-sonarjs adds cognitive complexity to ESLint; activated via plugin
+    # entry in eslint config. Detection: presence of eslint config (sufficient
+    # baseline; specific plugin presence isn't probed here).
+    ("eslint-sonarjs", "TypeScript",
+     [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
+      ".eslintrc.yaml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"],
+     "npx eslint . --format=compact", False),
+    ("eslint-sonarjs", "JavaScript",
+     [".eslintrc", ".eslintrc.js", ".eslintrc.cjs", ".eslintrc.json", ".eslintrc.yml",
+      ".eslintrc.yaml", "eslint.config.js", "eslint.config.mjs", "eslint.config.cjs"],
+     "npx eslint . --format=compact", False),
+    # depcheck runs zero-config; package.json (implied by language detection) is
+    # the trigger. Complementary to knip: dependency drift, not unused exports.
+    ("depcheck", "TypeScript", [], "npx depcheck", True),
+    ("depcheck", "JavaScript", [], "npx depcheck", True),
     ("prettier", "TypeScript",
      [".prettierrc", ".prettierrc.json", ".prettierrc.js", ".prettierrc.cjs", ".prettierrc.yml",
       ".prettierrc.yaml", "prettier.config.js", "prettier.config.cjs"],
@@ -142,6 +158,8 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("interrogate", "Python", [".interrogate.ini"], "interrogate .", False),
     ("vulture",     "Python", ["whitelist.py"], "vulture .", False),
     ("radon",       "Python", [], "radon cc . --min B -s", True),
+    ("flake8-cognitive-complexity", "Python", [".flake8", "setup.cfg", "tox.ini"],
+     "flake8 --max-cognitive-complexity=15", False),
     # ── Rust ────────────────────────────────────────────────────────────────
     ("clippy",                    "Rust", [], "cargo clippy -- -D warnings", True),
     ("clippy-cognitive-complexity","Rust", ["clippy.toml", ".clippy.toml"],
@@ -149,6 +167,40 @@ STATIC_TOOLS: list[tuple[str, str | None, list[str], str, bool]] = [
     ("cargo-audit",               "Rust", [], "cargo audit", True),
     ("rustfmt",                   "Rust", [".rustfmt.toml", "rustfmt.toml"], "cargo fmt --check", False),
     ("cargo-tarpaulin",           "Rust", [], "cargo tarpaulin", True),
+    # ── Java (Maven) ────────────────────────────────────────────────────────
+    ("spotbugs",         "Java", ["pom.xml"],
+     "mvn com.github.spotbugs:spotbugs-maven-plugin:check", False),
+    ("dependency-check", "Java", ["pom.xml"],
+     "mvn org.owasp:dependency-check-maven:check", False),
+    ("checkstyle",       "Java", ["pom.xml", "checkstyle.xml"],
+     "mvn checkstyle:check", False),
+    ("spotless",         "Java", ["pom.xml"], "mvn spotless:check", False),
+    ("pmd-cognitive-complexity", "Java", ["pom.xml"], "mvn pmd:check", False),
+    # error-prone is a compile-time javac plugin; surface as recommendation
+    # rather than a separate run. No CLI invocation in this row.
+    ("error-prone",      "Java", ["pom.xml"], "mvn compile (with error-prone javac plugin)", False),
+    # ── Java (Gradle) ───────────────────────────────────────────────────────
+    ("spotbugs",         "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew spotbugsMain", False),
+    ("dependency-check", "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew dependencyCheckAnalyze", False),
+    ("checkstyle",       "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew checkstyleMain", False),
+    ("spotless",         "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew spotlessCheck", False),
+    ("pmd-cognitive-complexity", "Java", ["build.gradle", "build.gradle.kts"],
+     "./gradlew pmdMain", False),
+    # ── Cross-language: vulnerability scanning ─────────────────────────────
+    # Triggered whenever any dependency manifest is present; supersedes nancy.
+    ("osv-scanner", None, [
+        "go.mod", "package-lock.json", "yarn.lock", "pnpm-lock.yaml",
+        "Cargo.lock", "requirements.txt", "Pipfile.lock", "pom.xml",
+        "Gemfile.lock", "osv-scanner.toml",
+    ], "osv-scanner --recursive .", False),
+    # ── Cross-language: complexity fallback ─────────────────────────────────
+    # lizard is a polyglot complexity scanner. Useful as a fallback for repos
+    # that lack per-language cognitive-complexity tooling.
+    ("lizard", None, [], "lizard .", True),
     # ── Cross-language: secrets ─────────────────────────────────────────────
     ("gitleaks",       None, [".gitleaks.toml", ".gitleaks.json", ".gitleaksignore"],
      "gitleaks detect --source . --verbose", False),
@@ -178,6 +230,9 @@ TOOL_BINARY_OVERRIDES: dict[str, str] = {
     "knip": "npx",
     "prettier": "npx",
     "jscpd": "npx",
+    "depcheck": "npx",
+    "eslint-sonarjs": "npx",
+    "flake8-cognitive-complexity": "flake8",
 }
 
 
@@ -368,6 +423,9 @@ def detect_languages(files: set[str]) -> list[str]:
         languages.append("TypeScript")
     if "pyproject.toml" in files or any(path.endswith(".py") for path in files):
         languages.append("Python")
+    java_build_files = {"pom.xml", "build.gradle", "build.gradle.kts", "settings.gradle", "settings.gradle.kts"}
+    if java_build_files & files or any(path.endswith((".java", ".kt")) for path in files):
+        languages.append("Java")
     return unique_sorted(languages)
 
 
@@ -712,6 +770,166 @@ def detect_risk_surfaces(files: list[str]) -> dict[str, list[str]]:
     return {key: unique_sorted(value) for key, value in output.items()}
 
 
+_GO_ERROR_WRAP_PATTERN = re.compile(r'fmt\.Errorf\([^)]*%w')
+_GO_GO_STATEMENT_PATTERN = re.compile(r'(?m)^\s*go\s+(?:func\b|[A-Za-z_][A-Za-z0-9_.]*\s*\()')
+_GO_GOLEAK_IMPORT_PATTERN = re.compile(r'"go\.uber\.org/goleak"')
+# Concurrency primitives — literal substring match per issue spec. Empty
+# results imply `go test -race` is overkill; non-empty results mean the
+# auditor should prefer `go test -race -timeout 120s ./...` for build health.
+_GO_CONCURRENCY_NEEDLES: list[tuple[str, str]] = [
+    ("go_func", "go func"),
+    ("sync_mutex", "sync.Mutex"),
+    ("channel", "chan "),
+    ("sync_once", "sync.Once"),
+    ("sync_atomic", "sync/atomic"),
+]
+_GOLDEN_FIXTURE_DIRS = ("testdata/fixtures/", "testdata/inputs/", "testdata/cases/")
+_GOLDEN_EXPECTED_DIRS = ("testdata/golden/", "testdata/expected/", "testdata/want/")
+_GOLDEN_LIB_PATTERN = re.compile(
+    r'cupaloy|goldie|cmp\.Diff\([^)]*testdata|\.golden\b|\.want\b'
+)
+_GOLDEN_TEST_FILE_SUFFIXES = ("_test.go", ".test.ts", ".test.js", ".spec.ts", ".spec.js", "_test.py")
+
+_GO_PUBLIC_PURE_FN_PATTERN = re.compile(
+    r'^func\s+[A-Z][A-Za-z0-9_]*\s*\([^)]*\)\s*\([^)]*\berror\b[^)]*\)',
+    re.MULTILINE,
+)
+_PROPERTY_LIB_PATTERNS: dict[str, re.Pattern[str]] = {
+    "Go": re.compile(r'"pgregory\.net/rapid"|"github\.com/leanovate/gopter"'),
+    "Rust": re.compile(r'(?:^|\n)\s*use\s+(?:proptest|quickcheck)\b'),
+    "Python": re.compile(r'(?:^|\n)\s*(?:import\s+hypothesis|from\s+hypothesis\b)'),
+    "TypeScript": re.compile(r"['\"]fast-check['\"]"),
+    "JavaScript": re.compile(r"['\"]fast-check['\"]"),
+    "Java": re.compile(r'net\.jqwik|junit-quickcheck'),
+}
+
+
+def property_based_signal(
+    repo_root: Path, file_set: set[str], languages: list[str]
+) -> dict[str, dict[str, object]]:
+    """Detect pure-function-heavy public APIs without a property-based library.
+
+    Per-language summary. Audit consumer raises `warning` when
+    `candidate_pure_function_count > 0` and `library_detected = False` for a
+    language that overlaps risk surfaces.
+    """
+    out: dict[str, dict[str, object]] = {}
+    for lang in languages:
+        pattern = _PROPERTY_LIB_PATTERNS.get(lang)
+        if pattern is None:
+            continue
+        candidate_count = 0
+        library_detected = False
+        for path in file_set:
+            if lang == "Go" and path.endswith(".go") and not path.endswith("_test.go"):
+                content = read_text_if_reasonable(repo_root / path)
+                if content:
+                    candidate_count += len(_GO_PUBLIC_PURE_FN_PATTERN.findall(content))
+                    if pattern.search(content):
+                        library_detected = True
+            elif path.endswith((".rs", ".py", ".ts", ".tsx", ".js", ".java", ".kt")):
+                content = read_text_if_reasonable(repo_root / path)
+                if content and pattern.search(content):
+                    library_detected = True
+        out[lang] = {
+            "candidate_pure_function_count": candidate_count,
+            "library_detected": library_detected,
+        }
+    return out
+
+
+def golden_file_signal(repo_root: Path, file_set: set[str]) -> dict[str, object]:
+    """Detect input→output projects missing a golden-file harness.
+
+    Audit consumer treats `has_fixture_tree=True` with the other two False as
+    a test-strategy `warning`-level gap.
+    """
+    has_fixture = any(p.startswith(_GOLDEN_FIXTURE_DIRS) for p in file_set)
+    has_expected = any(p.startswith(_GOLDEN_EXPECTED_DIRS) for p in file_set)
+    has_lib = False
+    if has_fixture and not has_expected:
+        for path in file_set:
+            if not path.endswith(_GOLDEN_TEST_FILE_SUFFIXES):
+                continue
+            content = read_text_if_reasonable(repo_root / path)
+            if content and _GOLDEN_LIB_PATTERN.search(content):
+                has_lib = True
+                break
+    return {
+        "has_fixture_tree": has_fixture,
+        "has_expected_tree": has_expected,
+        "has_golden_lib_usage": has_lib,
+    }
+
+
+def go_goroutine_packages(repo_root: Path, file_set: set[str]) -> list[dict[str, object]]:
+    """Find Go packages that spawn goroutines in non-test code without goleak.
+
+    Returns one entry per package directory with `go func` or `go name(...)` in
+    a non-test .go file and no `go.uber.org/goleak` import in any sibling
+    `_test.go` file.
+    """
+    has_goroutine: dict[str, bool] = {}
+    has_goleak: dict[str, bool] = {}
+    for path in file_set:
+        if not path.endswith(".go"):
+            continue
+        pkg_dir = str(Path(path).parent)
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        if path.endswith("_test.go"):
+            if _GO_GOLEAK_IMPORT_PATTERN.search(content):
+                has_goleak[pkg_dir] = True
+        else:
+            if _GO_GO_STATEMENT_PATTERN.search(content):
+                has_goroutine[pkg_dir] = True
+    return [
+        {"package": pkg, "has_goleak": has_goleak.get(pkg, False)}
+        for pkg in sorted(has_goroutine)
+        if not has_goleak.get(pkg, False)
+    ]
+
+
+def go_concurrency_signals(repo_root: Path, file_set: set[str]) -> list[dict[str, object]]:
+    """Find non-test Go files using concurrency primitives.
+
+    Returns one entry per non-test `.go` file that matches at least one
+    primitive in `_GO_CONCURRENCY_NEEDLES`, with the list of detected
+    primitive names. Empty result → `go test -race` is overkill for the
+    repo; non-empty → recommend `go test -race -timeout 120s ./...` in the
+    build-health phase.
+    """
+    results: list[dict[str, object]] = []
+    for path in sorted(file_set):
+        if not path.endswith(".go") or path.endswith("_test.go"):
+            continue
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        detected = [name for name, needle in _GO_CONCURRENCY_NEEDLES if needle in content]
+        if detected:
+            results.append({"path": path, "signals": detected})
+    return results
+
+
+def go_error_wrapping_count(repo_root: Path, file_set: set[str]) -> int:
+    """Count `fmt.Errorf(...: %w...)` sites across .go files.
+
+    High counts indicate the codebase relies on wrapped errors, which gates
+    `errorlint` as a high-priority recommendation in the golangci-lint baseline.
+    """
+    count = 0
+    for path in file_set:
+        if not path.endswith(".go"):
+            continue
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
+        count += len(_GO_ERROR_WRAP_PATTERN.findall(content))
+    return count
+
+
 def detect_static_analysis_tools(
     repo_root: Path, file_set: set[str], languages: list[str]
 ) -> dict[str, object]:
@@ -758,6 +976,25 @@ def detect_static_analysis_tools(
             if tool_name not in missing_by_language[language]:
                 missing_by_language[language].append(tool_name)
 
+    # actionlint: trigger on presence of any GitHub Actions workflow file.
+    # Not driven by language or config-file detection, so it sits outside the
+    # STATIC_TOOLS schema.
+    has_workflows = any(
+        path.startswith(".github/workflows/") and path.endswith((".yml", ".yaml"))
+        for path in file_set
+    )
+    if has_workflows:
+        actionlint_entry = {
+            "tool": "actionlint",
+            "config": None,
+            "run": "actionlint",
+            "binary": "actionlint",
+        }
+        applicable.append(actionlint_entry)
+        if shutil.which("actionlint"):
+            installed.append(actionlint_entry)
+        detected_names.add((None, "actionlint"))
+
     # Config-required cross-language secrets tools not detected
     secrets_group = TOOL_ALTERNATIVE_GROUPS.get((None, "secrets"), [])
     secrets_detected = any((None, t) in detected_names for t in secrets_group)
@@ -765,11 +1002,24 @@ def detect_static_analysis_tools(
     if not secrets_detected:
         missing_cross_language.append(secrets_group[0] if secrets_group else "gitleaks")
 
+    language_signals: dict[str, dict[str, object]] = {}
+    if "Go" in lang_set:
+        language_signals["Go"] = {
+            "error_wrapping_count": go_error_wrapping_count(repo_root, file_set),
+            "goroutine_packages_missing_goleak": go_goroutine_packages(repo_root, file_set),
+            "concurrency_signals": go_concurrency_signals(repo_root, file_set),
+        }
+
     return {
         "applicable_tools": applicable,
         "installed_tools": installed,
         "missing_by_language": missing_by_language,
         "missing_cross_language": missing_cross_language,
+        "language_signals": language_signals,
+        "test_strategy_signals": {
+            "golden_file": golden_file_signal(repo_root, file_set),
+            "property_based": property_based_signal(repo_root, file_set, languages),
+        },
     }
 
 

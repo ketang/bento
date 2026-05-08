@@ -30,6 +30,29 @@ For each installed tool, emit:
 Surface all `error`-level findings as audit errors. Surface `warning`-level as
 audit warnings. Note the active linter set from `.golangci.yml`; a sparse set
 (e.g. only `errcheck` enabled) is itself a `warning`-level finding.
+
+Recommended baseline `.golangci.yml` keeps the golangci-lint defaults
+(`errcheck`, `staticcheck`, `unused`, `govet`, `gosimple`, `ineffassign`) and
+additionally enables `errorlint`, `wrapcheck`, `exhaustive`, `prealloc`,
+`gocritic`, `revive`, and `misspell`. Where the project tolerates the
+analysis cost, also enable Uber's `nilaway` — optional but high signal on
+nil-deref bugs. `errcheck` must remain enabled and must not be globally
+silenced via `// nolint:errcheck`; each suppression should justify the
+swallowed error.
+
+A `.golangci.yml` that *disables* any of `errcheck`, `staticcheck`, `unused`,
+or `govet` → audit `error`-level misconfiguration; those defaults are
+load-bearing for correctness.
+
+`errorlint` catches `if err == sentinel` against wrappable sentinels, type
+assertions instead of `errors.As`, and `%s`/`%v` formatting where `%w` was
+intended. `wrapcheck` flags errors returned across package boundaries
+without wrapping. Any `errorlint` or `wrapcheck` finding → audit `error`.
+Promote `errorlint` to a high-priority recommendation when the repo has > 10
+`fmt.Errorf("...: %w", err)` sites. Absence of both `errorlint` *and*
+`wrapcheck` from `linters: enable:` in a Go repo with > 20
+`fmt.Errorf("...%w", err)` call sites → audit `warning`-level recommendation
+gap.
 Run: `golangci-lint run ./...`
 
 ### govulncheck
@@ -40,6 +63,23 @@ Run: `govulncheck ./...`
 ### gofmt
 Any output (unformatted files listed) → audit `warning` per file.
 Run: `gofmt -l .`
+
+### goleak
+Test-time goroutine leak check. Not a CLI tool; enabled per package via
+`goleak.VerifyTestMain(m)` in `TestMain`, or `defer goleak.VerifyNone(t)` per
+test. Catches goroutines that outlive their owning test (e.g. background loops
+not stopped by `Shutdown`). Different failure mode from `-race`.
+
+Any leak at test time → audit `error`. Absence in packages that spawn
+goroutines in non-test code (`go func`, `go name(...)`) → `warning`-level
+recommendation gap; surface each such package with the suggested `TestMain`
+snippet:
+
+```go
+func TestMain(m *testing.M) { goleak.VerifyTestMain(m) }
+```
+
+Import: `go.uber.org/goleak`.
 
 ### go-test-cover
 Report coverage % per package from the func output. Flag packages in
@@ -58,14 +98,29 @@ Functions with cyclomatic complexity > 10 → audit `warning`. Complexity > 20
 `quality-standards.md`. Report each function with its score; do not average.
 Run: `gocyclo -over 10 ./...`
 
+### gocognit
+Cognitive complexity for Go. Different metric from cyclomatic: weights nesting
+and breaks in control flow that hurt readability; chained guard clauses don't
+add. Recommend running both — they catch different shapes. Score > 15 → audit
+`warning`; > 30 → audit `error`. Pin tool version in CI; cognitive scoring has
+more interpretation calls than cyclomatic.
+Run: `gocognit -over 15 .` (or enable as `gocognit` in `.golangci.yml`)
+
 ### dupl
 Any clone above the threshold → audit `note`. Review before flagging — some
 duplication (e.g. test fixtures) is intentional.
 Run: `dupl ./...`
 
-### nancy
-Any vulnerable dependency → audit `error`. Run after `go list -json -deps ./...`.
-Run: `go list -json -deps ./... | nancy sleuth`
+### osv-scanner
+Cross-language vulnerability scanner. Reads `go.mod`, `package-lock.json`,
+`yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `requirements.txt`, `Pipfile.lock`,
+`pom.xml`, `Gemfile.lock`, and SBOMs in one pass against the OSV database.
+Preferred over per-language scanners; supersedes `nancy` for Go.
+
+Reached vulnerability (when reachability is determinable, e.g. paired with
+`govulncheck` on Go) → audit `error`. Unreached vulnerability → `warning`.
+Pair with `govulncheck` for Go reachability analysis.
+Run: `osv-scanner --recursive .`
 
 ### eslint
 `error`-level findings → audit errors. `warning`-level → audit warnings. Note
@@ -82,6 +137,21 @@ Run: `npx tsc --noEmit`
 Unused exports → audit `warning`. Unused dependencies → audit `note`. Review
 false positives for dynamic imports before reporting.
 Run: `npx knip`
+
+### depcheck
+Missing dependency (imported but not declared in `package.json`) → audit
+`error`; the repo only resolves it locally via transitive hoisting and
+breaks for downstream consumers. Unused declared dependency → audit `note`;
+review for dynamic loads (`require(name)`, plugin globs) before reporting.
+Complementary to `knip`, not an alternative: `knip` finds unused exports in
+code, `depcheck` finds drift between code and `package.json`.
+Run: `npx depcheck`
+
+### eslint-sonarjs
+ESLint plugin providing `sonarjs/cognitive-complexity` for TS/JS. Score > 15
+→ audit `warning`; > 30 → audit `error`. Configure threshold in ESLint config.
+Complementary to ESLint's built-in `complexity` (cyclomatic).
+Run: enabled via ESLint config; run with `npx eslint . --format=compact`
 
 ### prettier
 Any file failing the check → audit `warning` per file.
@@ -127,6 +197,104 @@ Grade the cyclomatic complexity of each function. Grade B (CC 6–10) → audit
 `quality-standards.md`. Report each function with its score and grade; do not
 average across the module.
 Run: `radon cc . --min B -s`
+
+### pmd-cognitive-complexity
+PMD's `CognitiveComplexity` rule for Java. Score > 15 → audit `warning`;
+> 30 → audit `error`. Run via Maven or Gradle PMD plugin. Complementary to
+PMD's `CyclomaticComplexity`.
+- Maven: `mvn pmd:check` (with cognitive-complexity rule enabled)
+- Gradle: `./gradlew pmdMain`
+
+### flake8-cognitive-complexity
+flake8 plugin (`CCR001`) adding cognitive complexity to Python lint runs.
+Score > 15 → audit `warning`; > 30 → audit `error`. Enable in `.flake8` /
+`setup.cfg`.
+Run: `flake8 --max-cognitive-complexity=15`
+
+### golden-file harness
+Pattern, not a tool. For input→output transformation projects (compilers,
+formatters, refactoring tools, transpilers, generators, linters), the
+strongest correctness signal is "given fixture input, produce identical
+expected output." Detection: presence of a fixture tree (e.g.
+`testdata/fixtures/`) but no expected-output tree (`testdata/golden/`,
+`testdata/expected/`, `testdata/want/`) and no test code referencing
+`goldie`, `cupaloy`, `*.golden`/`*.want` files, or `cmp.Diff`-against-fixture.
+
+Absence in an input→output project → audit `warning` test-strategy gap.
+Coverage % alone misses this — the lines may be covered, but only via
+`strings.Contains` assertions that don't catch unrelated mutations.
+
+Two-stage workflow:
+- `go test` runs all golden directories, copies `input/`, executes the
+  recorded command, diffs against `expected/`.
+- `go test -update` regenerates `expected/`; reviewer scrutinizes the diff
+  in PR before committing.
+
+Library is project choice (cupaloy, goldie, hand-rolled `cmp.Diff`); recommend
+the pattern, not a specific library.
+
+### property-based testing
+Pattern, not a single tool. Different oracle from fuzzing: fuzzing asks
+"does it crash?"; property-based asks "does invariant `I(f(x))` hold for `x`
+drawn from domain `D`?" Catches correctness bugs that complete cleanly.
+
+Sweet spot: parsers, serializers, refactoring tools, format converters, math
+kernels, bytewise transforms — packages whose public API is pure functions
+with crisp invariants (round-trip identity, range preservation, length
+deltas, idempotence under inverse).
+
+Detection: high count of public functions with signature
+`func(...) (T, error)` where args are byte/string/int and `T` is a value
+type, and zero imports of a property-based library. Audit `warning`-level
+recommendation gap when this holds in a risk-surface package.
+
+Libraries:
+- Go: `pgregory.net/rapid` (preferred). `pkg/gopter` is older alternative.
+- Rust: `proptest`, `quickcheck`.
+- Python: `hypothesis`.
+- TypeScript / JavaScript: `fast-check`.
+- Java: `jqwik`, `junit-quickcheck`.
+
+Recommend the pattern with a list of concrete property candidates derived
+from the package's public API; do not pick the library for the project.
+
+### lizard
+Cross-language complexity analyzer (Python-based; supports Go, Java, JS, TS,
+Python, C/C++, Rust, Swift, etc.). Reports cyclomatic complexity, length,
+parameter count. Useful as a fallback when per-language tools aren't
+available, or for polyglot repos. CCN > 10 → audit `warning`; > 20 → `error`.
+Note: lizard reports cyclomatic, not cognitive — use as a coverage backstop,
+not a substitute for `gocognit`/`sonarjs`/`pmd-cognitive-complexity`.
+Run: `lizard .`
+
+### spotbugs
+Bytecode analyzer for Java. HIGH-priority finding → audit `error`;
+MEDIUM → `warning`; LOW → `note`. Run via Maven plugin or Gradle task:
+- Maven: `mvn com.github.spotbugs:spotbugs-maven-plugin:check`
+- Gradle: `./gradlew spotbugsMain`
+
+### dependency-check
+OWASP CVE scanner for Java dependencies. Any reported CVE → audit `error`
+regardless of severity. Configure suppression file for false positives.
+- Maven: `mvn org.owasp:dependency-check-maven:check`
+- Gradle: `./gradlew dependencyCheckAnalyze`
+
+### error-prone
+Google's compile-time bug pattern checker for Java. Treated as a `javac`
+plugin, not a separate run. Any error-prone finding surfaced during
+compilation → audit `error`. Recommend enabling on the build's `compile` task.
+
+### checkstyle
+Style/format linter. Any error → audit `warning`. Threshold and ruleset are
+project-defined; report against the project's configured rules.
+- Maven: `mvn checkstyle:check`
+- Gradle: `./gradlew checkstyleMain`
+
+### spotless
+Format enforcement (Google Java Format, etc.). Any formatting drift → audit
+`warning` per file.
+- Maven: `mvn spotless:check`
+- Gradle: `./gradlew spotlessCheck`
 
 ### clippy
 Any `deny`-level finding → audit `error`. `warn`-level → audit `warning`. Note
@@ -186,6 +354,14 @@ Any `error` or `warning` finding → audit `warning`. Focus on files in `scripts
 and CI workflow scripts first.
 Run: `find . -name '*.sh' -not -path './.git/*' | xargs shellcheck`
 
+### actionlint
+Detected when `.github/workflows/` contains any `*.yml` or `*.yaml` workflow.
+Any error → audit `warning` (workflow bugs are noisy in CI but rarely
+catastrophic). Shellcheck-class issues inside `run:` blocks → match the
+shellcheck severity mapping above. Near-zero false positive rate; treat
+findings as real.
+Run: `actionlint`
+
 ## Recommendations Block Template
 
 For each tool in `missing_by_language` and `missing_cross_language`, emit one
@@ -212,6 +388,23 @@ emit:
   Setup: create `clippy.toml` with `cognitive-complexity-threshold = 15`
   Enable: `cargo clippy -- -W clippy::cognitive_complexity`
 ```
+
+### actionlint recommendation text
+
+When `actionlint` is applicable (repo has `.github/workflows/`) but not
+installed, emit:
+
+```markdown
+- **actionlint** — catches GitHub Actions workflow errors (deprecated action
+  versions, undefined expressions, mismatched `needs:` graphs, shell issues
+  in `run:` blocks) that GitHub's UI hides until they fire in CI.
+  Install: `go install github.com/rhysd/actionlint/cmd/actionlint@latest`
+  First run: `actionlint`
+```
+
+When the audit recommends adding CI to a repo with no `.github/workflows/`,
+include `actionlint` in the proposed setup so new workflows are linted from
+day one (e.g., a workflow step running `actionlint` on push).
 
 ### Do not recommend
 - A tool that conflicts with an already-configured alternative (e.g. do not
