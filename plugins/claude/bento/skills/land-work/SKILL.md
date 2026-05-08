@@ -1,6 +1,6 @@
 ---
 name: land-work
-description: Use when approved work is ready to land via command line — verify preconditions, check the landing lease, merge, and close tracker work after landing.
+description: Hard trigger — invoke after finishing your own approved feature-branch work to merge it, close tracker work, and tear down the feature branch and its linked worktree afterward. This is the routine post-merge cleanup path for the agent that did the work; do not use closure for that.
 recommended_model: high
 ---
 
