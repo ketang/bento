@@ -100,11 +100,34 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
    This creates `<worktree-git-dir>/launch-work/log.md` at checkpoint
    `worktree-ready`. The log is not committed and does not appear in the
    working tree.
-9a. Read `launch-work/references/project-hooks.md` and run the `launch-work`
-    project hook phase after worktree verification and before dependency
-    installation, tests, or file edits. If no executable hooks are discovered,
-    continue unchanged. If a hook exits non-zero, follow the contract's abort
-    or human-handoff semantics before proceeding.
+9a. Read `launch-work/references/project-hooks.md` and
+    `launch-work/references/project-actions.md`. Run the **`pre`** extensions
+    after worktree verification and before dependency installation:
+
+    ```bash
+    launch-work/scripts/bento-extensions.py run-hooks \
+      --repo-root <repo-root> \
+      --skill launch-work \
+      --position pre \
+      --branch <branch> \
+      --worktree <worktree> \
+      --base-ref <primary-branch> \
+      --runtime claude
+    ```
+
+    Then discover and apply prose actions for the `pre` position:
+
+    ```bash
+    launch-work/scripts/bento-extensions.py discover \
+      --repo-root <repo-root> \
+      --skill launch-work \
+      --kind actions \
+      --position pre
+    ```
+
+    Read each listed file in order. Treat any `## Stop conditions` predicate
+    as a halt signal. If a hook exited non-zero, follow the contract's
+    abort or human-handoff semantics; actions do not load in that case.
 10. Install build/runtime dependencies in the new worktree before the first
     build, test, or typecheck. Prefer the repo's documented bootstrap command;
     otherwise detect by lockfile per
@@ -144,6 +167,34 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     ```bash
     launch-work/scripts/launch-work-log.py update --checkpoint ready-to-land
     ```
+
+11a. Run the **`post`** extensions before declaring the work ready to land:
+
+    ```bash
+    launch-work/scripts/bento-extensions.py run-hooks \
+      --repo-root <repo-root> \
+      --skill launch-work \
+      --position post \
+      --branch <branch> \
+      --worktree <worktree> \
+      --base-ref <primary-branch> \
+      --head-sha $(git rev-parse HEAD) \
+      --runtime claude
+    ```
+
+    Then discover and apply `post` prose actions:
+
+    ```bash
+    launch-work/scripts/bento-extensions.py discover \
+      --repo-root <repo-root> \
+      --skill launch-work \
+      --kind actions \
+      --position post
+    ```
+
+    Read each listed file in order. Apply additive guidance and evaluate
+    `## Stop conditions` predicates. If a hook or action halts, preserve
+    branch and linked worktree and surface the message.
 
 12. In the final task summary, include a brief note describing any additions
     or expansions made to the automated test suite. If test coverage did not
@@ -215,9 +266,10 @@ When `launch-work-discover.py` reports an in-flight log for the current task:
   canonical. The log lives under `$GIT_DIR/launch-work/log.md`, not in the
   working tree, and must never be committed or land on the integration
   branch.
-- Do not skip discovered project hooks. A `75` exit code is a human handoff,
-  not a destructive failure; preserve the branch and linked worktree and
-  surface the hook's stdout.
+- Do not skip discovered project hooks or actions at the `pre` and `post`
+  positions. A `75` exit code (hooks) or matched `## Stop conditions`
+  predicate (actions) is a human handoff, not a destructive failure;
+  preserve the branch and linked worktree and surface the message.
 - Never create a progress log on the primary branch.
 
 ## Stop Conditions
