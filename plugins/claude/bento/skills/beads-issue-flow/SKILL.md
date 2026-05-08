@@ -38,6 +38,45 @@ Use this skill only when the project documents Beads as the issue tracker.
     partially landed, update or leave the issue open according to repo policy
     instead of closing it.
 
+## Pre-Filing Readiness Check
+
+Before `bd create`, confirm the draft is workable. At filing time you hold
+the symptom and the session that produced it, so ambiguities feel resolved.
+A later agent sees only the issue body, and the same ambiguities block
+progress. Filing-time and work-time judgments diverge for structural
+reasons, not skill reasons.
+
+Use a blank-slate subagent as reviewer. Hand off via local temp files so an
+unworkable draft never enters the tracker.
+
+1. Write the proposed title and body to a temp file. Reserve a sibling path
+   for the verdict:
+
+   ```bash
+   draft=$(mktemp -t issue-draft.XXXXXX.md)
+   review=${draft%.md}.review.md
+   ```
+
+2. Dispatch a fresh subagent (e.g. `general-purpose`) with a self-contained
+   prompt. Do not pass the current chat, repro session, or files you read
+   while drafting. Instruct it to read only `$draft` and write its verdict
+   to `$review`. The verdict must answer: could I start work right now?
+   what is ambiguous, unscoped, or missing (acceptance check, in/out of
+   scope, smallest reproducible case, rough size signal)? would I refuse it
+   as too big or too vague?
+
+3. Read `$review`. If gaps were flagged, revise the draft and re-review, or
+   file the issue with the repo's documented triage marker and note the
+   unresolved questions in the body. Do not submit a draft that failed
+   review without an explicit triage tag.
+
+4. Only after the draft passes review (or is explicitly filed for triage)
+   run `bd create` with the contents of `$draft`.
+
+5. Delete the temp files after submission.
+
+The tracker never receives a draft that has not been through this loop.
+
 ## Closure Evidence Rule
 
 Never close a Beads issue without proof its branch is reachable from the
