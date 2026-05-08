@@ -51,7 +51,10 @@ state checks that should not rely on ad hoc prose reconstruction:
   remove `.launch-work/log.md` before the merge
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
-scoped to the script.
+scoped to the script. Resolve each helper path relative to this `SKILL.md`
+file: if you opened `/.../skills/land-work/SKILL.md`, run
+`/.../skills/land-work/scripts/land-work-prepare.py`. Do not search the whole
+plugin cache to rediscover the helper path.
 
 Run the prepare helper from the feature-branch worktree first. Use the preview
 helper to create the exact candidate you will verify, the lease helper whenever
@@ -71,6 +74,10 @@ Prefer:
 
 Run verification as its own command. Do not pipe verifier output into inline
 Python.
+
+For Codex, avoid shell pipelines for discovery as well. Prefer one direct
+command at a time, such as `git worktree list --porcelain` or the absolute
+helper path beside this skill, so sandbox approvals stay narrowly scoped.
 
 ## Workflow
 

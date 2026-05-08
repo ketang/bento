@@ -53,7 +53,10 @@ Use the JSON output as the starting point, then fill gaps using
 
 Include only modules that fit the discovered repo:
 
-- build health
+- build health (for Go repos where `static_analysis.language_signals.Go.concurrency_signals`
+  is non-empty, run `go test -race -timeout 120s ./...` in place of plain `go test ./...` —
+  any race finding is `error`-level, and missing `-race` in repo CI is `warning`-level
+  whenever the codebase has goroutines)
 - static analysis (run detected tools; emit run blocks per `static-analysis-tools.md`)
 - code quality (model-based review using thresholds and smell catalog from `quality-standards.md`)
 - dependency health (outdated packages, unused dependencies, license compliance)
@@ -61,6 +64,10 @@ Include only modules that fit the discovered repo:
 - contract or schema consistency
 - duplication (cross-file clone detection)
 - test coverage (gap analysis against risk surfaces; no blanket % target)
+- test strategy diversity (unit / property-based / golden-file / fuzz —
+  surface absence in repos where the pattern fits, e.g. golden-file harness
+  for input→output transformation tools, property-based tests for
+  parser/serializer/transform packages with crisp invariants)
 - documentation coverage (exported/public symbol coverage)
 - docs truthfulness
 - documentation utility
@@ -73,7 +80,9 @@ Include only modules that fit the discovered repo:
 
 Omit modules that do not match the repo. Do not invent a frontend UX section
 for a backend-only service, or a migration section for a repo with no
-database. **Secrets scan is never optional.**
+database. **Secrets scan is never optional.** When recommending CI for a
+repo with no `.github/workflows/`, include `actionlint` in the proposed
+setup so new workflows are linted from day one.
 
 ## Output Shape
 
