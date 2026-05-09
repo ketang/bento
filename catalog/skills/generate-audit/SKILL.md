@@ -57,7 +57,9 @@ Include only modules that fit the discovered repo:
   is non-empty, run `go test -race -timeout 120s ./...` in place of plain `go test ./...` —
   any race finding is `error`-level, and missing `-race` in repo CI is `warning`-level
   whenever the codebase has goroutines)
-- static analysis (run detected tools; emit run blocks per `static-analysis-tools.md`)
+- static analysis (run detected tools; emit run blocks per `static-analysis-tools.md`;
+  fold semgrep results under both "static analysis" and "security review" for
+  polyglot repos — its rules span both surfaces)
 - code quality (model-based review using thresholds and smell catalog from `quality-standards.md`)
 - dependency health (outdated packages, unused dependencies, license compliance)
 - **secrets scan** (always include; scans git history and working tree)
@@ -68,7 +70,17 @@ Include only modules that fit the discovered repo:
   surface absence in repos where the pattern fits, e.g. golden-file harness
   for input→output transformation tools, property-based tests for
   parser/serializer/transform packages with crisp invariants)
+- mutation testing (Go only; **gated** — apply only to packages with line
+  coverage ≥ 80% AND classified as risk surface; below threshold emit
+  "mutation testing premature; raise coverage first"; above threshold run
+  `gremlins unleash` and report surviving mutants per package, not a
+  percentage; each surviving mutant in a risk-surface function → `warning`;
+  run this module after test-coverage gap module)
 - documentation coverage (exported/public symbol coverage)
+- documentation hygiene (automated) — run markdownlint, lychee, and typos
+  on any repo with `*.md` files; distinct from the model-based
+  "documentation utility" pass; markdownlint/typos finding → `warning`;
+  broken link → `error`
 - docs truthfulness
 - documentation utility
 - issue hygiene
