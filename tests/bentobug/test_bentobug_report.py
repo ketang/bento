@@ -273,5 +273,126 @@ class BentobugReportTest(unittest.TestCase):
         self.assertNotEqual(record["kind"], "script")
 
 
+def _make_telemetry_record(skill: str, ts: str, exit_code: int = 0) -> dict:
+    return {
+        "v": 1,
+        "kind": "script",
+        "id": "test-id",
+        "ts": ts,
+        "session_id": "sess-abc",
+        "marketplace": "bento",
+        "plugin": "bento",
+        "skill": skill,
+        "script": f"{skill}-run.py",
+        "argv_redacted": [],
+        "exit": exit_code,
+        "class": "ok" if exit_code == 0 else "error",
+        "interrupted": False,
+        "duration_ms": 500,
+        "stderr_tail": [],
+    }
+
+
+class TelemetryEnrichmentTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+        self.store = Path(self.tmp.name) / "store"
+        self.telemetry_dir = Path(self.tmp.name) / "telemetry"
+        self.env = {
+            "PATH": os.environ["PATH"],
+            "HOME": str(Path(self.tmp.name) / "home"),
+            "BENTO_BENTOBUG_DIR": str(self.store),
+        }
+
+    def run_cli(
+        self,
+        args: list[str],
+        env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [sys.executable, str(SCRIPT), *args],
+            capture_output=True,
+            text=True,
+            env=env or self.env,
+            check=False,
+        )
+
+    def load_record(self, payload_path: str) -> dict:
+        return json.loads(Path(payload_path).read_text(encoding="utf-8"))
+
+    def write_telemetry(self, records: list[dict], filename: str = "2026-05-08.jsonl") -> None:
+        self.telemetry_dir.mkdir(parents=True, exist_ok=True)
+        path = self.telemetry_dir / filename
+        with path.open("w", encoding="utf-8") as fh:
+            for r in records:
+                fh.write(json.dumps(r) + "\n")
+
+    # ── Telemetry present: matching skill entry enriches the report ────────
+    def test_telemetry_present_adds_context_to_report(self) -> None:
+        self.write_telemetry([
+            _make_telemetry_record("swarm", "2026-05-08T12:00:00.000Z"),
+        ])
+        proc = self.run_cli([
+            "--note", "swarm produced empty triage",
+            "--target", "swarm",
+            "--telemetry-dir", str(self.telemetry_dir),
+        ])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        record = self.load_record(json.loads(proc.stdout)["path"])
+        self.assertIn("telemetry_context", record)
+        ctx = record["telemetry_context"]
+        self.assertEqual(ctx["skill"], "swarm")
+        self.assertEqual(ctx["ts"], "2026-05-08T12:00:00.000Z")
+        self.assertIn("exit", ctx)
+
+    # ── Telemetry absent: no telemetry dir → report created without it ─────
+    def test_telemetry_absent_report_succeeds_without_context(self) -> None:
+        proc = self.run_cli([
+            "--note", "launch-work failed",
+            "--target", "launch-work",
+            "--telemetry-dir", str(self.telemetry_dir),
+        ])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        record = self.load_record(json.loads(proc.stdout)["path"])
+        self.assertNotIn("telemetry_context", record)
+
+    # ── Corrupt telemetry: invalid JSONL → report created without context ──
+    def test_corrupt_telemetry_report_succeeds_without_context(self) -> None:
+        self.telemetry_dir.mkdir(parents=True, exist_ok=True)
+        (self.telemetry_dir / "2026-05-08.jsonl").write_text(
+            "not valid json\n{also bad\n", encoding="utf-8"
+        )
+        proc = self.run_cli([
+            "--note", "closure scan crashed",
+            "--target", "closure",
+            "--telemetry-dir", str(self.telemetry_dir),
+        ])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        record = self.load_record(json.loads(proc.stdout)["path"])
+        self.assertNotIn("telemetry_context", record)
+
+    # ── Ambiguous multiple-skill context: only target skill is used ─────────
+    def test_multiple_skills_in_telemetry_only_target_enriches_report(self) -> None:
+        self.write_telemetry([
+            _make_telemetry_record("launch-work", "2026-05-08T11:00:00.000Z"),
+            _make_telemetry_record("swarm", "2026-05-08T11:30:00.000Z"),
+            _make_telemetry_record("land-work", "2026-05-08T11:45:00.000Z"),
+            _make_telemetry_record("swarm", "2026-05-08T12:00:00.000Z"),
+        ])
+        proc = self.run_cli([
+            "--note", "swarm failed to triage ready issues",
+            "--target", "swarm",
+            "--telemetry-dir", str(self.telemetry_dir),
+        ])
+        self.assertEqual(proc.returncode, 0, proc.stderr)
+        record = self.load_record(json.loads(proc.stdout)["path"])
+        self.assertIn("telemetry_context", record)
+        ctx = record["telemetry_context"]
+        self.assertEqual(ctx["skill"], "swarm")
+        # Most recent swarm entry
+        self.assertEqual(ctx["ts"], "2026-05-08T12:00:00.000Z")
+
+
 if __name__ == "__main__":
     unittest.main()

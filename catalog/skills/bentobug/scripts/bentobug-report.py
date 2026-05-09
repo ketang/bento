@@ -2,8 +2,9 @@
 """bentobug report writer.
 
 Captures a structured bento bug report as one JSON file per report under
-$BENTO_BENTOBUG_DIR (or $XDG_STATE_HOME/bento/bentobug). Independent of
-telemetry: no telemetry imports, no telemetry-directory reads.
+$BENTO_BENTOBUG_DIR (or $XDG_STATE_HOME/bento/bentobug). Telemetry enrichment
+is best-effort and optional: reporting proceeds when telemetry is absent,
+disabled, empty, or corrupt.
 """
 
 from __future__ import annotations
@@ -63,6 +64,48 @@ def build_filename(record_id: str, target: str, note: str) -> str:
     return f"{record_id}-{target_part}.json"
 
 
+def _telemetry_store_dir() -> Path:
+    base = os.environ.get("XDG_STATE_HOME") or str(Path.home() / ".local" / "state")
+    return Path(base) / "bento" / "telemetry"
+
+
+def read_telemetry_context(target: str, telemetry_dir: Path) -> "dict[str, object] | None":
+    """Return the most recent telemetry record for *target*, or None on any failure."""
+    try:
+        if not telemetry_dir.is_dir():
+            return None
+        best: "dict[str, object] | None" = None
+        best_ts: str = ""
+        for jsonl_path in sorted(telemetry_dir.glob("*.jsonl"), reverse=True):
+            try:
+                text = jsonl_path.read_text(encoding="utf-8")
+            except OSError:
+                continue
+            for line in text.splitlines():
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    rec = json.loads(line)
+                except json.JSONDecodeError:
+                    continue
+                if not isinstance(rec, dict) or rec.get("skill") != target:
+                    continue
+                ts = str(rec.get("ts") or "")
+                if not best or ts > best_ts:
+                    best = rec
+                    best_ts = ts
+        if not best:
+            return None
+        ctx: dict[str, object] = {"ts": best_ts}
+        for field in ("skill", "script", "exit", "class", "duration_ms"):
+            if field in best:
+                ctx[field] = best[field]
+        return ctx
+    except Exception:
+        return None
+
+
 def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p = argparse.ArgumentParser(prog="bentobug-report")
     p.add_argument("--note", required=True, help="bug description (non-empty)")
@@ -82,6 +125,10 @@ def parse_args(argv: list[str] | None) -> argparse.Namespace:
     p.add_argument("--branch")
     p.add_argument("--worktree")
     p.add_argument("--context")
+    p.add_argument(
+        "--telemetry-dir",
+        help="override telemetry directory for enrichment (default: XDG_STATE_HOME/bento/telemetry)",
+    )
     return p.parse_args(argv)
 
 
@@ -115,6 +162,11 @@ def main(argv: list[str] | None = None) -> int:
         value = getattr(args, field, None)
         if value:
             record[field] = value
+
+    telemetry_dir = Path(args.telemetry_dir) if args.telemetry_dir else _telemetry_store_dir()
+    ctx = read_telemetry_context(target, telemetry_dir)
+    if ctx is not None:
+        record["telemetry_context"] = ctx
 
     base = store_dir()
     base.mkdir(parents=True, exist_ok=True, mode=0o700)
