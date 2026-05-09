@@ -93,8 +93,12 @@ and tell them this is not a bento bug.
 - Do not infer the target from telemetry events.
 - Do not block capture if telemetry is missing, disabled, empty, or
   corrupt.
-- Telemetry may enrich reports in a later, separate flow; this skill must
-  remain valid with zero telemetry data.
+- The report writer (`bentobug-report.py`) performs best-effort telemetry
+  enrichment: it reads the most recent telemetry entry for the target skill
+  from `$XDG_STATE_HOME/bento/telemetry/` and adds it as `telemetry_context`
+  in the report when present. Enrichment is silently skipped on any failure.
+- Pass `--telemetry-dir <path>` to `bentobug-report.py` to override the
+  telemetry directory (useful for testing or when the default is unavailable).
 
 ## Stop Conditions
 
