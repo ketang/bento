@@ -33,7 +33,7 @@ class CliDiscoverTest(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_discover_emits_json_with_files_and_warnings(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/launch-work/hooks/pre"
+        d = self.repo / ".agent-plugins/bento/bento/launch-work/hook-scripts/pre"
         _write(d / "10-first.sh", executable=True)
         _write(d / "no-prefix.sh", executable=True)
 
@@ -46,7 +46,7 @@ class CliDiscoverTest(unittest.TestCase):
                 "--skill",
                 "launch-work",
                 "--kind",
-                "hooks",
+                "hook-scripts",
                 "--position",
                 "pre",
             ],

@@ -38,11 +38,17 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
-  once verification finishes)
+  once verification finishes). The preview helper refuses to proceed if the
+  feature branch still tracks `.launch-work/log.md` or has any
+  `chore(launch-work-log):` commit in the merge range; run
+  `land-work-clean-log.py --apply` first.
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
   verify the landed primary-branch ref still matches the verified candidate
+- `land-work/scripts/land-work-clean-log.py --base <ref> [--apply] [--keep-commits]`
+  to identify log-only commits, drop them via non-interactive rebase, and
+  remove `.launch-work/log.md` before the merge
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script. Resolve each helper path relative to this `SKILL.md`
@@ -83,13 +89,13 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 
 2. Confirm the current branch is the intended landing branch and that the helper
    reports a clean feature-branch checkout.
-2a. Read `../launch-work/references/project-hooks.md` and
-    `../launch-work/references/project-actions.md`. Run the **`pre`**
-    extensions before creating or verifying the merge preview, rebasing, or
+2a. Read `../launch-work/references/project-hook-scripts.md` and
+    `../launch-work/references/project-hook-skills.md`. Run the **`pre`**
+    hook scripts before creating or verifying the merge preview, rebasing, or
     merging:
 
     ```bash
-    ../launch-work/scripts/run-lifecycle-extensions.py run-hooks \
+    ../launch-work/scripts/bento-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill land-work \
       --position pre \
@@ -98,23 +104,47 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
       --base-ref <primary-branch> \
       --base-sha <leased-sha> \
       --head-sha $(git rev-parse HEAD) \
-      --runtime <runtime>
+      --runtime claude
     ```
 
-    Then discover and apply `pre` prose actions:
+    Then discover and apply `pre` hook skills:
 
     ```bash
-    ../launch-work/scripts/run-lifecycle-extensions.py discover \
+    ../launch-work/scripts/bento-extensions.py discover \
       --repo-root <repo-root> \
       --skill land-work \
-      --kind actions \
+      --kind hook-skills \
       --position pre
     ```
 
-    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
-    agent runtime. Read each listed file in order and apply. If a hook exits
-    non-zero or a `## Stop conditions` predicate matches, halt; the merge has
-    not started.
+    Read each listed file in order and apply. If a hook script exits non-zero
+    or a `## Stop conditions` predicate matches, halt; the merge has not started.
+2b. **Legacy migration only** — current launch-work stores the progress log
+    under `$GIT_DIR/launch-work/log.md`, which never enters the working tree
+    and never lands. If the working tree still carries a tracked
+    `.launch-work/log.md` (a branch started before the move), run the
+    log-cleanup pass before rebasing or verifying:
+
+    - Verify the log's `checkpoint` is `ready-to-land`. If it is not, stop
+      and ask the user — the work is not actually ready, or the agent forgot
+      to update the log.
+    - Preview the cleanup:
+
+```bash
+land-work/scripts/land-work-clean-log.py --base <primary>
+```
+
+    - Apply the cleanup:
+
+```bash
+land-work/scripts/land-work-clean-log.py --base <primary> --apply
+```
+
+    - On rebase conflict (a non-log commit also touched the log file), retry
+      with `--apply --keep-commits` to accept the log-only commits as clutter
+      and proceed; the deletion commit still runs.
+    - The rebase rewrites local history. The next steps assume the rewritten
+      branch.
 3. Treat any verification that ran before a rebase, merge, cherry-pick, or
    manual conflict resolution as stale evidence only. It does not authorize a
    landing after the candidate changes.
@@ -171,11 +201,11 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
 ```bash
 land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-dir>
 ```
-8a. Run the **`post`** extensions in **advisory mode** (the merge has
+8a. Run the **`post`** hook scripts in **advisory mode** (the merge has
     already succeeded; abort cannot reverse it):
 
     ```bash
-    ../launch-work/scripts/run-lifecycle-extensions.py run-hooks \
+    ../launch-work/scripts/bento-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill land-work \
       --position post \
@@ -186,23 +216,22 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
       --base-sha <new-base-sha> \
       --merge-sha $(git rev-parse <primary-branch>) \
       --landed 1 \
-      --runtime <runtime>
+      --runtime claude
     ```
 
-    Then discover and apply `post` prose actions (also advisory):
+    Then discover and apply `post` hook skills (also advisory):
 
     ```bash
-    ../launch-work/scripts/run-lifecycle-extensions.py discover \
+    ../launch-work/scripts/bento-extensions.py discover \
       --repo-root <repo-root> \
       --skill land-work \
-      --kind actions \
+      --kind hook-skills \
       --position post
     ```
 
-    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
-    agent runtime. Surface any non-zero hook exits or matched `## Stop
-    conditions` predicates to the user as warnings; do not unwind the merge,
-    do not block tracker mutations.
+    Surface any non-zero hook script exits or matched `## Stop conditions`
+    predicates to the user as warnings; do not unwind the merge, do not
+    block tracker mutations.
 9. After the landing succeeds, close or update the tracker item through the
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the
@@ -250,23 +279,25 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 - Do not bypass exact-candidate verification after manual conflict resolution.
 - Do not use a repo-specific merge helper autonomously unless it can prove the
   landed candidate matches the verified preview.
-- Do not skip discovered project hooks or actions at the `pre` and `post`
-  positions. At `pre`, a `75` exit (hooks) or matched stop condition
-  (actions) halts before the merge starts and is a human handoff. At
+- Do not skip discovered hook scripts or hook skills at the `pre` and `post`
+  positions. At `pre`, a `75` exit (hook scripts) or matched stop condition
+  (hook skills) halts before the merge starts and is a human handoff. At
   `post`, both are advisory: surface the message and continue.
 - Do not land changes that include deploy-critical artifacts without verifying
   the committed blob content matches what was tested locally.
-
-## Anti-Rationalization
-
-| Excuse | Counter-argument |
-|---|---|
-| "Tests passed before the rebase, so the branch is verified." | Verification attaches to the exact candidate being landed. Rebase, merge, cherry-pick, conflict resolution, or artifact regeneration makes earlier results stale. |
-| "The primary branch probably did not move; the lease check is ceremony." | Landing is compare-and-set. If the leased ref moved after verification, the verified candidate is no longer the candidate that would land. |
-| "This repo usually accepts quick merges, so I can fast-forward or squash." | The default landing record is a regular merge commit unless the repo explicitly requires otherwise. Fast-forward and squash erase the branch boundary this workflow relies on. |
-| "The issue is functionally done, so I can close it before merging." | Tracker closure advertises landed availability to dependent work. Closing before verified landing can make downstream agents claim work against code that is not on the integration branch. |
-| "The diff is simple; I can skip the preview/exact-candidate checks." | Simplicity does not prove candidate identity. Preview, lease, and landing verification protect against stale bases, helper mismatch, generated artifacts, and accidental local-only state. |
-| "Closure will clean up my just-landed branch." | The landing agent owns direct post-merge cleanup: leave the feature worktree, remove that worktree, then delete the merged branch. Closure is only a fallback for stale or ambiguous leftovers. |
+- Do not merge a feature branch whose log (under `$GIT_DIR/launch-work/log.md`
+  or, on legacy branches, `<worktree>/.launch-work/log.md`) reports a
+  `checkpoint` other than `ready-to-land`.
+- Do not skip the legacy log-cleanup pass when the working tree still tracks
+  `.launch-work/log.md`. The preview helper enforces this and refuses any
+  candidate that tracks `.launch-work/log.md` or contains a
+  `chore(launch-work-log):` commit in the merge range.
+- Use `--keep-commits` only when the rebase reports a conflict, or when the
+  user explicitly accepts log-commit clutter in the primary branch.
+- Launch-work scaffolding never lands on the integration branch. The current
+  log location (`$GIT_DIR/launch-work/log.md`) makes this structural; the
+  legacy cleanup pass exists only to migrate branches started before the
+  move.
 
 ## Tracker Handoff
 

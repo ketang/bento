@@ -55,7 +55,7 @@ class RunHooksTest(unittest.TestCase):
         return args
 
     def test_all_hooks_pass_returns_zero(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/launch-work/hooks/pre"
+        d = self.repo / ".agent-plugins/bento/bento/launch-work/hook-scripts/pre"
         _write_hook(d / "10-first.sh", "echo first\nexit 0\n")
         _write_hook(d / "20-second.sh", "echo second\nexit 0\n")
 
@@ -67,7 +67,7 @@ class RunHooksTest(unittest.TestCase):
         self.assertIn("second", result.stdout)
 
     def test_first_failure_aborts_and_returns_exit_code(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/launch-work/hooks/pre"
+        d = self.repo / ".agent-plugins/bento/bento/launch-work/hook-scripts/pre"
         _write_hook(d / "10-fail.sh", "echo bad\nexit 7\n")
         _write_hook(d / "20-never.sh", "echo should-not-run\nexit 0\n")
 
@@ -79,7 +79,7 @@ class RunHooksTest(unittest.TestCase):
         self.assertNotIn("should-not-run", result.stdout)
 
     def test_human_handoff_exit_75(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/launch-work/hooks/pre"
+        d = self.repo / ".agent-plugins/bento/bento/launch-work/hook-scripts/pre"
         _write_hook(d / "10-handoff.sh", "echo need-human\nexit 75\n")
 
         result = subprocess.run(
@@ -89,7 +89,7 @@ class RunHooksTest(unittest.TestCase):
         self.assertIn("need-human", result.stdout)
 
     def test_advisory_mode_returns_zero_on_failure(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/land-work/hooks/post"
+        d = self.repo / ".agent-plugins/bento/bento/land-work/hook-scripts/post"
         _write_hook(d / "10-warn.sh", "echo warning\nexit 3\n")
         _write_hook(d / "20-also.sh", "echo continues\nexit 0\n")
 
@@ -114,7 +114,7 @@ class RunHooksTest(unittest.TestCase):
         self.assertIn("continues", result.stdout)
 
     def test_env_vars_present_in_hook(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/launch-work/hooks/pre"
+        d = self.repo / ".agent-plugins/bento/bento/launch-work/hook-scripts/pre"
         body = (
             "echo PHASE=$BENTO_HOOK_PHASE\n"
             "echo POSITION=$BENTO_HOOK_POSITION\n"
@@ -133,7 +133,7 @@ class RunHooksTest(unittest.TestCase):
         self.assertIn("HUMAN=75", result.stdout)
 
     def test_timeout_kills_hung_hook(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/launch-work/hooks/pre"
+        d = self.repo / ".agent-plugins/bento/bento/launch-work/hook-scripts/pre"
         _write_hook(d / "10-hang.sh", "sleep 5\nexit 0\n")
 
         args = self._base_args() + ["--timeout", "1"]

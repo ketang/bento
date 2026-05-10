@@ -86,10 +86,18 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 ```
 
 9. Confirm implementation will happen in that linked worktree, not in the
-   primary checkout.
-9a. Read `launch-work/references/project-hooks.md` and
-    `launch-work/references/project-actions.md`. Run the **`pre`** extensions
-    after worktree verification and before dependency installation:
+   primary checkout. Then initialize the progress log:
+
+   ```bash
+   launch-work/scripts/launch-work-log.py init
+   ```
+
+   This creates `<worktree-git-dir>/launch-work/log.md` at checkpoint
+   `worktree-ready`. The log is not committed and does not appear in the
+   working tree.
+9a. Read `launch-work/references/project-hook-scripts.md` and
+    `launch-work/references/project-hook-skills.md`. Run the **`pre`** hook
+    scripts after worktree verification and before dependency installation:
 
     ```bash
     launch-work/scripts/run-lifecycle-extensions.py run-hooks \
@@ -102,21 +110,21 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
       --runtime <runtime>
     ```
 
-    Then discover and apply prose actions for the `pre` position:
+    Then discover and apply hook skills for the `pre` position:
 
     ```bash
     launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
-      --kind actions \
+      --kind hook-skills \
       --position pre
     ```
 
     Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
     agent runtime. Read each listed file in order. Treat any `## Stop
-    conditions` predicate as a halt signal. If a hook exited non-zero, follow
-    the contract's abort or human-handoff semantics; actions do not load in
-    that case.
+    conditions` predicate as a halt signal. If a hook script exited non-zero,
+    follow the contract's abort or human-handoff semantics; hook skills do not
+    load in that case.
 10. Install build/runtime dependencies in the new worktree before the first
     build, test, or typecheck. Prefer the repo's documented bootstrap command;
     otherwise detect by lockfile per
@@ -131,7 +139,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     the current or missing behavior. Commit the failing test, then implement
     the change, make the test pass, and run the relevant verification gates.
 
-11a. Run the **`post`** extensions before declaring the work ready to land:
+11a. Run the **`post`** hook scripts before declaring the work ready to land:
 
     ```bash
     launch-work/scripts/run-lifecycle-extensions.py run-hooks \
@@ -145,19 +153,20 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
       --runtime <runtime>
     ```
 
-    Then discover and apply `post` prose actions:
+    Then discover and apply `post` hook skills:
 
     ```bash
     launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
-      --kind actions \
+      --kind hook-skills \
       --position post
     ```
 
     Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
     agent runtime. Read each listed file in order. Apply additive guidance and
-    evaluate `## Stop conditions` predicates. If a hook or action halts,
+    evaluate `## Stop conditions` predicates. If a hook script or hook skill
+    halts,
     preserve branch and linked worktree and surface the message.
 
 12. In the final task summary, include a brief note describing any additions
@@ -183,9 +192,15 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
 - If automated coverage is not feasible, state that explicitly and use the
   closest available verification path.
-- Do not skip discovered project hooks or actions at the `pre` and `post`
-  positions. A `75` exit code (hooks) or matched `## Stop conditions`
-  predicate (actions) is a human handoff, not a destructive failure;
+- Never proceed past a checkpoint without writing the log first.
+- Never edit the log file directly during checkpoint writes; always use
+  `launch-work/scripts/launch-work-log.py update` so the header stays
+  canonical. The log lives under `$GIT_DIR/launch-work/log.md`, not in the
+  working tree, and must never be committed or land on the integration
+  branch.
+- Do not skip discovered hook scripts or hook skills at the `pre` and `post`
+  positions. A `75` exit code (hook scripts) or matched `## Stop conditions`
+  predicate (hook skills) is a human handoff, not a destructive failure;
   preserve the branch and linked worktree and surface the message.
 
 ## Anti-Rationalization
