@@ -64,6 +64,15 @@ target branch and worktree path are confirmed correct.
    - If the repo uses Beads, use the `beads-issue-flow` skill.
    - If the repo uses GitHub Issues, use the `github-issue-flow` skill.
    - If the work is not tracker-backed, record that explicitly and continue.
+
+   When the repo uses a tracker but no specific issue has been identified for
+   this work, scan open issues before creating anything:
+   - Run the tracker's list command and read titles and descriptions of open
+     issues for one that covers the current task.
+   - If a match is found, use it — claim it per the repo's active-work policy
+     and proceed.
+   - If no issue matches well, file a new one via the tracker skill's filing
+     flow (including its pre-filing review step), claim it, then proceed.
 3. If the current task is only to create, inspect, claim, update, or close a
    tracker item, follow the tracker skill directly and do not create a branch
    or linked worktree unless the repo explicitly requires that workflow.

@@ -794,6 +794,8 @@ _GO_PUBLIC_PURE_FN_PATTERN = re.compile(
     r'^func\s+[A-Z][A-Za-z0-9_]*\s*\([^)]*\)\s*\([^)]*\berror\b[^)]*\)',
     re.MULTILINE,
 )
+_GO_FUZZ_FN_PATTERN = re.compile(r'^func\s+Fuzz[A-Z][A-Za-z0-9_]*\s*\(', re.MULTILINE)
+_GO_FUZZ_CANDIDATE_NEEDLES = ("parser", "decoder", "transport", "codec", "edit", "lsp", "format")
 _PROPERTY_LIB_PATTERNS: dict[str, re.Pattern[str]] = {
     "Go": re.compile(r'"pgregory\.net/rapid"|"github\.com/leanovate/gopter"'),
     "Rust": re.compile(r'(?:^|\n)\s*use\s+(?:proptest|quickcheck)\b'),
@@ -802,6 +804,41 @@ _PROPERTY_LIB_PATTERNS: dict[str, re.Pattern[str]] = {
     "JavaScript": re.compile(r"['\"]fast-check['\"]"),
     "Java": re.compile(r'net\.jqwik|junit-quickcheck'),
 }
+
+
+def go_fuzz_targets(repo_root: Path, file_set: set[str]) -> dict[str, object]:
+    """Count existing Fuzz* test functions and find candidate packages without them.
+
+    Audit consumer raises a recommendation gap when
+    `existing_fuzz_function_count == 0` and `candidate_packages_without_fuzz`
+    is non-empty — the repo has parser/transport/decoder code with no fuzz
+    coverage.
+    """
+    fuzz_packages: set[str] = set()
+    existing_count = 0
+    for path in file_set:
+        if not path.endswith("_test.go"):
+            continue
+        content = read_text_if_reasonable(repo_root / path)
+        if content and _GO_FUZZ_FN_PATTERN.search(content):
+            existing_count += len(_GO_FUZZ_FN_PATTERN.findall(content))
+            fuzz_packages.add(str(Path(path).parent))
+
+    candidate_dirs: set[str] = set()
+    for path in file_set:
+        if not path.endswith(".go") or path.endswith("_test.go"):
+            continue
+        pkg_dir = str(Path(path).parent)
+        if pkg_dir in fuzz_packages:
+            continue
+        lowered = path.lower()
+        if any(needle in lowered for needle in _GO_FUZZ_CANDIDATE_NEEDLES):
+            candidate_dirs.add(pkg_dir)
+
+    return {
+        "existing_fuzz_function_count": existing_count,
+        "candidate_packages_without_fuzz": sorted(candidate_dirs),
+    }
 
 
 def property_based_signal(
@@ -995,12 +1032,49 @@ def detect_static_analysis_tools(
             installed.append(actionlint_entry)
         detected_names.add((None, "actionlint"))
 
+    # semgrep: cross-language AST-based pattern detection. Always applicable;
+    # appears in missing_cross_language when not on PATH.
+    semgrep_entry = {
+        "tool": "semgrep",
+        "config": None,
+        "run": "semgrep --config=auto --error --quiet .",
+        "binary": "semgrep",
+    }
+    applicable.append(semgrep_entry)
+    if shutil.which("semgrep"):
+        installed.append(semgrep_entry)
+        detected_names.add((None, "semgrep"))
+
+    # Doc-quality tools: markdownlint, lychee, typos. Triggered by *.md files.
+    # Appear in missing_cross_language when absent; surfaced in
+    # documentation_analysis by the audit model via missing_cross_language.
+    has_markdown = any(path.endswith(".md") for path in file_set)
+    doc_tools_missing: list[str] = []
+    if has_markdown:
+        for tool_name, run_cmd, binary_name in [
+            ("markdownlint", 'markdownlint-cli2 "**/*.md" "#node_modules"', "markdownlint-cli2"),
+            ("lychee", "lychee --offline .", "lychee"),
+            ("typos", "typos", "typos"),
+        ]:
+            entry: dict[str, str | None] = {
+                "tool": tool_name, "config": None, "run": run_cmd, "binary": binary_name,
+            }
+            applicable.append(entry)
+            if shutil.which(binary_name):
+                installed.append(entry)
+                detected_names.add((None, tool_name))
+            else:
+                doc_tools_missing.append(tool_name)
+
     # Config-required cross-language secrets tools not detected
     secrets_group = TOOL_ALTERNATIVE_GROUPS.get((None, "secrets"), [])
     secrets_detected = any((None, t) in detected_names for t in secrets_group)
     missing_cross_language: list[str] = []
     if not secrets_detected:
         missing_cross_language.append(secrets_group[0] if secrets_group else "gitleaks")
+    if (None, "semgrep") not in detected_names:
+        missing_cross_language.append("semgrep")
+    missing_cross_language.extend(doc_tools_missing)
 
     language_signals: dict[str, dict[str, object]] = {}
     if "Go" in lang_set:
@@ -1008,6 +1082,12 @@ def detect_static_analysis_tools(
             "error_wrapping_count": go_error_wrapping_count(repo_root, file_set),
             "goroutine_packages_missing_goleak": go_goroutine_packages(repo_root, file_set),
             "concurrency_signals": go_concurrency_signals(repo_root, file_set),
+            "fuzz_targets": go_fuzz_targets(repo_root, file_set),
+            "mutation_testing": {
+                "gremlins_installed": shutil.which("gremlins") is not None,
+                "recommendation_gate": "packages with line coverage >= 80% AND classified as risk surface",
+                "below_gate_message": "mutation testing premature; raise coverage first",
+            },
         }
 
     return {

@@ -39,6 +39,11 @@ EXTERNAL_PLUGINS: list[dict] = [
         "description": "Ephemeral screenshot gallery for visual bug review and issue filing",
         "repo": "ketang/bugshot",
     },
+    {
+        "name": "storystore",
+        "description": "Intent-story documentation with audits, guarded edits, and impact checks",
+        "repo": "ketang/storystore",
+    },
 ]
 
 EXTERNAL_SKILLS: dict[str, list[dict]] = {}

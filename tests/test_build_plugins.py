@@ -305,6 +305,12 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertIsNotNone(bugshot, "bugshot should be registered in EXTERNAL_PLUGINS")
         self.assertEqual(bugshot["repo"], "ketang/bugshot")
 
+    def test_storystore_in_external_plugins(self) -> None:
+        module = load_build_plugins_module()
+        storystore = next((e for e in module.EXTERNAL_PLUGINS if e["name"] == "storystore"), None)
+        self.assertIsNotNone(storystore, "storystore should be registered in EXTERNAL_PLUGINS")
+        self.assertEqual(storystore["repo"], "ketang/storystore")
+
     def test_bugshot_appears_in_claude_marketplace_as_external(self) -> None:
         self.module.build_repo(run_verification=False)
         marketplace = json.loads(
@@ -316,6 +322,18 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertIn("source", bugshot)
         self.assertEqual(bugshot["source"]["source"], "github")
         self.assertEqual(bugshot["source"]["repo"], "ketang/bugshot")
+
+    def test_storystore_appears_in_claude_marketplace_as_external(self) -> None:
+        self.module.build_repo(run_verification=False)
+        marketplace = json.loads(
+            (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        storystore = next((p for p in marketplace["plugins"] if p["name"] == "storystore"), None)
+        self.assertIsNotNone(storystore, "storystore should appear in the claude marketplace")
+        self.assertNotIn("version", storystore, "external plugin entry must not carry a version field")
+        self.assertIn("source", storystore)
+        self.assertEqual(storystore["source"]["source"], "github")
+        self.assertEqual(storystore["source"]["repo"], "ketang/storystore")
 
     def test_bugshot_not_bundled_in_bento_plugin(self) -> None:
         self.module.build_repo(run_verification=False)

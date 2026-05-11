@@ -53,6 +53,21 @@ quickstart, run, build, and test commands. Execute documented commands when
 they are safe, local, and relevant. Treat failing, drifting, or misleading
 assumptions as findings.
 
+## Fuzz-Target Candidacy (Go)
+
+For Go repos, inspect `static_analysis.language_signals.Go.fuzz_targets`.
+Zero existing `Fuzz*` test functions combined with any of the following
+is a recommendation gap:
+
+- Functions with signature `func([]byte) (T, error)` or `func(string, ...) (T, error)`
+  in packages classified as risk surfaces (parsers, decoders, transport framing,
+  position math, editor codecs).
+- Packages named or path-containing: `parser`, `decoder`, `transport`, `codec`,
+  `edit`, `lsp`, `format`.
+
+For each candidate, propose a minimal fuzz target and suggest:
+`go test -fuzz=FuzzX -fuzztime=30s ./path/to/package`
+
 ## Static Analysis Surface
 
 Read `generate-audit/references/static-analysis-tools.md`. Cross-reference

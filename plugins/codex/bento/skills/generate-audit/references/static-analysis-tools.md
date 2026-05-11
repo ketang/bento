@@ -111,6 +111,42 @@ Any clone above the threshold → audit `note`. Review before flagging — some
 duplication (e.g. test fixtures) is intentional.
 Run: `dupl ./...`
 
+### go test -fuzz
+Native Go fuzzing (stable since Go 1.18). Targets are functions with signature
+`func FuzzX(f *testing.F)`. High-value candidates: any exported function whose
+input is `[]byte`, `string`, or an externally-derived numeric type — parsers,
+decoders, framing, position math. Different oracle from property-based testing:
+fuzzing asks "does it crash or panic?" rather than "does invariant I hold?".
+
+Any new corpus entry produced under `testdata/fuzz/` during a CI run → audit
+`warning` (unexpected input shape accepted; review). Any panic or unrecovered
+crash → audit `error`.
+
+Fuzz-target candidacy: flag any Go function accepting byte/string input from
+an external source (parser, transport, editor codec) with zero existing
+`Fuzz*` tests in its package. Detection: `git ls-files '*_test.go' | xargs
+grep -l 'func Fuzz'`; zero matches in a repo with parser/transport/decoder
+code → recommendation gap.
+
+Run: `go test -fuzz=FuzzX -fuzztime=30s ./pkg/...`
+Example: `go test -fuzz=FuzzRead -fuzztime=30s ./internal/backend/lsp`
+
+### gremlins
+Mutation testing for Go. Measures *test discrimination*: what fraction of
+injected code mutations the test suite detects. Complements coverage — a
+suite with 90% line coverage where 60% of mutants survive is weaker than a
+70%-coverage suite with 90% killed.
+
+**Gated**: apply only to packages where line coverage (from `go-test-cover`)
+is **≥ 80%** AND the package is classified as a risk surface. Below threshold
+→ emit "mutation testing premature; raise coverage first" instead.
+
+Any surviving mutant in a risk-surface function → audit `warning`. Report
+surviving mutants per package, not a percentage. Note runtime cost (minutes
+to hours per package).
+Run: `gremlins unleash` (or per-package with `--tags risk`)
+Install: `go install github.com/go-gremlins/gremlins/cmd/gremlins@latest`
+
 ### osv-scanner
 Cross-language vulnerability scanner. Reads `go.mod`, `package-lock.json`,
 `yarn.lock`, `pnpm-lock.yaml`, `Cargo.lock`, `requirements.txt`, `Pipfile.lock`,
@@ -326,6 +362,19 @@ Flag risk-surface modules with coverage below 60% as `warning`, below 30% as
 `error`. No repo-wide target.
 Run: `cargo tarpaulin`
 
+### semgrep
+Cross-language AST-based pattern matching. Supports Go, Java, JavaScript,
+TypeScript, Python, Ruby, and more in a single pass. The default registry
+(`--config=auto`) covers command injection, path traversal, unsafe
+deserialization, and dozens of other cross-cutting patterns — the single
+highest-leverage addition for polyglot repos.
+
+Any `ERROR`-severity rule → audit `error`; `WARNING`-severity → audit
+`warning`. Encourage repo-specific rules under `.semgrep/` for
+project-specific patterns.
+Run: `semgrep --config=auto --error --quiet .`
+Install: `pip install semgrep` or `brew install semgrep`
+
 ### gitleaks
 Any detected secret → audit `error`. Review `.gitleaksignore` entries; overly
 broad suppression patterns are a `warning`.
@@ -361,6 +410,30 @@ catastrophic). Shellcheck-class issues inside `run:` blocks → match the
 shellcheck severity mapping above. Near-zero false positive rate; treat
 findings as real.
 Run: `actionlint`
+
+### markdownlint
+Markdown formatting consistency. Triggered whenever the repo contains `*.md`
+files. Any error → audit `warning`. Use `.markdownlint.json` or
+`.markdownlintrc` to configure per-project rule exceptions (e.g. line length
+for generated docs).
+Run: `markdownlint-cli2 "**/*.md" "#node_modules"`
+Install: `npm install -g markdownlint-cli2`
+
+### lychee
+Broken-link detection for internal and external links in markdown and HTML.
+Triggered whenever the repo contains `*.md` files. Broken external link →
+audit `error`. Dead internal anchor or cross-file reference → audit `error`.
+Run: `lychee --offline . 2>/dev/null || lychee .`
+Install: `cargo install lychee` or `brew install lychee`
+Note: prefer `--offline` for CI to avoid rate-limiting; external-link checks
+require a live run.
+
+### typos
+Fast, low-false-positive typo detector that ignores code identifiers.
+Triggered whenever the repo contains `*.md` files (also useful on source
+code). Any finding → audit `warning`.
+Run: `typos`
+Install: `cargo install typos-cli` or `brew install typos-cli`
 
 ## Recommendations Block Template
 
