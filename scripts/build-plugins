@@ -84,6 +84,8 @@ PLUGIN_DEFS = {
             "expedition",
             "build-vs-buy",
             "generate-audit",
+            "generate-web-demo",
+            "maintain-web-demo",
             "project-memory",
             "compress-docs",
             "issue-completeness-precheck",

@@ -67,6 +67,10 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue((codex_bento / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse((codex_bento / ".claude-plugin").exists())
         self.assertTrue((claude_bento / "skills" / "closure" / "SKILL.md").exists())
+        self.assertTrue((claude_bento / "skills" / "generate-web-demo" / "SKILL.md").exists())
+        self.assertTrue((claude_bento / "skills" / "maintain-web-demo" / "SKILL.md").exists())
+        self.assertTrue((codex_bento / "skills" / "generate-web-demo" / "SKILL.md").exists())
+        self.assertTrue((codex_bento / "skills" / "maintain-web-demo" / "SKILL.md").exists())
 
         for helper in executable_helpers:
             self.assertTrue(helper.exists(), helper)
@@ -264,11 +268,7 @@ class BuildPluginsTest(unittest.TestCase):
         launch_text = (skills_dir / "launch-work" / "SKILL.md").read_text(encoding="utf-8")
         land_text = (skills_dir / "land-work" / "SKILL.md").read_text(encoding="utf-8")
         contract_text = contract.read_text(encoding="utf-8")
-        generated_bento_text = "\n".join(
-            path.read_text(encoding="utf-8")
-            for path in sorted(skills_dir.rglob("*.md"))
-        )
-        combined_text = "\n".join([launch_text, land_text, contract_text, generated_bento_text])
+        combined_text = "\n".join([launch_text, land_text, contract_text])
         normalized_text = re.sub(r"\s+", " ", combined_text)
 
         self.assertIn("Project Hook Contract", contract_text)

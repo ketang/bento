@@ -1,0 +1,4 @@
+interface:
+  display_name: "Generate Web Demo"
+  short_description: "Create browser-observable webapp demos"
+  default_prompt: "Generate a Playwright-backed webapp demo walkthrough with visible/headless runs, step screenshots, and warning queue artifacts."
