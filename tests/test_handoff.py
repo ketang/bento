@@ -169,10 +169,10 @@ class HandoffSuffixTest(unittest.TestCase):
             "user-feat",
         )
 
-    def test_non_primary_branch_ignores_slug(self) -> None:
+    def test_non_primary_branch_uses_slug_when_provided(self) -> None:
         self.assertEqual(
             self.handoff.derive_suffix(current="user/feat", primary="main", slug="ignored"),
-            "user-feat",
+            "ignored",
         )
 
 
@@ -435,6 +435,29 @@ class HandoffEndToEndTest(unittest.TestCase):
         )
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertIn("quick-hop-", result.stdout)
+
+    def test_non_primary_branch_with_slug_uses_slug_in_filename(self) -> None:
+        env = os.environ.copy()
+        env["HANDOFF_TMP_ROOT"] = str(self.tmp_root)
+        env["XDG_CONFIG_HOME"] = str(self.xdg)
+        env["BENTO_EXPEDITION_SCRIPT"] = str(self.tmp_path / "no-such-expedition.py")
+        result = subprocess.run(
+            [
+                str(HANDOFF_SCRIPT),
+                "--input",
+                str(self.input_path),
+                "--slug",
+                "handoff-descriptive-name",
+            ],
+            cwd=self.repo,
+            capture_output=True,
+            text=True,
+            check=False,
+            env=env,
+        )
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("handoff-descriptive-name-", result.stdout)
+        self.assertNotIn("feat-foo-", result.stdout)
 
 
 if __name__ == "__main__":

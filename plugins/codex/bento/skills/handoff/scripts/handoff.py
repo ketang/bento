@@ -38,14 +38,14 @@ def sanitize_suffix(branch: str) -> str:
 
 
 def derive_suffix(*, current: str, primary: str, slug: str | None) -> str:
+    if slug:
+        return sanitize_suffix(slug)
     if current != primary:
         return sanitize_suffix(current)
-    if not slug:
-        raise HandoffError(
-            "current branch is the primary branch; pass --slug with a 2-4 word "
-            "kebab-case summary so the output filename is meaningful."
-        )
-    return sanitize_suffix(slug)
+    raise HandoffError(
+        "current branch is the primary branch; pass --slug with a 2-4 word "
+        "kebab-case summary so the output filename is meaningful."
+    )
 
 
 def resolve_template(
@@ -188,7 +188,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--slug",
-        help="suffix to use when on the primary branch (kebab-case, 2-4 words)",
+        help=(
+            "descriptive suffix for the output filename (kebab-case, 2-4 words); "
+            "required on the primary branch"
+        ),
     )
     parser.add_argument(
         "-v",

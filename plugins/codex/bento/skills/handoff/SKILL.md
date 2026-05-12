@@ -86,11 +86,15 @@ to override; missing files fall through.
 3. Run the helper:
 
 ```bash
-handoff/scripts/handoff.py --input <path-to-filled-template>
+handoff/scripts/handoff.py --input <path-to-filled-template> --slug <kebab-case-summary>
 ```
 
-   On the primary branch, also pass `--slug <kebab-case-summary>` (2–4 words).
-   Use `--input -` to pipe content via stdin instead of writing to a temp file.
+   The slug must be a descriptive 2–4 word kebab-case summary of the captured
+   handoff state, such as `finish-auth-tests` or `resume-release-review`.
+   On the primary branch, `--slug` is required. On other branches, the helper
+   uses `--slug` when provided and falls back to the branch name only for
+   compatibility. Use `--input -` to pipe content via stdin instead of writing
+   to a temp file.
 
 4. The helper prints the absolute path of the file it wrote to stdout.
 5. Echo the full contents of the file back to chat in the same response so the
@@ -105,9 +109,11 @@ approvals stay scoped to the script.
 /tmp/handoff-<suffix>-<YYYYMMDD-HHMMSS>.md
 ```
 
-`<suffix>` is the current branch name with `/` and other non-`[A-Za-z0-9._-]`
-characters replaced with `-`. On the primary branch (where there is no useful
-branch suffix), `<suffix>` is the agent-supplied `--slug`.
+`<suffix>` is the agent-supplied descriptive `--slug` with any
+non-`[A-Za-z0-9._-]` characters replaced with `-`. For older callers that omit
+`--slug` on a non-primary branch, `<suffix>` falls back to the current branch
+name with the same sanitization. On the primary branch, where there is no useful
+branch suffix, `--slug` is required.
 
 ## Non-Negotiable Rules
 
