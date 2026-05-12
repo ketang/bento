@@ -76,6 +76,7 @@ class BuildPluginsTest(unittest.TestCase):
         codex_manifest = json.loads((codex_bento / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
         self.assertEqual(codex_manifest["version"], versions["bento"])
         self.assertEqual(codex_manifest["skills"], "./skills/")
+        self.assertEqual(codex_manifest["hooks"], "./hooks/hooks.json")
         self.assertEqual(codex_manifest["interface"]["displayName"], "Bento")
         self.assertEqual(len(codex_manifest["interface"]["defaultPrompt"]), 3)
         self.assertEqual(codex_manifest["interface"]["composerIcon"], "./assets/icon.png")
@@ -102,7 +103,7 @@ class BuildPluginsTest(unittest.TestCase):
 
         self.assertTrue(claude_session.exists())
         # Codex output is skipped entirely because session-id's only artifact
-        # (a SessionStart hook) is Claude-only by default.
+        # (a SessionStart hook) has only a Claude peer source.
         self.assertFalse(codex_session.exists())
 
         self.assertFalse((claude_session / "skills").exists())
@@ -116,16 +117,43 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue(hook_script.exists())
         self.assertTrue(os.access(hook_script, os.X_OK))
 
-    def test_bento_claude_only_hook_absent_from_codex_materialization(self) -> None:
+    def test_bento_hook_peers_materialize_for_claude_and_codex(self) -> None:
         self.module.build_repo(run_verification=False)
 
         claude_bento_hooks = self.root / "plugins" / "claude" / "bento" / "hooks"
         codex_bento = self.root / "plugins" / "codex" / "bento"
+        codex_bento_hooks = codex_bento / "hooks"
+        codex_manifest = json.loads((codex_bento / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
+        claude_hooks = json.loads((claude_bento_hooks / "hooks.json").read_text(encoding="utf-8"))
+        codex_hooks = json.loads((codex_bento_hooks / "hooks.json").read_text(encoding="utf-8"))
 
-        # The auto-allow hook ships with bento; it's Claude-only by hook default.
         self.assertTrue((claude_bento_hooks / "hooks.json").exists())
         self.assertTrue((claude_bento_hooks / "scripts" / "auto-allow.py").exists())
-        self.assertFalse((codex_bento / "hooks").exists())
+        self.assertTrue((claude_bento_hooks / "scripts" / "ensure-worktree-permissions.py").exists())
+        self.assertIn("PreToolUse", claude_hooks["hooks"])
+        self.assertIn(
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/auto-allow.py bento ${CLAUDE_PLUGIN_ROOT}",
+            [
+                hook["command"]
+                for entry in claude_hooks["hooks"]["PreToolUse"]
+                for hook in entry["hooks"]
+            ],
+        )
+
+        self.assertEqual(codex_manifest["hooks"], "./hooks/hooks.json")
+        self.assertTrue((codex_bento_hooks / "scripts" / "permission-request.py").exists())
+        self.assertTrue((codex_bento_hooks / "scripts" / "seed-agent-plugins.py").exists())
+        self.assertFalse((codex_bento_hooks / "scripts" / "auto-allow.py").exists())
+        self.assertFalse((codex_bento_hooks / "scripts" / "ensure-worktree-permissions.py").exists())
+        self.assertIn("PermissionRequest", codex_hooks["hooks"])
+        self.assertIn(
+            "${PLUGIN_ROOT}/hooks/scripts/permission-request.py bento ${PLUGIN_ROOT}",
+            [
+                hook["command"]
+                for entry in codex_hooks["hooks"]["PermissionRequest"]
+                for hook in entry["hooks"]
+            ],
+        )
 
     def test_bento_claude_plugin_packages_telemetry_hook_support(self) -> None:
         self.module.build_repo(run_verification=False)
@@ -153,26 +181,41 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertTrue(script.exists(), script)
             self.assertTrue(os.access(script, os.X_OK), script)
 
-    def test_codex_bento_plugin_does_not_package_claude_telemetry_hooks(self) -> None:
+    def test_codex_bento_plugin_packages_codex_telemetry_hook_support(self) -> None:
         self.module.build_repo(run_verification=False)
 
-        codex_bento = self.root / "plugins" / "codex" / "bento"
+        codex_bento_hooks = self.root / "plugins" / "codex" / "bento" / "hooks"
+        hooks_json = json.loads((codex_bento_hooks / "hooks.json").read_text(encoding="utf-8"))
+        post_tool_use = hooks_json["hooks"]["PostToolUse"]
+        commands = [
+            hook["command"]
+            for entry in post_tool_use
+            if entry.get("matcher") == "Bash"
+            for hook in entry["hooks"]
+        ]
 
-        self.assertFalse((codex_bento / "hooks").exists())
-
-    def test_session_id_not_in_claude_marketplace_when_claude_empty(self) -> None:
-        # Force session-id to have no Claude artifacts, confirm it drops out
-        # of the Claude marketplace entries.
-        self.module.HOOK_PLATFORM_DEFAULT = ("codex",)
-
-        # Rebuild with the flipped default.
-        self.module.build_repo(run_verification=False)
-
-        claude_marketplace = json.loads(
-            (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        self.assertIn(
+            "${PLUGIN_ROOT}/hooks/scripts/record-bash.py",
+            commands,
         )
-        plugin_names = [p["name"] for p in claude_marketplace["plugins"] if "version" in p]
-        self.assertNotIn("session-id", plugin_names)
+        self.assertTrue((codex_bento_hooks / "scripts" / "bento_telemetry.py").exists())
+        for script_name in ["record-bash.py", "bento-telemetry.py"]:
+            script = codex_bento_hooks / "scripts" / script_name
+            self.assertTrue(script.exists(), script)
+            self.assertTrue(os.access(script, os.X_OK), script)
+
+    def test_hook_without_platform_peer_is_not_materialized(self) -> None:
+        hook_dir = self.root / "catalog" / "hooks" / "experimental"
+        hook_dir.mkdir(parents=True)
+        (hook_dir / "hooks.json").write_text('{"hooks": {}}\n', encoding="utf-8")
+        self.module.PLUGIN_DEFS["bento"]["hooks"] = ["experimental"]
+
+        self.module.build_repo(run_verification=False)
+
+        self.assertTrue((self.root / "plugins" / "claude" / "bento").exists())
+        self.assertTrue((self.root / "plugins" / "codex" / "bento").exists())
+        self.assertFalse((self.root / "plugins" / "claude" / "bento" / "hooks").exists())
+        self.assertFalse((self.root / "plugins" / "codex" / "bento" / "hooks").exists())
 
     def test_packaging_sidecar_narrows_skill_to_codex_only(self) -> None:
         # Add a codex-only sidecar to the closure skill, confirm it disappears

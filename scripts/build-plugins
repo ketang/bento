@@ -225,7 +225,7 @@ def ensure_skill_exists(skill: str) -> None:
 
 PLATFORMS = ("claude", "codex")
 SKILL_PLATFORM_DEFAULT = ("claude", "codex")
-HOOK_PLATFORM_DEFAULT = ("claude",)
+HOOK_PLATFORM_DEFAULT: tuple[str, ...] = ()
 PACKAGING_FILENAME = "packaging.json"
 SKILL_OVERLAY_FILENAMES = tuple(f"{platform.upper()}.md" for platform in PLATFORMS)
 
@@ -268,7 +268,26 @@ def skill_platforms(skill: str) -> list[str]:
 
 
 def hook_platforms(hook: str) -> list[str]:
-    return _platforms_from_packaging(HOOKS_CATALOG_DIR / hook, HOOK_PLATFORM_DEFAULT)
+    source_dir = HOOKS_CATALOG_DIR / hook
+    declared = _platforms_from_packaging(source_dir, HOOK_PLATFORM_DEFAULT)
+    platform_dirs = [platform for platform in PLATFORMS if (source_dir / platform).is_dir()]
+    if declared and platform_dirs:
+        unknown = sorted(set(declared) - set(platform_dirs))
+        if unknown:
+            raise SystemExit(
+                f"Hook {hook!r} declares platforms without peer sources: {unknown!r}"
+            )
+    if platform_dirs:
+        return platform_dirs
+    return declared
+
+
+def hook_source_dir(hook: str, platform: str) -> Path:
+    source_dir = HOOKS_CATALOG_DIR / hook
+    platform_dir = source_dir / platform
+    if platform_dir.is_dir():
+        return platform_dir
+    return source_dir
 
 
 def skills_for(plugin: str, platform: str) -> list[str]:
@@ -392,7 +411,7 @@ def copy_hooks(plugin: str, platform: str) -> None:
     target = plugin_dir(plugin, platform) / "hooks"
     merged_hooks: dict[str, list] = {}
     for hook_name in hook_names:
-        src = HOOKS_CATALOG_DIR / hook_name
+        src = hook_source_dir(hook_name, platform)
         if not src.exists():
             raise SystemExit(f"Missing hook catalog source: {src}")
         for child in src.iterdir():
@@ -454,6 +473,7 @@ def codex_manifest(plugin: str) -> dict:
         "license": LICENSE,
         "keywords": metadata["keywords"],
         **({"skills": "./skills/"} if metadata.get("skills") else {}),
+        **({"hooks": "./hooks/hooks.json"} if hooks_for(plugin, "codex") else {}),
         "interface": {
             "displayName": metadata["display_name"],
             "shortDescription": metadata["short_description"],

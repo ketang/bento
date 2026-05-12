@@ -12,6 +12,7 @@ HOOK_SCRIPT = (
     / "catalog"
     / "hooks"
     / "bento"
+    / "claude"
     / "scripts"
     / "seed-agent-plugins.py"
 )

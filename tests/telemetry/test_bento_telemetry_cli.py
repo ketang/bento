@@ -7,7 +7,15 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI = REPO_ROOT / "catalog" / "hooks" / "telemetry" / "scripts" / "bento-telemetry.py"
+CLI = (
+    REPO_ROOT
+    / "catalog"
+    / "hooks"
+    / "telemetry"
+    / "claude"
+    / "scripts"
+    / "bento-telemetry.py"
+)
 
 
 class BentoTelemetryCliTest(unittest.TestCase):

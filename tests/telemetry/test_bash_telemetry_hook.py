@@ -10,7 +10,15 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HOOK = REPO_ROOT / "catalog" / "hooks" / "telemetry" / "scripts" / "record-bash.py"
+HOOK = (
+    REPO_ROOT
+    / "catalog"
+    / "hooks"
+    / "telemetry"
+    / "claude"
+    / "scripts"
+    / "record-bash.py"
+)
 
 
 def load_hook():

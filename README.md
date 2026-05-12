@@ -192,6 +192,8 @@ Then `scripts/build-plugins`:
 - materializes generated plugin directories under `plugins/`
 - composes generated skill payloads from shared `SKILL.md` plus the target
   platform overlay when present
+- copies lifecycle hooks from platform-peer sources under
+  `catalog/hooks/<hook-name>/<platform>/`
 - writes each plugin's `.claude-plugin/plugin.json`
 - writes each plugin's `.codex-plugin/plugin.json`
 - generates Codex-facing assets under each plugin's `assets/`
@@ -240,6 +242,7 @@ Generated Codex `plugin.json` format includes:
 
 - the same top-level identity fields as the Claude manifest
 - `skills: "./skills/"`
+- `hooks: "./hooks/hooks.json"` when the plugin has Codex lifecycle hooks
 - an `interface` block with display text, capabilities, starter prompts, and
   generated asset references
 
@@ -262,9 +265,11 @@ with the version file update.
 
 ## Hooks
 
-1. Create `hooks/<event-name>/<concern>.sh` such as `hooks/post-tool-use/log.sh`
-2. Make it executable with `chmod +x hooks/post-tool-use/log.sh`
-3. Wire it into `~/.claude/settings.json`
+Generated lifecycle hooks live under `catalog/hooks/<hook-name>/<platform>/`.
+Use peer platform directories such as `claude/` and `codex/`; do not treat one
+runtime as the default implementation for the other. Each peer source can carry
+its own `hooks.json` and `scripts/` directory, and `scripts/build-plugins`
+copies only the peer source for the target platform.
 
 See [hooks/README.md](hooks/README.md) for the exact format.
 

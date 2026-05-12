@@ -6,7 +6,15 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "catalog" / "hooks" / "session-id" / "scripts" / "session-start.py"
+SCRIPT = (
+    REPO_ROOT
+    / "catalog"
+    / "hooks"
+    / "session-id"
+    / "claude"
+    / "scripts"
+    / "session-start.py"
+)
 
 
 def load_session_start():
