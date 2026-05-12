@@ -293,6 +293,37 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertIn("For Codex, avoid shell pipelines for discovery", normalized_skill_text)
         self.assertIn("git worktree list --porcelain", normalized_skill_text)
 
+    def test_issue_completeness_precheck_is_packaged_with_tracker_flows(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        for platform in ("claude", "codex"):
+            for plugin in ("bento", "trackers"):
+                skill_path = (
+                    self.root
+                    / "plugins"
+                    / platform
+                    / plugin
+                    / "skills"
+                    / "issue-completeness-precheck"
+                    / "SKILL.md"
+                )
+                self.assertTrue(skill_path.exists(), skill_path)
+                skill_text = skill_path.read_text(encoding="utf-8")
+                self.assertIn("Hard trigger before creating, filing, drafting", skill_text)
+                self.assertIn("Use a fresh reviewer context whenever", skill_text)
+
+    def test_tracker_flows_delegate_filing_precheck_to_shared_skill(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        for skill_name in ("beads-issue-flow", "github-issue-flow"):
+            source_text = (
+                self.root / "catalog" / "skills" / skill_name / "SKILL.md"
+            ).read_text(encoding="utf-8")
+            self.assertIn("issue-completeness-precheck", source_text)
+            self.assertIn("## Filing New Issues", source_text)
+            self.assertNotIn("## Pre-Filing Readiness Check", source_text)
+            self.assertNotIn("Use a blank-slate subagent as reviewer", source_text)
+
     def test_bugshot_not_in_bento_external_skills(self) -> None:
         module = load_build_plugins_module()
         bento_skills = module.EXTERNAL_SKILLS.get("bento", [])
