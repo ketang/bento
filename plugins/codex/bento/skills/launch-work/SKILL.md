@@ -121,7 +121,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
       --branch <branch> \
       --worktree <worktree> \
       --base-ref <primary-branch> \
-      --runtime claude
+      --runtime <runtime>
     ```
 
     Then discover and apply prose actions for the `pre` position:
@@ -134,9 +134,11 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
       --position pre
     ```
 
-    Read each listed file in order. Treat any `## Stop conditions` predicate
-    as a halt signal. If a hook exited non-zero, follow the contract's
-    abort or human-handoff semantics; actions do not load in that case.
+    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
+    agent runtime. Read each listed file in order. Treat any `## Stop
+    conditions` predicate as a halt signal. If a hook exited non-zero, follow
+    the contract's abort or human-handoff semantics; actions do not load in
+    that case.
 10. Install build/runtime dependencies in the new worktree before the first
     build, test, or typecheck. Prefer the repo's documented bootstrap command;
     otherwise detect by lockfile per
@@ -188,7 +190,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
       --worktree <worktree> \
       --base-ref <primary-branch> \
       --head-sha $(git rev-parse HEAD) \
-      --runtime claude
+      --runtime <runtime>
     ```
 
     Then discover and apply `post` prose actions:
@@ -201,9 +203,10 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
       --position post
     ```
 
-    Read each listed file in order. Apply additive guidance and evaluate
-    `## Stop conditions` predicates. If a hook or action halts, preserve
-    branch and linked worktree and surface the message.
+    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
+    agent runtime. Read each listed file in order. Apply additive guidance and
+    evaluate `## Stop conditions` predicates. If a hook or action halts,
+    preserve branch and linked worktree and surface the message.
 
 12. In the final task summary, include a brief note describing any additions
     or expansions made to the automated test suite. If test coverage did not

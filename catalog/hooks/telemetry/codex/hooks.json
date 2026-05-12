@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PostToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "${PLUGIN_ROOT}/hooks/scripts/record-bash.py",
+            "statusMessage": "Recording Bento helper telemetry"
+          }
+        ]
+      }
+    ]
+  }
+}

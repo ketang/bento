@@ -16,7 +16,15 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-HOOK_SCRIPT = REPO_ROOT / "catalog" / "hooks" / "session-id" / "scripts" / "session-start.py"
+HOOK_SCRIPT = (
+    REPO_ROOT
+    / "catalog"
+    / "hooks"
+    / "session-id"
+    / "claude"
+    / "scripts"
+    / "session-start.py"
+)
 
 SKIP_REASON = "set BENTO_INTEGRATION_TESTS=1 to run"
 

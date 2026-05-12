@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "catalog" / "hooks" / "bento" / "scripts" / "auto-allow.py"
+SCRIPT = REPO_ROOT / "catalog" / "hooks" / "bento" / "claude" / "scripts" / "auto-allow.py"
 
 PLUGIN_NAME = "bento"
 

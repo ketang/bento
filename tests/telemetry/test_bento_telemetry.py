@@ -10,7 +10,15 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-LIB_PATH = REPO_ROOT / "catalog" / "hooks" / "telemetry" / "scripts" / "bento_telemetry.py"
+LIB_PATH = (
+    REPO_ROOT
+    / "catalog"
+    / "hooks"
+    / "telemetry"
+    / "claude"
+    / "scripts"
+    / "bento_telemetry.py"
+)
 
 
 def load_lib():

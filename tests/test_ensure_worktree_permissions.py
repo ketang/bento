@@ -12,6 +12,7 @@ HOOK_SCRIPT = (
     / "catalog"
     / "hooks"
     / "bento"
+    / "claude"
     / "scripts"
     / "ensure-worktree-permissions.py"
 )

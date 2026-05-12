@@ -104,7 +104,7 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
       --base-ref <primary-branch> \
       --base-sha <leased-sha> \
       --head-sha $(git rev-parse HEAD) \
-      --runtime claude
+      --runtime <runtime>
     ```
 
     Then discover and apply `pre` prose actions:
@@ -117,8 +117,10 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
       --position pre
     ```
 
-    Read each listed file in order and apply. If a hook exits non-zero or a
-    `## Stop conditions` predicate matches, halt; the merge has not started.
+    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
+    agent runtime. Read each listed file in order and apply. If a hook exits
+    non-zero or a `## Stop conditions` predicate matches, halt; the merge has
+    not started.
 2b. **Legacy migration only** — current launch-work stores the progress log
     under `$GIT_DIR/launch-work/log.md`, which never enters the working tree
     and never lands. If the working tree still carries a tracked
@@ -216,7 +218,7 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
       --base-sha <new-base-sha> \
       --merge-sha $(git rev-parse <primary-branch>) \
       --landed 1 \
-      --runtime claude
+      --runtime <runtime>
     ```
 
     Then discover and apply `post` prose actions (also advisory):
@@ -229,9 +231,10 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
       --position post
     ```
 
-    Surface any non-zero hook exits or matched `## Stop conditions`
-    predicates to the user as warnings; do not unwind the merge, do not
-    block tracker mutations.
+    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
+    agent runtime. Surface any non-zero hook exits or matched `## Stop
+    conditions` predicates to the user as warnings; do not unwind the merge,
+    do not block tracker mutations.
 9. After the landing succeeds, close or update the tracker item through the
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the

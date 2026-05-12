@@ -15,19 +15,23 @@ coding agents. Its current concrete implementation emits generated plugin
 artifacts for Claude Code and OpenAI Codex from the same canonical sources. It
 stores:
 - **Agent skills** — packaged today as Claude Code plugins and Codex plugins
-- **Hook scripts** — shell scripts that run on Claude Code events, stored for manual wiring into `~/.claude/settings.json`
+- **Lifecycle hooks** — platform-peer hook sources packaged into generated
+  Claude Code and Codex plugins when that runtime supports the event contract
 
 ## Why this approach
 
-The Claude Code plugin system has native support for skills (via marketplace registration + `/install-plugin`) but no native support for hooks. Hooks are configured in `settings.json` and point to arbitrary shell scripts. Storing hooks in this repo alongside plugins keeps everything in one place without requiring a fragile setup script to mutate `settings.json`.
+Bento keeps runtime protocols separate at packaging boundaries. Shared skill
+content stays in `catalog/skills/`, while lifecycle hooks live under
+`catalog/hooks/<hook-name>/<platform>/` so Claude Code and Codex can each have
+their own `hooks.json` and scripts where their hook contracts differ.
 
 ## Key decisions
 
 | Decision | Choice | Rationale |
 |---|---|---|
 | Repo type | Private marketplace | Allows multiple independent plugins; each can be installed/updated separately |
-| Hook management | Scripts in `hooks/` + manual `settings.json` wiring | Plugin system doesn't support hooks natively; a setup script would be fragile |
-| Hook organization | Subdirs per event, one file per concern | Supports multiple hooks per event cleanly; easy to add/remove individual hooks |
+| Hook management | Platform-peer hook sources under `catalog/hooks/<hook-name>/<platform>/` | Keeps Claude and Codex protocols explicit without making either runtime the default |
+| Hook organization | One peer source per runtime, each with its own `hooks.json` and scripts | Supports shared intent while allowing event names, output shapes, and command wiring to differ |
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
 | Issue tracking | GitHub Issues | Matches the repository host and the included tracker workflow skills |
 | Skill source model | Canonical skills in `catalog/skills/`; generated installable plugins in `plugins/` | Supports both broad and narrow install options without maintaining duplicate skill content |
@@ -59,6 +63,8 @@ Generated plugins live at `plugins/<name>/` with:
 - `assets/` — generated Codex-facing icon, logo, and screenshot assets
 - `skills/<skill-name>/SKILL.md` — composed from the canonical shared skill
   contract and any target-platform overlay
+- `hooks/hooks.json` and `hooks/scripts/` — copied from the target platform's
+  peer hook source when the plugin declares hooks for that runtime
 
 For Codex, these generated artifacts expose installable skills, apps, MCP
 servers, hooks, and UI metadata. They do not currently define custom slash

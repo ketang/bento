@@ -18,6 +18,7 @@
     "engineering"
   ],
   "skills": "./skills/",
+  "hooks": "./hooks/hooks.json",
   "interface": {
     "displayName": "Bento",
     "shortDescription": "Complete coding-agent workflow pack",
