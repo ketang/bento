@@ -56,6 +56,11 @@ Rules:
   only; never mandate a specific percentage target.
 - Treat disabled or bypassed automated tests as findings candidates when
   they weaken confidence.
+- When `demo_walkthrough_signals` is non-empty, include demo/walkthrough drift
+  as a warning-level audit module. Check run commands, visible/headless parity,
+  screenshots, warning queues, and overlap with functional tests. Recommend
+  `maintain-web-demo` for drifted demos and `generate-web-demo` for webapps
+  with important human-observable workflows but no demo.
 
 ## Documentation Findings
 

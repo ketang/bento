@@ -1,0 +1,4 @@
+interface:
+  display_name: "Maintain Web Demo"
+  short_description: "Keep webapp walkthroughs in sync"
+  default_prompt: "Update this repo's webapp demo walkthrough after product or test changes, preserving visible/headless parity, screenshots, and warning artifacts."

@@ -347,7 +347,7 @@ def package_manager(repo_root: Path, files: set[str], package_json: dict | None)
 
 
 def npm_script_commands(package_json: dict | None, manager: str | None) -> dict[str, list[str]]:
-    commands = {"build": [], "test": [], "lint": [], "typecheck": []}
+    commands = {"build": [], "test": [], "lint": [], "typecheck": [], "demo": []}
     if not package_json:
         return commands
 
@@ -362,6 +362,7 @@ def npm_script_commands(package_json: dict | None, manager: str | None) -> dict[
         "test": {"test", "test:unit", "test:integration", "check"},
         "lint": {"lint"},
         "typecheck": {"typecheck", "type-check"},
+        "demo": {"demo", "demo:headed", "demo:headless", "walkthrough"},
     }
 
     for category, keys in categories.items():
@@ -376,7 +377,7 @@ def npm_script_commands(package_json: dict | None, manager: str | None) -> dict[
 
 
 def make_commands(repo_root: Path) -> dict[str, list[str]]:
-    commands = {"build": [], "test": [], "lint": [], "typecheck": []}
+    commands = {"build": [], "test": [], "lint": [], "typecheck": [], "demo": []}
     makefile = repo_root / "Makefile"
     if not makefile.is_file():
         return commands
@@ -396,6 +397,8 @@ def make_commands(repo_root: Path) -> dict[str, list[str]]:
             commands["lint"].append(f"make {target}")
         if "type" in lowered and "check" in lowered:
             commands["typecheck"].append(f"make {target}")
+        if "demo" in lowered or "walkthrough" in lowered:
+            commands["demo"].append(f"make {target}")
 
     return commands
 
@@ -443,6 +446,69 @@ def detect_frameworks(package_json: dict | None) -> list[str]:
         if name in deps:
             frameworks.append(name)
     return unique_sorted(frameworks)
+
+
+def demo_walkthrough_signals(
+    repo_root: Path,
+    rel_files: list[str],
+    package_json: dict | None,
+    project_commands: dict[str, list[str]],
+) -> dict[str, object]:
+    def demo_like(path: str) -> bool:
+        lowered = path.lower()
+        return "demo" in lowered or "walkthrough" in lowered
+
+    demo_commands = list(project_commands.get("demo", []))
+    if package_json and isinstance(package_json.get("scripts"), dict):
+        scripts = package_json["scripts"]
+        manager = package_manager(repo_root, set(rel_files), package_json) or "npm"
+        for name in sorted(scripts):
+            lowered = name.lower()
+            if "demo" in lowered or "walkthrough" in lowered:
+                prefix = "npm run" if manager == "npm" else f"{manager} run"
+                demo_commands.append(f"{prefix} {name}")
+
+    playwright_files = [
+        path for path in rel_files
+        if (
+            Path(path).name.startswith("playwright.config")
+            or "/playwright/" in f"/{path.lower()}"
+            or path.endswith((".spec.ts", ".spec.js")) and demo_like(path)
+        )
+    ]
+    demo_scripts = [
+        path for path in rel_files
+        if (
+            path.startswith(("scripts/", "bin/"))
+            and any(token in path.lower() for token in ("demo", "walkthrough"))
+        )
+    ]
+    warning_queues = [
+        path for path in rel_files
+        if path.endswith(".jsonl") and any(token in path.lower() for token in ("demo-warning", "demo-warnings", "walkthrough-warning"))
+    ]
+    screenshot_paths = [
+        path for path in rel_files
+        if any(token in path.lower() for token in ("screenshot", "screenshots", "demo-artifact", "demo-artifacts")) and demo_like(path)
+    ]
+    bugshot_paths = [
+        path for path in rel_files
+        if path.startswith(".bugshot/")
+    ]
+    docs = [
+        path for path in rel_files
+        if is_doc_like(path) and path.startswith("docs/") and demo_like(path)
+    ]
+
+    return {
+        "commands": unique_sorted(demo_commands),
+        "scripts": unique_sorted(demo_scripts),
+        "playwright_files": unique_sorted(playwright_files),
+        "warning_queues": unique_sorted(warning_queues),
+        "screenshot_paths": unique_sorted(screenshot_paths),
+        "bugshot_paths": unique_sorted(bugshot_paths),
+        "docs": unique_sorted(docs),
+    }
 
 
 def detect_docs(files: list[str]) -> list[str]:
@@ -1119,6 +1185,7 @@ def main() -> int:
     test_commands = unique_sorted(npm_commands["test"] + makefile_commands["test"])
     lint_commands = unique_sorted(npm_commands["lint"] + makefile_commands["lint"])
     typecheck_commands = unique_sorted(npm_commands["typecheck"] + makefile_commands["typecheck"])
+    demo_commands = unique_sorted(npm_commands["demo"] + makefile_commands["demo"])
 
     docs = detect_docs(rel_files)
     languages = detect_languages(file_set)
@@ -1129,6 +1196,7 @@ def main() -> int:
         "test": test_commands,
         "lint": lint_commands,
         "typecheck": typecheck_commands,
+        "demo": demo_commands,
     }
     doc_commands = extract_doc_commands(repo_root, docs)
     repo_commands = known_repo_commands(rel_files, project_commands, static_analysis)
@@ -1162,6 +1230,7 @@ def main() -> int:
         "test_automation_health": {
             "disabled_signals": disabled_test_signals(repo_root, rel_files),
         },
+        "demo_walkthrough_signals": demo_walkthrough_signals(repo_root, rel_files, package_json, project_commands),
         "static_analysis": static_analysis,
         "warnings": warnings,
     }

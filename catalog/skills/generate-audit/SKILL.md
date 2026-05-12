@@ -82,6 +82,10 @@ Include only modules that fit the discovered repo:
   "documentation utility" pass; markdownlint/typos finding → `warning`;
   broken link → `error`
 - docs truthfulness
+- demo/walkthrough drift (warning-level by default; include when the repo has
+  browser demos, walkthrough scripts, `make demo`-style commands, screenshot
+  artifact conventions, `.demo-warnings.jsonl`, or Bugshot-linked demo output;
+  escalate only when the repo makes the demo part of a required gate)
 - documentation utility
 - issue hygiene
 - foundation review

@@ -39,6 +39,15 @@ docs. Treat these as findings candidates when they reduce confidence or
 normalize broken test workflows. Explain what risk each disabled path leaves
 untested.
 
+## Demo and Walkthrough Drift
+
+Inspect `demo_walkthrough_signals`. When a repo has a browser demo or
+walkthrough, include a warning-level audit surface that checks whether it still
+matches current routes, navigation, accessible names, selectors, seed data,
+auth/session setup, app/container startup, functional tests, screenshot
+artifacts, visible/headless parity, and warning queue handling. Escalate only
+when the demo is part of an established required gate.
+
 ## Risk-Heavy Areas
 
 Auth and permissions, routers and input validation, persistence and
