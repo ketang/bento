@@ -36,14 +36,6 @@ of launching work that benefit from repeatable checks:
 - `launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
   to verify the current checkout is the intended linked worktree on the intended
   branch
-- `launch-work/scripts/launch-work-log.py {init|update|read}` to manage the
-  branch-local progress log at `<worktree-git-dir>/launch-work/log.md` (i.e.
-  under `.git/worktrees/<name>/launch-work/log.md` for a linked worktree).
-  The log is **never** in the working tree and is **never** committed —
-  storing it under `$GIT_DIR` makes it structurally untrackable, which is the
-  invariant: launch-work scaffolding never lands on the integration branch.
-- `launch-work/scripts/launch-work-discover.py` to scan linked worktrees for
-  in-flight progress logs
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script.
@@ -53,12 +45,6 @@ target branch and worktree path are confirmed correct.
 
 ## Workflow
 
-0. Run `launch-work/scripts/launch-work-discover.py` first. If it reports an
-   in-flight log that matches the user's described task — by branch name, by
-   the "Original task" slot, or by an explicit user request to resume — read
-   that log, run `launch-work-verify.py` against the recorded branch and
-   worktree, and resume from the recorded checkpoint instead of bootstrapping
-   a fresh task. Otherwise proceed.
 1. Read the repo's local instructions and confirm the approved task scope.
 2. Determine whether the work is tracker-backed or just an approved change.
    - If the repo uses Beads, use the `beads-issue-flow` skill.
@@ -100,15 +86,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 ```
 
 9. Confirm implementation will happen in that linked worktree, not in the
-   primary checkout. Then initialize the progress log:
-
-   ```bash
-   launch-work/scripts/launch-work-log.py init
-   ```
-
-   This creates `<worktree-git-dir>/launch-work/log.md` at checkpoint
-   `worktree-ready`. The log is not committed and does not appear in the
-   working tree.
+   primary checkout.
 9a. Read `launch-work/references/project-hooks.md` and
     `launch-work/references/project-actions.md`. Run the **`pre`** extensions
     after worktree verification and before dependency installation:
@@ -145,39 +123,13 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     `launch-work/references/dependency-bootstrap.md`, which also covers
     disk-efficient choices on ext4 (pnpm store, shared module caches). Avoid
     overriding global cache directories per worktree unless the repo documents
-    a reason to do so. After deps are installed:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint deps-installed
-    ```
+    a reason to do so.
 
 11. Before editing implementation code for new work or a behavioral change
     with feasible automated coverage, identify the relevant verification
     target and write or update the smallest relevant test so it fails against
-    the current or missing behavior. Commit the failing test, then update the
-    log:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint red-test-written
-    ```
-
-    Implement the change, make the test pass, and update the log:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint tests-green
-    ```
-
-    Run the relevant verification gates. After they pass:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint verification-passed
-    ```
-
-    Once the work is ready to land:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint ready-to-land
-    ```
+    the current or missing behavior. Commit the failing test, then implement
+    the change, make the test pass, and run the relevant verification gates.
 
 11a. Run the **`post`** extensions before declaring the work ready to land:
 
@@ -212,47 +164,6 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     or expansions made to the automated test suite. If test coverage did not
     change, say so explicitly.
 
-## Progress Log Cadence
-
-The progress log at `<worktree-git-dir>/launch-work/log.md` is the
-crash-recovery breadcrumb: a fresh agent reads it to resume in-flight work.
-The file lives under `$GIT_DIR`, not in the working tree, and is never
-committed. Write rules:
-
-- **Mandatory** at every checkpoint transition listed in the workflow: run
-  `launch-work-log.py update --checkpoint <name>` before proceeding.
-- **Discretionary** when recording a non-obvious decision, ruling out an
-  approach, hitting or resolving a blocker, or when the "Next action" slot
-  would be wrong if read by a recovery agent — pass `--slot <name> --content
-  -` to the helper and pipe the new slot text on stdin.
-- Always rewrite the whole file via the helper. Never append. Never edit the
-  log file directly during checkpoint writes.
-- Skip trivial mid-step state (every test run, every file edited). The log is
-  for recovery, not telemetry.
-
-### Legacy fallback
-
-Branches in flight before the move out of the working tree may still carry
-`<worktree>/.launch-work/log.md`. Read paths (`launch-work-log.py read`,
-`launch-work-discover.py`, `closure`) fall back to that location. Updates
-refuse to silently mix locations; clean the legacy log first via
-`land-work-clean-log.py --base <primary> --apply`, then run
-`launch-work-log.py init` to create the new `$GIT_DIR`-based log.
-
-## Resume Protocol
-
-When `launch-work-discover.py` reports an in-flight log for the current task:
-
-1. Read the log first, before any other action.
-2. Run `launch-work-verify.py --expected-branch <slot-3-branch> --expected-worktree <slot-3-worktree> --require-linked-worktree`
-   from the recorded worktree. On mismatch, stop and surface it.
-3. If the log's `last-updated` is older than system boot time (e.g.,
-   `uptime -s` on Linux), warn the user that the previous agent likely
-   crashed before its last action completed and that the "Next action" slot
-   may be stale by one step.
-4. Resume from the recorded checkpoint. Do not re-claim, do not re-create the
-   worktree, do not re-install deps.
-
 ## Non-Negotiable Rules
 
 - One approved task gets one branch and one linked worktree.
@@ -272,17 +183,10 @@ When `launch-work-discover.py` reports an in-flight log for the current task:
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
 - If automated coverage is not feasible, state that explicitly and use the
   closest available verification path.
-- Never proceed past a checkpoint without writing the log first.
-- Never edit the log file directly during checkpoint writes; always use
-  `launch-work/scripts/launch-work-log.py update` so the header stays
-  canonical. The log lives under `$GIT_DIR/launch-work/log.md`, not in the
-  working tree, and must never be committed or land on the integration
-  branch.
 - Do not skip discovered project hooks or actions at the `pre` and `post`
   positions. A `75` exit code (hooks) or matched `## Stop conditions`
   predicate (actions) is a human handoff, not a destructive failure;
   preserve the branch and linked worktree and surface the message.
-- Never create a progress log on the primary branch.
 
 ## Stop Conditions
 
