@@ -278,6 +278,35 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertFalse((generated_skill / "CLAUDE.md").exists())
             self.assertFalse((generated_skill / "CODEX.md").exists())
 
+    def test_build_repo_excludes_tests_and_non_runtime_docs_from_plugin_output(self) -> None:
+        skill_dir = self.root / "catalog" / "skills" / "closure"
+        (skill_dir / "tests").mkdir()
+        (skill_dir / "tests" / "test_closure.py").write_text("assert False\n", encoding="utf-8")
+        (skill_dir / "scripts" / "closure_test.py").write_text("assert False\n", encoding="utf-8")
+        (skill_dir / "README.md").write_text("source-only notes\n", encoding="utf-8")
+        (skill_dir / "docs").mkdir()
+        (skill_dir / "docs" / "design.md").write_text("source-only design\n", encoding="utf-8")
+
+        hook_scripts = self.root / "catalog" / "hooks" / "bento" / "codex" / "scripts"
+        (hook_scripts / "permission-request_test.py").write_text("assert False\n", encoding="utf-8")
+        (self.root / "catalog" / "hooks" / "bento" / "codex" / "README.md").write_text(
+            "source-only hook notes\n",
+            encoding="utf-8",
+        )
+
+        self.module.build_repo(run_verification=False)
+
+        for platform in ("claude", "codex"):
+            generated_skill = self.root / "plugins" / platform / "bento" / "skills" / "closure"
+            self.assertFalse((generated_skill / "tests").exists())
+            self.assertFalse((generated_skill / "scripts" / "closure_test.py").exists())
+            self.assertFalse((generated_skill / "README.md").exists())
+            self.assertFalse((generated_skill / "docs").exists())
+
+        codex_hooks = self.root / "plugins" / "codex" / "bento" / "hooks"
+        self.assertFalse((codex_hooks / "scripts" / "permission-request_test.py").exists())
+        self.assertFalse((codex_hooks / "README.md").exists())
+
     def test_invalid_platform_in_sidecar_raises(self) -> None:
         packaging = self.root / "catalog" / "skills" / "closure" / "packaging.json"
         packaging.write_text(json.dumps({"platforms": ["klingon"]}), encoding="utf-8")
