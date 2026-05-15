@@ -20,10 +20,8 @@ class CodexInstallerTest(unittest.TestCase):
         self.bin_dir = self.root / "bin"
         self.bin_dir.mkdir()
         self.main_archive = self.root / "bento.tar.gz"
-        self.bugshot_archive = self.root / "bugshot.tar.gz"
 
         self._write_main_archive()
-        self._write_bugshot_archive()
         self._write_mock_curl()
 
     def tearDown(self) -> None:
@@ -50,23 +48,19 @@ class CodexInstallerTest(unittest.TestCase):
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
                 "stacks": "./../../plugins/stacks",
-                "bugshot": "./../../plugins/bugshot",
             },
         )
         self.assertEqual((plugin_root / "bento" / "README.txt").read_text(encoding="utf-8"), "bento\n")
-        self.assertEqual((plugin_root / "bugshot" / "README.txt").read_text(encoding="utf-8"), "bugshot\n")
+        self.assertFalse((plugin_root / "bugshot").exists())
         bento_cache_versions = list((codex_cache_root / "bento").iterdir())
         self.assertEqual(len(bento_cache_versions), 1)
         self.assertEqual((bento_cache_versions[0] / "README.txt").read_text(encoding="utf-8"), "bento\n")
         self.assertTrue((bento_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
-        bugshot_cache_versions = list((codex_cache_root / "bugshot").iterdir())
-        self.assertEqual(len(bugshot_cache_versions), 1)
-        self.assertEqual((bugshot_cache_versions[0] / "README.txt").read_text(encoding="utf-8"), "bugshot\n")
-        self.assertTrue((bugshot_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
+        self.assertFalse((codex_cache_root / "bugshot").exists())
         self.assertFalse((codex_cache_root / "trackers").exists())
         config_text = codex_config_path.read_text(encoding="utf-8")
         self.assertIn('[plugins."bento@bento"]\nenabled = true', config_text)
-        self.assertIn('[plugins."bugshot@bento"]\nenabled = true', config_text)
+        self.assertNotIn('[plugins."bugshot@bento"]', config_text)
 
     def test_project_install_writes_paths_relative_to_marketplace_file(self) -> None:
         install_root = self.root / "project"
@@ -88,9 +82,9 @@ class CodexInstallerTest(unittest.TestCase):
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
                 "stacks": "./../../plugins/stacks",
-                "bugshot": "./../../plugins/bugshot",
             },
         )
+        self.assertFalse((plugin_root / "bugshot").exists())
         self.assertTrue((plugin_root / "trackers" / ".codex-plugin" / "plugin.json").exists())
         self.assertTrue((plugin_root / "stacks" / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse(codex_cache_root.exists())
@@ -108,8 +102,8 @@ class CodexInstallerTest(unittest.TestCase):
 
         config_text = codex_config_path.read_text(encoding="utf-8")
         self.assertEqual(config_text.count('[plugins."bento@bento"]'), 1)
-        self.assertEqual(config_text.count('[plugins."bugshot@bento"]'), 1)
-        self.assertEqual(config_text.count("enabled = true"), 3)
+        self.assertNotIn('[plugins."bugshot@bento"]', config_text)
+        self.assertEqual(config_text.count("enabled = true"), 2)
 
     def test_home_install_seeds_agent_plugins_handoff_template(self) -> None:
         install_root = self.root / "home-seed"
@@ -223,7 +217,6 @@ class CodexInstallerTest(unittest.TestCase):
         env = os.environ.copy()
         env["PATH"] = f"{self.bin_dir}:{env.get('PATH', '')}"
         env["MOCK_BENTO_ARCHIVE"] = str(self.main_archive)
-        env["MOCK_BUGSHOT_ARCHIVE"] = str(self.bugshot_archive)
         env["BENTO_INSTALL_SCOPE"] = scope
         env["BENTO_INSTALL_ROOT"] = str(install_root)
         env["BENTO_PLUGIN_ROOT"] = str(plugin_root)
@@ -283,18 +276,6 @@ class CodexInstallerTest(unittest.TestCase):
 
         self._make_archive(source_root, self.main_archive)
 
-    def _write_bugshot_archive(self) -> None:
-        source_root = self.root / "source" / "bugshot-main"
-        plugin_dir = source_root
-        (plugin_dir / ".codex-plugin").mkdir(parents=True, exist_ok=True)
-        (plugin_dir / ".codex-plugin" / "plugin.json").write_text(
-            json.dumps({"interface": {"category": "Coding"}}, indent=2) + "\n",
-            encoding="utf-8",
-        )
-        (plugin_dir / "README.txt").write_text("bugshot\n", encoding="utf-8")
-
-        self._make_archive(source_root, self.bugshot_archive)
-
     def _make_archive(self, source_root: Path, archive_path: Path) -> None:
         archive_path.parent.mkdir(parents=True, exist_ok=True)
         with tarfile.open(archive_path, "w:gz") as tar:
@@ -326,14 +307,7 @@ class CodexInstallerTest(unittest.TestCase):
                   esac
                 done
 
-                case "$url" in
-                  *ketang/bugshot*)
-                    source_archive="${MOCK_BUGSHOT_ARCHIVE}"
-                    ;;
-                  *)
-                    source_archive="${MOCK_BENTO_ARCHIVE}"
-                    ;;
-                esac
+                source_archive="${MOCK_BENTO_ARCHIVE}"
 
                 if [[ -n "$output" ]]; then
                   cp "$source_archive" "$output"
