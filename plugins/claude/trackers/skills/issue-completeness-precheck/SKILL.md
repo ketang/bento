@@ -55,12 +55,22 @@ spawn a fresh reviewer agent. Pass only the draft issue file path and review
 output file path. Do not fork the current context unless that is the only
 available mechanism and the reviewer prompt still forbids using prior context.
 
-If delegation is unavailable or not authorized, run the same verdict template
-locally while reading only the draft file and mark the verdict as
+If delegation is available but the current request did not authorize it, ask
+for explicit permission before falling back. Use a short request such as:
+
+```text
+May I launch a fresh subagent to review this issue draft for completeness?
+It will receive only the draft path and review output path.
+```
+
+If the user grants permission, spawn the fresh reviewer agent. If the user
+declines, or delegation is unavailable in the runtime, run the same verdict
+template locally while reading only the draft file and mark the verdict as
 `review_mode: local-fallback`.
 
 Do not use local fallback for broad, high-risk, ambiguous, or subtle repro
-issues. Ask for permission to launch a fresh reviewer instead.
+issues. Ask for permission to launch a fresh reviewer instead; if permission
+is declined, do not file the issue as normal ready work.
 
 ## Workflow
 
