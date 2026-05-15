@@ -7,8 +7,6 @@ REPO_REF="${BENTO_REPO_REF:-main}"
 ARCHIVE_URL="${BENTO_ARCHIVE_URL:-https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_REF}}"
 
 PLUGIN_NAMES=("bento" "trackers" "stacks")
-declare -A EXTERNAL_PLUGIN_REPOS=(["bugshot"]="ketang/bugshot")
-declare -A EXTERNAL_PLUGIN_REFS=(["bugshot"]="main")
 INSTALL_SCOPE="${BENTO_INSTALL_SCOPE:?BENTO_INSTALL_SCOPE must be set to home or project}"
 INSTALL_ROOT="${BENTO_INSTALL_ROOT:?BENTO_INSTALL_ROOT must be set}"
 PLUGIN_ROOT="${BENTO_PLUGIN_ROOT:?BENTO_PLUGIN_ROOT must be set}"
@@ -48,9 +46,6 @@ add_codex_enabled_plugin() {
 }
 
 add_codex_enabled_plugin "$CODEX_ENABLED_PLUGIN"
-for ext_name in "${!EXTERNAL_PLUGIN_REPOS[@]}"; do
-  add_codex_enabled_plugin "$ext_name"
-done
 
 tmpdir="$(mktemp -d)"
 cleanup() {
@@ -126,38 +121,6 @@ seed_agent_plugins_handoff() {
 
 seed_agent_plugins_handoff
 
-# Install external plugins from their own GitHub repos
-for ext_name in "${!EXTERNAL_PLUGIN_REPOS[@]}"; do
-  ext_repo="${EXTERNAL_PLUGIN_REPOS[$ext_name]}"
-  ext_ref="${EXTERNAL_PLUGIN_REFS[$ext_name]:-main}"
-  ext_archive="${tmpdir}/${ext_name}.tar.gz"
-  ext_extract="${tmpdir}/ext-${ext_name}"
-  mkdir -p "$ext_extract"
-
-  log "downloading external plugin ${ext_name} from ${ext_repo}@${ext_ref}"
-  curl -fsSL "https://codeload.github.com/${ext_repo}/tar.gz/refs/heads/${ext_ref}" -o "$ext_archive"
-  tar -xzf "$ext_archive" -C "$ext_extract"
-
-  ext_root="$(find "$ext_extract" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
-  if [[ -z "${ext_root}" ]]; then
-    echo "unable to locate extracted root for external plugin ${ext_name}" >&2
-    exit 1
-  fi
-
-  if [[ ! -f "${ext_root}/.codex-plugin/plugin.json" ]]; then
-    echo "missing .codex-plugin/plugin.json in external plugin ${ext_name}" >&2
-    exit 1
-  fi
-
-  dest="${PLUGIN_ROOT}/${ext_name}"
-  staging="${PLUGIN_ROOT}/.${ext_name}.tmp"
-  rm -rf "$staging"
-  mkdir -p "$staging"
-  cp -R "${ext_root}/." "$staging/"
-  rm -rf "$dest"
-  mv "$staging" "$dest"
-done
-
 declare -A CODEX_CACHE_KEYS=()
 if [[ -n "$CODEX_PLUGIN_CACHE_ROOT" && "${#CODEX_ENABLED_PLUGINS[@]}" -gt 0 ]]; then
   for plugin in "${CODEX_ENABLED_PLUGINS[@]}"; do
@@ -211,8 +174,7 @@ target_path = Path(sys.argv[2])
 plugin_root = Path(sys.argv[3])
 
 local_names = ("bento", "trackers", "stacks")
-external_names = ("bugshot",)
-bento_names = set(local_names) | set(external_names)
+bento_names = set(local_names)
 
 def local_source_path(name: str) -> str:
     relative = Path(os.path.relpath(plugin_root / name, start=target_path.parent)).as_posix()
@@ -223,27 +185,6 @@ def local_source_path(name: str) -> str:
 source_plugins = []
 for name in local_names:
     manifest_path = repo_root / "plugins" / "codex" / name / ".codex-plugin" / "plugin.json"
-    if not manifest_path.exists():
-        continue
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    interface = manifest.get("interface", {})
-    source_plugins.append(
-        {
-            "name": name,
-            "source": {
-                "source": "local",
-                "path": local_source_path(name),
-            },
-            "policy": {
-                "installation": "AVAILABLE",
-                "authentication": "ON_INSTALL",
-            },
-            "category": interface.get("category", "Coding"),
-        }
-    )
-
-for name in external_names:
-    manifest_path = plugin_root / name / ".codex-plugin" / "plugin.json"
     if not manifest_path.exists():
         continue
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
