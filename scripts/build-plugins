@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 
 import json
+import fnmatch
 import os
 import shutil
 import struct
@@ -230,10 +231,47 @@ SKILL_PLATFORM_DEFAULT = ("claude", "codex")
 HOOK_PLATFORM_DEFAULT: tuple[str, ...] = ()
 PACKAGING_FILENAME = "packaging.json"
 SKILL_OVERLAY_FILENAMES = tuple(f"{platform.upper()}.md" for platform in PLATFORMS)
+COMMON_DISTRIBUTABLE_IGNORE_PATTERNS = (
+    "__pycache__",
+    "*.pyc",
+    ".pytest_cache",
+    ".mypy_cache",
+    ".ruff_cache",
+    "test",
+    "tests",
+    "__tests__",
+    "testdata",
+    "test_*.py",
+    "*_test.py",
+    "*_test.go",
+    "*.test.js",
+    "*.test.jsx",
+    "*.test.ts",
+    "*.test.tsx",
+    "*.spec.js",
+    "*.spec.jsx",
+    "*.spec.ts",
+    "*.spec.tsx",
+    "README.md",
+    "CHANGELOG.md",
+    "CONTRIBUTING.md",
+    "docs",
+)
 
 
 def plugin_dir(plugin: str, platform: str) -> Path:
     return PLUGINS_DIR / platform / plugin
+
+
+def ignore_patterns(*patterns: str):
+    return shutil.ignore_patterns(*COMMON_DISTRIBUTABLE_IGNORE_PATTERNS, *patterns)
+
+
+def is_distributable_ignored(name: str, *patterns: str) -> bool:
+    return any(
+        fnmatch.fnmatchcase(name, pattern)
+        for pattern in (*COMMON_DISTRIBUTABLE_IGNORE_PATTERNS, *patterns)
+    )
 
 
 def _read_packaging(source_dir: Path) -> dict:
@@ -318,9 +356,7 @@ def copy_skills(plugin: str, platform: str) -> None:
         shutil.copytree(
             source_dir,
             destination_dir,
-            ignore=shutil.ignore_patterns(
-                "__pycache__",
-                "*.pyc",
+            ignore=ignore_patterns(
                 PACKAGING_FILENAME,
                 *SKILL_OVERLAY_FILENAMES,
             ),
@@ -381,7 +417,7 @@ def fetch_external_skill(
             shutil.copytree(
                 workdir,
                 destination,
-                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+                ignore=ignore_patterns(".git"),
             )
     if not (destination / "SKILL.md").exists():
         raise SystemExit(
@@ -400,7 +436,7 @@ def copy_included_paths(source: Path, destination: Path, include: list[str]) -> 
             shutil.copytree(
                 src,
                 dst,
-                ignore=shutil.ignore_patterns(".git", "__pycache__", "*.pyc"),
+                ignore=ignore_patterns(".git"),
             )
         else:
             shutil.copy2(src, dst)
@@ -417,7 +453,7 @@ def copy_hooks(plugin: str, platform: str) -> None:
         if not src.exists():
             raise SystemExit(f"Missing hook catalog source: {src}")
         for child in src.iterdir():
-            if child.name in {PACKAGING_FILENAME, "__pycache__", "hooks.json"}:
+            if child.name == "hooks.json" or is_distributable_ignored(child.name, PACKAGING_FILENAME):
                 continue
             destination = target / child.name
             if child.is_dir():
@@ -425,7 +461,7 @@ def copy_hooks(plugin: str, platform: str) -> None:
                     child,
                     destination,
                     dirs_exist_ok=True,
-                    ignore=shutil.ignore_patterns("__pycache__", "*.pyc"),
+                    ignore=ignore_patterns(),
                 )
             else:
                 destination.parent.mkdir(parents=True, exist_ok=True)
