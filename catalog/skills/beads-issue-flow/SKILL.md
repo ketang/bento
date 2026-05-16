@@ -45,6 +45,51 @@ proposed title and description. Only create the Beads issue after the shared
 precheck returns `ready: yes`, or `ready: triage-only` with the repo's
 documented triage marker and unresolved questions included in the description.
 
+### Epics
+
+Use an epic only as a container for related child work, not as a standalone
+implementation task. If a request is too broad for one normal issue, create an
+epic plus concrete child issues instead of filing one oversized issue.
+
+Create the epic first:
+
+```bash
+bd create --type epic --title "..." --description "..."
+```
+
+Then create each child with an explicit parent:
+
+```bash
+bd create --type task --parent <epic-id> --title "..." --description "..."
+```
+
+Use the child issue types that match the work (`task`, `bug`, `feature`, etc.).
+Do not rely on title wording, labels, or notes to imply epic membership.
+
+Parent-child membership is not a sequencing dependency. If one child must land
+before another child can start, add a normal blocking edge between the children
+as described in "Dependency Links" below.
+
+After creating or changing an epic, verify the structure:
+
+```bash
+bd children <epic-id>
+bd epic status
+```
+
+Confirm every intended child appears under the epic. For any ordered child work,
+also verify the explicit `blocks` edges with `bd dep list`.
+
+Do not manually close an epic while it still has open children. Beads
+auto-closes an epic when the last open child is closed through normal `bd close`
+behavior. If an older or interrupted workflow leaves completed epics open, run:
+
+```bash
+bd epic close-eligible
+```
+
+Use `bd epic close-eligible --dry-run` first when auditing several epics.
+
 ## Closure Evidence Rule
 
 Never close a Beads issue without proof its branch is reachable from the
@@ -98,8 +143,13 @@ bd list
 bd ready
 bd show <id>
 bd create --title "..." --description "..."
+bd create --type epic --title "..." --description "..."
+bd create --type task --parent <epic-id> --title "..." --description "..."
 bd update <id> --status <status>
 bd close <id> --reason "<merge-sha> landed on <integration-branch>"
+bd children <epic-id>
+bd epic status
+bd epic close-eligible
 ```
 
 Prefer `bd close --reason` over `bd update <id> --status closed`. The former
@@ -137,13 +187,18 @@ After creating a dependency, always verify it with:
 
 ```bash
 bd dep list <blocked>
+bd dep list <blocker> --direction=up
 ```
 
-Confirm the blocker appears under `blocked by`, not under `blocks`.
+Confirm the first command shows the blocker as something `<blocked>` depends
+on, and the second command shows `<blocked>` as a dependent of `<blocker>`.
+If the relationship points the other way, remove it and recreate it with the
+explicit `--blocks` form.
 
 Worked example:
 
 - English statement: `bento-auth` must finish before `bento-ui`.
 - Command: `bd dep bento-auth --blocks bento-ui`
-- Verification: run `bd dep list bento-ui` and confirm `bento-auth` appears in
-  the `blocked by` section.
+- Verification: run `bd dep list bento-ui` and confirm `bento-auth` is a
+  dependency; run `bd dep list bento-auth --direction=up` and confirm
+  `bento-ui` is a dependent.
