@@ -134,12 +134,22 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue((claude_bento_hooks / "hooks.json").exists())
         self.assertTrue((claude_bento_hooks / "scripts" / "auto-allow.py").exists())
         self.assertTrue((claude_bento_hooks / "scripts" / "ensure-worktree-permissions.py").exists())
+        self.assertTrue((claude_bento_hooks / "scripts" / "require-worktree.sh").exists())
+        self.assertTrue((claude_bento_hooks / "scripts" / "register-require-worktree-hook.py").exists())
         self.assertIn("PreToolUse", claude_hooks["hooks"])
         self.assertIn(
             "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/auto-allow.py bento ${CLAUDE_PLUGIN_ROOT}",
             [
                 hook["command"]
                 for entry in claude_hooks["hooks"]["PreToolUse"]
+                for hook in entry["hooks"]
+            ],
+        )
+        self.assertIn(
+            "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/register-require-worktree-hook.py ${CLAUDE_PLUGIN_ROOT}",
+            [
+                hook["command"]
+                for entry in claude_hooks["hooks"]["SessionStart"]
                 for hook in entry["hooks"]
             ],
         )
