@@ -93,6 +93,26 @@ class BumpPluginVersionsTest(unittest.TestCase):
         self.assertEqual(set(payload["relevant_paths"]), {"scripts/build-plugins"})
         self.assertEqual(len(set(versions.values())), 1)  # all bumped to the same minor version
 
+    def test_hook_change_bumps_plugins_that_package_hook(self) -> None:
+        versions_before = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
+        bento_before = versions_before["bento"]
+        major, minor, patch = bento_before.split(".")
+        bento_after = f"{major}.{minor}.{int(patch) + 1}"
+
+        hook_path = self.repo / "catalog" / "hooks" / "bento" / "claude" / "scripts" / "auto-allow.py"
+        hook_path.write_text(hook_path.read_text(encoding="utf-8") + "\n# behavior change\n", encoding="utf-8")
+
+        result = self.run_bump()
+        payload = json.loads(result.stdout)
+        versions = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(payload["bumps"], {"bento": {"from": bento_before, "to": bento_after}})
+        self.assertEqual(versions["bento"], bento_after)
+        self.assertEqual(versions["trackers"], versions_before["trackers"])
+        self.assertEqual(versions["stacks"], versions_before["stacks"])
+        self.assertEqual(versions["session-id"], versions_before["session-id"])
+        self.assertEqual(payload["relevant_paths"], [str(hook_path.relative_to(self.repo))])
+
     def test_ignores_generated_outputs(self) -> None:
         versions_before = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
 

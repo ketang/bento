@@ -75,9 +75,15 @@ def bump_version(version: str, part: str) -> str:
 def affected_plugins(paths: list[str], build_plugins_module) -> tuple[set[str], list[str]]:
     plugin_defs = build_plugins_module.PLUGIN_DEFS
     skills_to_plugins: dict[str, set[str]] = {}
+    hooks_to_plugins: dict[str, set[str]] = {}
     for plugin, metadata in plugin_defs.items():
         for skill in metadata["skills"]:
             skills_to_plugins.setdefault(skill, set()).add(plugin)
+        hook_names = metadata.get("hooks", [])
+        if isinstance(hook_names, str):
+            hook_names = [hook_names]
+        for hook_name in hook_names:
+            hooks_to_plugins.setdefault(hook_name, set()).add(plugin)
 
     affected: set[str] = set()
     relevant_paths: list[str] = []
@@ -93,6 +99,15 @@ def affected_plugins(paths: list[str], build_plugins_module) -> tuple[set[str], 
             if len(parts) >= 3:
                 skill = parts[2]
                 matched = skills_to_plugins.get(skill, set())
+                if matched:
+                    affected.update(matched)
+                    relevant_paths.append(path)
+            continue
+        if path.startswith("catalog/hooks/"):
+            parts = Path(path).parts
+            if len(parts) >= 3:
+                hook_name = parts[2]
+                matched = hooks_to_plugins.get(hook_name, set())
                 if matched:
                     affected.update(matched)
                     relevant_paths.append(path)
