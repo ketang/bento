@@ -57,6 +57,22 @@ durable, user-scoped worktree directory rather than an ad hoc convenient path.
 Use `/tmp` only for ephemeral scratch data or continuation state that can be
 recomputed after a reboot or context reset.
 
+For Claude Code, the bento plugin installs a `SessionStart` hook that
+registers a global `PreToolUse` guard for `Edit`, `Write`, and `NotebookEdit`.
+That guard blocks those file-editing tools when the active checkout is a git
+repository on `main`, reinforcing the worktree convention at the tool layer.
+
+Repos can opt out locally by creating `.agent-mode.local` at the repo root with:
+
+```text
+require_worktree=false
+```
+
+The opt-out file is parsed as simple `key=value` lines with `#` comments
+ignored. Missing files, missing keys, or any value other than `false` keep the
+guard enabled. The hook does not update `.gitignore`; developers who use this
+local opt-out should ignore `.agent-mode.local` themselves if needed.
+
 ## Agent-plugins convention
 
 Bento follows the `agent-plugins` convention for user-editable plugin

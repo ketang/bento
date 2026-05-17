@@ -41,3 +41,26 @@ Caveat: settings changes take effect on the next session, not the current
 one. The first worktree created under a non-default override path will still
 prompt during the session in which it was created; the next session will
 self-heal.
+
+## Claude Main-Branch Edit Guard
+
+The bento Claude plugin also installs a `SessionStart` hook that registers a
+global `PreToolUse` guard for `Edit`, `Write`, and `NotebookEdit`. The guard
+blocks those file-editing tools when the active checkout is a git repository on
+the branch named `main`. This is a mechanical backstop for the launch-work
+contract: agents should create a linked worktree and edit there instead of
+editing the primary checkout directly.
+
+The guard allows these cases:
+
+- the current directory is not in a git repository
+- `git branch --show-current` returns empty output, such as detached HEAD
+- the current branch is anything other than `main`
+- the repository root contains `.agent-mode.local` with
+  `require_worktree=false`
+
+The `.agent-mode.local` file is a developer-local opt-out. It is parsed as
+one `key=value` pair per line, with `#` comments ignored. If the file is absent
+or does not contain `require_worktree=false`, the guard enforces the default.
+The hook does not modify `.gitignore`; projects that use the opt-out should
+ignore `.agent-mode.local` themselves if they do not want it committed.
