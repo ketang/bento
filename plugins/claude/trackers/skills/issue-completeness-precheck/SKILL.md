@@ -28,13 +28,17 @@ marker and copy the unresolved questions into the issue body.
 
 ## Fresh Reviewer Requirement
 
-Use a fresh reviewer context whenever the runtime permits it and delegation is
-authorized. The reviewer must not receive the originating conversation, the
-repro session, investigation notes, diagnosis, unstated assumptions, or files
-read while drafting. The reviewer may read only the draft file and write only
-the review file.
+The fresh reviewer is a required part of this precheck. Use a fresh reviewer
+context whenever the runtime permits it. The reviewer must not receive the
+originating conversation, the repro session, investigation notes, diagnosis,
+unstated assumptions, or files read while drafting. The reviewer may read only
+the draft file and write only the review file.
 
-Do not silently downgrade to self-review when a fresh reviewer can be used.
+Do not silently downgrade to self-review when a fresh reviewer can be used. Do
+not skip or downgrade the review because the issue seems narrow, obvious,
+documentation-only, installability-only, or otherwise low risk. A user not
+proactively asking for subagent delegation is not a reason to skip the
+reviewer; get any required authorization and run the review.
 
 ### Claude Code
 
@@ -50,13 +54,16 @@ any file other than the draft.
 
 ### Codex
 
-If the user explicitly allowed subagents or delegation in the current request,
-spawn a fresh reviewer agent. Pass only the draft issue file path and review
-output file path. Do not fork the current context unless that is the only
-available mechanism and the reviewer prompt still forbids using prior context.
+Subagent review is required when the runtime exposes a subagent/delegation
+tool. If the user explicitly allowed subagents or delegation in the current
+request, spawn a fresh reviewer agent. Pass only the draft issue file path and
+review output file path. Do not fork the current context unless that is the
+only available mechanism and the reviewer prompt still forbids using prior
+context.
 
 If delegation is available but the current request did not authorize it, ask
-for explicit permission before falling back. Use a short request such as:
+for explicit permission before doing anything else with the tracker. Use a
+short request such as:
 
 ```text
 May I launch a fresh subagent to review this issue draft for completeness?
@@ -66,7 +73,9 @@ It will receive only the draft path and review output path.
 If the user grants permission, spawn the fresh reviewer agent. If the user
 declines, or delegation is unavailable in the runtime, run the same verdict
 template locally while reading only the draft file and mark the verdict as
-`review_mode: local-fallback`.
+`review_mode: local-fallback`. Record why a fresh reviewer could not be used.
+Do not treat "no subagent delegation was requested" as a valid fallback reason;
+the required action is to ask for authorization.
 
 Do not use local fallback for broad, high-risk, ambiguous, or subtle repro
 issues. Ask for permission to launch a fresh reviewer instead; if permission
@@ -128,6 +137,10 @@ recovering hidden context:
 - Do not rely on memory of the current session to justify filing.
 - Do not pass private draft reasoning to the reviewer unless it is also in the
   issue body.
+- Do not skip the fresh reviewer because the issue looks narrow, low-risk,
+  documentation-only, or installability-only.
+- Do not use "the user did not request subagent delegation" as a reason to skip
+  review; ask for the required authorization instead.
 - Do not file `ready: no` drafts.
 - Do not file `ready: triage-only` drafts as normal ready work.
 - Do not invent tracker labels, statuses, or project fields; use only the
