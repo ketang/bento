@@ -90,8 +90,10 @@ workflow.  In brief:
   typo fixes, reformatting without semantic change.
 - **Mixed** → bump.  When in doubt, bump.
 
-Do not bump manually — `scripts/bump-plugin-versions` handles the version
-arithmetic.  After bumping, run `scripts/build-plugins` and commit both together.
+For agent-initiated evaluation, do not bump manually —
+`scripts/bump-plugin-versions` handles the version arithmetic. If the user
+explicitly asks to bump versions, skip the helper decision step and bump
+directly. After any bump, run `scripts/build-plugins` and commit both together.
 Updating `catalog/plugin-versions.json` alone is incomplete: Claude and Codex
 see the versions from the generated plugin manifests, so a version increment
 must include the regenerated outputs from `scripts/build-plugins`.

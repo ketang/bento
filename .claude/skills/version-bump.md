@@ -16,6 +16,12 @@ tasks done, or ending a session with unbumped behavioral changes in
 
 ## Workflow
 
+### User-requested bumps
+
+If the user explicitly asks to bump versions, skip the helper decision step:
+patch-bump the requested plugin(s), or all plugins if unspecified, then run
+`scripts/build-plugins`.
+
 ### Step 1 — Find the baseline
 
 Identify the last version bump commit:
