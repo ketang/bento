@@ -165,6 +165,14 @@ preflight validation, lease checks, structured scans, and other logic that
 should produce repeatable machine-readable output. Leave qualitative judgment,
 tradeoff analysis, and user-facing recommendations in `SKILL.md`.
 
+Write Python companion scripts to run with `python3` and the standard library
+when practical. When a Bento Python script needs third-party dependencies, the
+skill must include those dependencies in its packaged artifacts rather than
+requiring users to create a virtual environment or install extra packages after
+installing the skill. Document the packaging choice near the script; potential
+approaches include vendoring or a bundled executable produced by a tool such as
+PyInstaller.
+
 `SKILL.md` format:
 
 ```markdown
