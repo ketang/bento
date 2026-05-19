@@ -64,7 +64,8 @@ available.
 2. Draft the scenario as a sequence of user-observable product outcomes.
 3. Add deterministic startup and seed/reset handling before browser actions.
 4. Add a runner that accepts at least `--headed`/`--visible` and headless
-   operation. The two paths must execute the same scenario.
+   operation. Headless must be the default mode when no visibility flag is
+   provided. The two paths must execute the same scenario.
 5. Add step wrappers that assert, capture screenshots, and append warning
    records without stopping warn-only runs.
 6. Add the visible controller from
