@@ -19,11 +19,28 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
   exit 0
 fi
 
-if ! repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+# Claude Code runs hook processes from $HOME, not the project root.
+# Read the project directory from the stdin JSON payload; fall back to
+# process CWD so manual invocations and tests that don't supply a payload
+# still work.
+payload_cwd="$(python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    v = d.get('cwd', '')
+    if v:
+        print(v)
+except Exception:
+    pass
+" 2>/dev/null || true)"
+
+check_dir="${payload_cwd:-$PWD}"
+
+if ! repo_root="$(git -C "$check_dir" rev-parse --show-toplevel 2>/dev/null)"; then
   exit 0
 fi
 
-branch="$(git branch --show-current 2>/dev/null || true)"
+branch="$(git -C "$check_dir" branch --show-current 2>/dev/null || true)"
 if [[ -z "$branch" || "$branch" != "main" ]]; then
   exit 0
 fi

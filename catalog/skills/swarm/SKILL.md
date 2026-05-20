@@ -167,6 +167,19 @@ swarm/scripts/swarm-worktree-verify.py --require-linked-worktree
 Reject any teammate setup that cannot show they are inside the intended
 worktree on the intended branch.
 
+Every teammate prompt MUST include a hard-gate clause to this effect, verbatim
+or close to it:
+
+> **Do not edit any file, run any write command, or make any commit until
+> `swarm-worktree-verify.py --require-linked-worktree` exits 0. If it exits
+> non-zero, create or fix the worktree first, then re-run the script. Any
+> edit before a passing verify is a protocol violation.**
+
+For landing, the teammate prompt must direct the teammate to invoke
+`bento:land-work`. Do not include inline `git merge` commands or any other
+escape-hatch landing instructions alongside it — `bento:land-work` is the
+single landing path.
+
 ## Phase 3: Plan Review
 
 Review each teammate plan for correct scope (no opportunistic extras), explicit
@@ -174,6 +187,12 @@ worktree+branch verification, correct quality gates, test coverage appropriate
 to the task, no unresolved overlap with active teammates, and any required
 pre-completion step. Reject plans that reference the primary checkout or do
 not explain how the task will be verified.
+
+Reject any teammate plan that does not include an explicit
+`swarm-worktree-verify.py --require-linked-worktree` step (or the equivalent
+worktree-verify gate) before any file edit. A plan that jumps straight to
+edits without a passing verify is not acceptable, even if the teammate
+claims to already be in the right worktree.
 
 ## Phase 4: Monitor and Land
 
