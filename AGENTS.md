@@ -23,6 +23,9 @@ installable plugin bundles from them.
 - If a skill changes, rebuild generated plugins with `scripts/build-plugins`
 - Preserve the separation between platform-agnostic capability content and
   platform-specific packaging
+- Hook scripts must read the working directory from the `cwd` field in the
+  stdin JSON payload, not from `$PWD` or the process CWD. Claude Code spawns
+  hook processes from `$HOME`; the process CWD is never the project root.
 
 ## Framing guidance
 
