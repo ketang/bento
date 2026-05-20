@@ -43,10 +43,21 @@ class RequireWorktreeHookTest(unittest.TestCase):
         self._git(repo, "commit", "-q", "-m", "init")
         return repo
 
-    def _run(self, cwd: Path) -> subprocess.CompletedProcess[str]:
+    def _run(self, cwd: Path, *, payload_cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        """Run the hook with process CWD=cwd.
+
+        payload_cwd: if given, embed it as the ``cwd`` field in the stdin JSON
+        payload, simulating how Claude Code sends the project directory to hooks
+        even when the hook process itself starts from $HOME.
+        """
+        if payload_cwd is not None:
+            import json as _json
+            stdin = _json.dumps({"cwd": str(payload_cwd)}) + "\n"
+        else:
+            stdin = "{}\n"
         return subprocess.run(
             [str(HOOK_SCRIPT)],
-            input="{}\n",
+            input=stdin,
             cwd=cwd,
             capture_output=True,
             text=True,
@@ -112,6 +123,52 @@ class RequireWorktreeHookTest(unittest.TestCase):
         self._git(repo, "checkout", "-q", "-b", "pp-abc")
 
         result = self._run(repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    # --- Tests for real production path: hook process CWD != project directory ---
+    # Claude Code runs hook processes from $HOME, not the project root.
+    # The hook must read the project directory from the stdin JSON payload.
+
+    def test_blocks_main_when_hook_cwd_is_outside_repo(self) -> None:
+        repo = self._init_repo()
+        outside = self.root / "outside"
+        outside.mkdir()
+
+        result = self._run(outside, payload_cwd=repo)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
+    def test_allows_opt_out_when_hook_cwd_is_outside_repo(self) -> None:
+        repo = self._init_repo()
+        (repo / ".agent-mode.local").write_text(
+            "require_worktree=false\n", encoding="utf-8"
+        )
+        outside = self.root / "outside"
+        outside.mkdir()
+
+        result = self._run(outside, payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_allows_non_main_branch_when_hook_cwd_is_outside_repo(self) -> None:
+        repo = self._init_repo()
+        self._git(repo, "checkout", "-q", "-b", "feature-xyz")
+        outside = self.root / "outside"
+        outside.mkdir()
+
+        result = self._run(outside, payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_allows_non_git_payload_cwd(self) -> None:
+        plain = self.root / "plain"
+        plain.mkdir()
+        outside = self.root / "outside"
+        outside.mkdir()
+
+        result = self._run(outside, payload_cwd=plain)
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
