@@ -4,7 +4,7 @@
 
 **Goal:** Add `pre` and `post` extension points to `launch-work` and `land-work`, supporting both executable script hooks (existing mechanism, generalized) and plain-language prose actions (new), with init.d-style numeric-prefix ordering.
 
-**Architecture:** A single Python helper (`bento-extensions.py`) under `launch-work/scripts/` exposes a `discover` subcommand (list extensions in execution order) and a `run-hooks` subcommand (execute hooks at a position with the env-var protocol, TTY detection, optional opt-in timeout, and exit-code semantics). Two reference docs (`project-hooks.md`, rewritten; `project-actions.md`, new) define the contracts. Both SKILL.md files invoke the helper at `pre` and `post` and have prose steps that read action files in order.
+**Architecture:** A single Python helper (`run-lifecycle-extensions.py`) under `launch-work/scripts/` exposes a `discover` subcommand (list extensions in execution order) and a `run-hooks` subcommand (execute hooks at a position with the env-var protocol, TTY detection, optional opt-in timeout, and exit-code semantics). Two reference docs (`project-hooks.md`, rewritten; `project-actions.md`, new) define the contracts. Both SKILL.md files invoke the helper at `pre` and `post` and have prose steps that read action files in order.
 
 **Tech Stack:** Python 3 stdlib (`subprocess`, `pathlib`, `os`, `argparse`, `json`); pytest/unittest in `tests/launch_work/` and `tests/land_work/`.
 
@@ -15,11 +15,11 @@
 ## File Structure
 
 **Create:**
-- `catalog/skills/launch-work/scripts/bento_extensions.py` — shared Python module: discovery rules (XDG chain, numeric-prefix sort, exclusion rules) and hook-runner internals.
-- `catalog/skills/launch-work/scripts/bento-extensions.py` — CLI front end with `discover` and `run-hooks` subcommands.
+- `catalog/skills/launch-work/scripts/lifecycle_extensions.py` — shared Python module: discovery rules (XDG chain, numeric-prefix sort, exclusion rules) and hook-runner internals.
+- `catalog/skills/launch-work/scripts/run-lifecycle-extensions.py` — CLI front end with `discover` and `run-hooks` subcommands.
 - `catalog/skills/launch-work/references/project-actions.md` — contract for prose actions.
-- `tests/launch_work/test_bento_extensions_discover.py` — unit tests for discovery rules.
-- `tests/launch_work/test_bento_extensions_run_hooks.py` — unit tests for the hook runner (env vars, exit codes, TTY signal, timeout, advisory mode).
+- `tests/launch_work/test_lifecycle_extensions_discover.py` — unit tests for discovery rules.
+- `tests/launch_work/test_lifecycle_extensions_run_hooks.py` — unit tests for the hook runner (env vars, exit codes, TTY signal, timeout, advisory mode).
 
 **Modify:**
 - `catalog/skills/launch-work/references/project-hooks.md` — rewritten to describe the new layout, prefix convention, env protocol, TTY/timeout, exit codes, advisory rule.
@@ -28,21 +28,21 @@
 
 **Why one CLI, not two:** the same discovery + runner logic serves both skills. Land-work invokes the helper with `--skill land-work` and (for `post` only) `--advisory`.
 
-**Why a separate `bento_extensions.py` module from the CLI:** the CLI script is `bento-extensions.py` (hyphen, by convention with other scripts here), but Python imports require underscores. Splitting the importable logic from the CLI shim keeps tests clean and lets the runner internals be unit-tested without subprocesses.
+**Why a separate `lifecycle_extensions.py` module from the CLI:** the CLI script is `run-lifecycle-extensions.py` (hyphen, by convention with other scripts here), but Python imports require underscores. Splitting the importable logic from the CLI shim keeps tests clean and lets the runner internals be unit-tested without subprocesses.
 
 ---
 
 ## Task 1: Discovery rules — pure logic with tests
 
 **Files:**
-- Create: `catalog/skills/launch-work/scripts/bento_extensions.py`
-- Test: `tests/launch_work/test_bento_extensions_discover.py`
+- Create: `catalog/skills/launch-work/scripts/lifecycle_extensions.py`
+- Test: `tests/launch_work/test_lifecycle_extensions_discover.py`
 
 This task implements the file-discovery logic only — no subprocess execution, no env vars, no I/O beyond reading directories.
 
 - [ ] **Step 1: Write the failing test for prefix-sorted discovery**
 
-Create `tests/launch_work/test_bento_extensions_discover.py`:
+Create `tests/launch_work/test_lifecycle_extensions_discover.py`:
 
 ```python
 import os
@@ -56,7 +56,7 @@ import sys
 REPO_ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(REPO_ROOT / "catalog/skills/launch-work/scripts"))
 
-import bento_extensions  # type: ignore  # noqa: E402
+import lifecycle_extensions  # type: ignore  # noqa: E402
 
 
 def _write(path: Path, content: str = "x", executable: bool = False) -> None:
@@ -81,7 +81,7 @@ class DiscoveryTest(unittest.TestCase):
         _write(d / "10-first.sh", executable=True)
         _write(d / "30-third.sh", executable=True)
 
-        result = bento_extensions.discover_directory(d, kind="hooks")
+        result = lifecycle_extensions.discover_directory(d, kind="hooks")
 
         self.assertEqual(
             [p.name for p in result.files],
@@ -92,17 +92,17 @@ class DiscoveryTest(unittest.TestCase):
 
 - [ ] **Step 2: Run the test and confirm it fails**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_discover.py -v`
-Expected: FAIL — `ModuleNotFoundError: No module named 'bento_extensions'`.
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_discover.py -v`
+Expected: FAIL — `ModuleNotFoundError: No module named 'lifecycle_extensions'`.
 
 - [ ] **Step 3: Create the module with the minimal discover_directory**
 
-Create `catalog/skills/launch-work/scripts/bento_extensions.py`:
+Create `catalog/skills/launch-work/scripts/lifecycle_extensions.py`:
 
 ```python
 """Discover and run launch-work / land-work project extensions.
 
-This module is the importable core. The CLI front end is bento-extensions.py
+This module is the importable core. The CLI front end is run-lifecycle-extensions.py
 in the same directory.
 
 Layout under `<root>/.agent-plugins/bento/bento/`:
@@ -182,7 +182,7 @@ def discover_directory(directory: Path, kind: str) -> DiscoveryResult:
 
 - [ ] **Step 4: Run the test and confirm it passes**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_discover.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_discover.py -v`
 Expected: PASS — `test_hooks_sorted_by_numeric_prefix`.
 
 - [ ] **Step 5: Add tests for ties, backups, hidden files, missing prefix**
@@ -195,7 +195,7 @@ Append to the same test file:
         _write(d / "30-bbb.sh", executable=True)
         _write(d / "30-aaa.sh", executable=True)
 
-        result = bento_extensions.discover_directory(d, kind="hooks")
+        result = lifecycle_extensions.discover_directory(d, kind="hooks")
         self.assertEqual([p.name for p in result.files], ["30-aaa.sh", "30-bbb.sh"])
 
     def test_hidden_and_backups_silently_ignored(self) -> None:
@@ -205,7 +205,7 @@ Append to the same test file:
         _write(d / "20-edited.sh~", executable=True)
         _write(d / "30-orig.sh.bak", executable=True)
 
-        result = bento_extensions.discover_directory(d, kind="hooks")
+        result = lifecycle_extensions.discover_directory(d, kind="hooks")
         self.assertEqual([p.name for p in result.files], ["10-real.sh"])
         self.assertEqual(result.warnings, [])
 
@@ -214,7 +214,7 @@ Append to the same test file:
         _write(d / "10-good.sh", executable=True)
         _write(d / "no-prefix.sh", executable=True)
 
-        result = bento_extensions.discover_directory(d, kind="hooks")
+        result = lifecycle_extensions.discover_directory(d, kind="hooks")
         self.assertEqual([p.name for p in result.files], ["10-good.sh"])
         self.assertEqual(len(result.warnings), 1)
         self.assertIn("no-prefix.sh", result.warnings[0])
@@ -224,7 +224,7 @@ Append to the same test file:
         _write(d / "10-yes.sh", executable=True)
         _write(d / "20-no.sh", executable=False)
 
-        result = bento_extensions.discover_directory(d, kind="hooks")
+        result = lifecycle_extensions.discover_directory(d, kind="hooks")
         self.assertEqual([p.name for p in result.files], ["10-yes.sh"])
 
     def test_actions_skip_non_md(self) -> None:
@@ -232,23 +232,23 @@ Append to the same test file:
         _write(d / "10-good.md")
         _write(d / "20-not-md.txt")
 
-        result = bento_extensions.discover_directory(d, kind="actions")
+        result = lifecycle_extensions.discover_directory(d, kind="actions")
         self.assertEqual([p.name for p in result.files], ["10-good.md"])
 
     def test_missing_directory_returns_empty(self) -> None:
-        result = bento_extensions.discover_directory(self.root / "nope", kind="hooks")
+        result = lifecycle_extensions.discover_directory(self.root / "nope", kind="hooks")
         self.assertEqual(result.files, [])
         self.assertEqual(result.warnings, [])
 ```
 
 - [ ] **Step 6: Run all tests and confirm they pass**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_discover.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_discover.py -v`
 Expected: PASS — all six tests green.
 
 - [ ] **Step 7: Add the XDG-chain enumerator with a test**
 
-Append to `bento_extensions.py`:
+Append to `lifecycle_extensions.py`:
 
 ```python
 def _candidate_roots(repo_root: Path) -> list[Path]:
@@ -309,7 +309,7 @@ Append to the test file:
                 user / ".config/agent-plugins/bento/bento/launch-work/hooks/pre/10-user.sh",
                 executable=True,
             )
-            result = bento_extensions.discover(repo, "launch-work", "hooks", "pre")
+            result = lifecycle_extensions.discover(repo, "launch-work", "hooks", "pre")
             self.assertEqual(
                 [p.name for p in result.files],
                 ["10-repo.sh", "10-user.sh"],
@@ -320,13 +320,13 @@ Append to the test file:
 
 - [ ] **Step 8: Run all tests**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_discover.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_discover.py -v`
 Expected: PASS — seven tests.
 
 - [ ] **Step 9: Commit**
 
 ```bash
-git add catalog/skills/launch-work/scripts/bento_extensions.py tests/launch_work/test_bento_extensions_discover.py
+git add catalog/skills/launch-work/scripts/lifecycle_extensions.py tests/launch_work/test_lifecycle_extensions_discover.py
 git commit -m "feat(extensions): add discovery module with numeric-prefix ordering and XDG chain (bento-5v2)"
 ```
 
@@ -335,12 +335,12 @@ git commit -m "feat(extensions): add discovery module with numeric-prefix orderi
 ## Task 2: CLI front end — `discover` subcommand
 
 **Files:**
-- Create: `catalog/skills/launch-work/scripts/bento-extensions.py`
-- Test: `tests/launch_work/test_bento_extensions_cli.py`
+- Create: `catalog/skills/launch-work/scripts/run-lifecycle-extensions.py`
+- Test: `tests/launch_work/test_lifecycle_extensions_cli.py`
 
 - [ ] **Step 1: Write the failing test**
 
-Create `tests/launch_work/test_bento_extensions_cli.py`:
+Create `tests/launch_work/test_lifecycle_extensions_cli.py`:
 
 ```python
 import json
@@ -353,7 +353,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/bento-extensions.py"
+CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/run-lifecycle-extensions.py"
 
 
 def _write(path: Path, content: str = "x", executable: bool = False) -> None:
@@ -411,12 +411,12 @@ class CliDiscoverTest(unittest.TestCase):
 
 - [ ] **Step 2: Run the test, confirm it fails**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_cli.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_cli.py -v`
 Expected: FAIL — script does not exist (FileNotFoundError or non-zero exit).
 
 - [ ] **Step 3: Create the CLI shim**
 
-Create `catalog/skills/launch-work/scripts/bento-extensions.py`:
+Create `catalog/skills/launch-work/scripts/run-lifecycle-extensions.py`:
 
 ```python
 #!/usr/bin/env python3
@@ -426,7 +426,7 @@ Subcommands:
     discover    List extensions in execution order as JSON.
     run-hooks   Execute hooks at a position with the env-var protocol.
 
-The importable logic lives in bento_extensions.py beside this script.
+The importable logic lives in lifecycle_extensions.py beside this script.
 """
 
 from __future__ import annotations
@@ -442,8 +442,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def _load_module():
-    path = SCRIPT_DIR / "bento_extensions.py"
-    spec = importlib.util.spec_from_file_location("bento_extensions", path)
+    path = SCRIPT_DIR / "lifecycle_extensions.py"
+    spec = importlib.util.spec_from_file_location("lifecycle_extensions", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
@@ -452,8 +452,8 @@ def _load_module():
 
 
 def _cmd_discover(args: argparse.Namespace) -> int:
-    bento_extensions = _load_module()
-    result = bento_extensions.discover(
+    lifecycle_extensions = _load_module()
+    result = lifecycle_extensions.discover(
         repo_root=Path(args.repo_root).resolve(),
         skill=args.skill,
         kind=args.kind,
@@ -492,18 +492,18 @@ if __name__ == "__main__":
 Make it executable:
 
 ```bash
-chmod +x catalog/skills/launch-work/scripts/bento-extensions.py
+chmod +x catalog/skills/launch-work/scripts/run-lifecycle-extensions.py
 ```
 
 - [ ] **Step 4: Run the test, confirm it passes**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_cli.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_cli.py -v`
 Expected: PASS.
 
 - [ ] **Step 5: Commit**
 
 ```bash
-git add catalog/skills/launch-work/scripts/bento-extensions.py tests/launch_work/test_bento_extensions_cli.py
+git add catalog/skills/launch-work/scripts/run-lifecycle-extensions.py tests/launch_work/test_lifecycle_extensions_cli.py
 git commit -m "feat(extensions): add CLI with discover subcommand (bento-5v2)"
 ```
 
@@ -512,13 +512,13 @@ git commit -m "feat(extensions): add CLI with discover subcommand (bento-5v2)"
 ## Task 3: `run-hooks` subcommand — env protocol, exit codes, TTY, timeout, advisory
 
 **Files:**
-- Modify: `catalog/skills/launch-work/scripts/bento_extensions.py`
-- Modify: `catalog/skills/launch-work/scripts/bento-extensions.py`
-- Test: `tests/launch_work/test_bento_extensions_run_hooks.py`
+- Modify: `catalog/skills/launch-work/scripts/lifecycle_extensions.py`
+- Modify: `catalog/skills/launch-work/scripts/run-lifecycle-extensions.py`
+- Test: `tests/launch_work/test_lifecycle_extensions_run_hooks.py`
 
 - [ ] **Step 1: Write the failing test for the happy path**
 
-Create `tests/launch_work/test_bento_extensions_run_hooks.py`:
+Create `tests/launch_work/test_lifecycle_extensions_run_hooks.py`:
 
 ```python
 import json
@@ -532,7 +532,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/bento-extensions.py"
+CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/run-lifecycle-extensions.py"
 
 
 def _write_hook(path: Path, body: str) -> None:
@@ -592,12 +592,12 @@ class RunHooksTest(unittest.TestCase):
 
 - [ ] **Step 2: Run the test, confirm it fails**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_run_hooks.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_run_hooks.py -v`
 Expected: FAIL — `run-hooks` is not a known subcommand.
 
 - [ ] **Step 3: Implement run_hooks in the importable module**
 
-Append to `catalog/skills/launch-work/scripts/bento_extensions.py`:
+Append to `catalog/skills/launch-work/scripts/lifecycle_extensions.py`:
 
 ```python
 import subprocess
@@ -706,21 +706,21 @@ Replace the previous `import os` line at the top of the module if `subprocess` a
 
 - [ ] **Step 4: Wire run-hooks into the CLI**
 
-Modify `catalog/skills/launch-work/scripts/bento-extensions.py`. Add the subparser and command function:
+Modify `catalog/skills/launch-work/scripts/run-lifecycle-extensions.py`. Add the subparser and command function:
 
 ```python
 def _cmd_run_hooks(args: argparse.Namespace) -> int:
-    bento_extensions = _load_module()
-    result = bento_extensions.discover(
+    lifecycle_extensions = _load_module()
+    result = lifecycle_extensions.discover(
         repo_root=Path(args.repo_root).resolve(),
         skill=args.skill,
         kind="hooks",
         position=args.position,
     )
     for warning in result.warnings:
-        print(f"[bento-extensions] WARNING: {warning}", file=sys.stderr)
+        print(f"[run-lifecycle-extensions] WARNING: {warning}", file=sys.stderr)
 
-    ctx = bento_extensions.HookContext(
+    ctx = lifecycle_extensions.HookContext(
         repo_root=Path(args.repo_root).resolve(),
         skill=args.skill,
         position=args.position,
@@ -738,7 +738,7 @@ def _cmd_run_hooks(args: argparse.Namespace) -> int:
 
     cwd = Path(args.worktree) if args.worktree else Path(args.repo_root)
     import os as _os
-    overall, outcomes = bento_extensions.run_hooks(
+    overall, outcomes = lifecycle_extensions.run_hooks(
         hooks=result.files,
         ctx=ctx,
         advisory=args.advisory,
@@ -751,7 +751,7 @@ def _cmd_run_hooks(args: argparse.Namespace) -> int:
             "TIMEOUT" if outcome.timed_out else f"EXIT {outcome.returncode}"
         )
         print(
-            f"[bento-extensions] {outcome.path.name}: {marker}",
+            f"[run-lifecycle-extensions] {outcome.path.name}: {marker}",
             file=sys.stderr,
         )
 
@@ -781,12 +781,12 @@ Add the subparser inside `main()`:
 
 - [ ] **Step 5: Run the happy-path test, confirm it passes**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_run_hooks.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_run_hooks.py -v`
 Expected: PASS — `test_all_hooks_pass_returns_zero`.
 
 - [ ] **Step 6: Add tests for failure modes**
 
-Append to `tests/launch_work/test_bento_extensions_run_hooks.py`:
+Append to `tests/launch_work/test_lifecycle_extensions_run_hooks.py`:
 
 ```python
     def test_first_failure_aborts_and_returns_exit_code(self) -> None:
@@ -867,13 +867,13 @@ Append to `tests/launch_work/test_bento_extensions_run_hooks.py`:
 
 - [ ] **Step 7: Run all run-hooks tests**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_run_hooks.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_run_hooks.py -v`
 Expected: PASS — five tests green.
 
 - [ ] **Step 8: Commit**
 
 ```bash
-git add catalog/skills/launch-work/scripts/bento_extensions.py catalog/skills/launch-work/scripts/bento-extensions.py tests/launch_work/test_bento_extensions_run_hooks.py
+git add catalog/skills/launch-work/scripts/lifecycle_extensions.py catalog/skills/launch-work/scripts/run-lifecycle-extensions.py tests/launch_work/test_lifecycle_extensions_run_hooks.py
 git commit -m "feat(extensions): add run-hooks with env protocol, advisory mode, and timeout (bento-5v2)"
 ```
 
@@ -943,7 +943,7 @@ and non-executable files are silently ignored.
 The skill invokes:
 
 ```
-catalog/skills/launch-work/scripts/bento-extensions.py run-hooks \
+catalog/skills/launch-work/scripts/run-lifecycle-extensions.py run-hooks \
   --repo-root <repo> --skill <skill> --position <pre|post> \
   --branch <branch> --worktree <worktree> ...
 ```
@@ -1156,7 +1156,7 @@ Subsequent actions continue to apply.
 The skill invokes:
 
 ```
-catalog/skills/launch-work/scripts/bento-extensions.py discover \
+catalog/skills/launch-work/scripts/run-lifecycle-extensions.py discover \
   --repo-root <repo> --skill <skill> --kind actions --position <pre|post>
 ```
 
@@ -1224,7 +1224,7 @@ Replace step `9a` with:
     after worktree verification and before dependency installation:
 
     ```bash
-    launch-work/scripts/bento-extensions.py run-hooks \
+    launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill launch-work \
       --position pre \
@@ -1237,7 +1237,7 @@ Replace step `9a` with:
     Then discover and apply prose actions for the `pre` position:
 
     ```bash
-    launch-work/scripts/bento-extensions.py discover \
+    launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
       --kind actions \
@@ -1259,7 +1259,7 @@ checkpoint update, currently in step 11). Add a new step between
 11a. Run the **`post`** extensions before declaring the work ready to land:
 
     ```bash
-    launch-work/scripts/bento-extensions.py run-hooks \
+    launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill launch-work \
       --position post \
@@ -1273,7 +1273,7 @@ checkpoint update, currently in step 11). Add a new step between
     Then discover and apply `post` prose actions:
 
     ```bash
-    launch-work/scripts/bento-extensions.py discover \
+    launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
       --kind actions \
@@ -1306,7 +1306,7 @@ with:
 
 - [ ] **Step 5: Re-read the file and verify the new flow**
 
-Confirm: step 9a calls `bento-extensions.py run-hooks` and `discover` for
+Confirm: step 9a calls `run-lifecycle-extensions.py run-hooks` and `discover` for
 `pre`; step 11a does the same for `post`; non-negotiable rules cover both
 positions; no remaining references to `project-hooks.md` as a single mid-skill
 moment.
@@ -1341,7 +1341,7 @@ Replace step `2a` with:
     merging:
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py run-hooks \
+    ../launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill land-work \
       --position pre \
@@ -1356,7 +1356,7 @@ Replace step `2a` with:
     Then discover and apply `pre` prose actions:
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py discover \
+    ../launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill land-work \
       --kind actions \
@@ -1378,7 +1378,7 @@ end-of-step-8) and the tracker close (step 9):
     already succeeded; abort cannot reverse it):
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py run-hooks \
+    ../launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill land-work \
       --position post \
@@ -1395,7 +1395,7 @@ end-of-step-8) and the tracker close (step 9):
     Then discover and apply `post` prose actions (also advisory):
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py discover \
+    ../launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill land-work \
       --kind actions \
@@ -1437,14 +1437,14 @@ git commit -m "feat(land-work): invoke extensions at pre and post (advisory) pos
 ## Task 8: Integration scenario test
 
 **Files:**
-- Test: `tests/launch_work/test_bento_extensions_integration.py`
+- Test: `tests/launch_work/test_lifecycle_extensions_integration.py`
 
 This test wires up the discover + run-hooks calls together and confirms the
 end-to-end behavior the SKILL.md prose describes.
 
 - [ ] **Step 1: Write the integration test**
 
-Create `tests/launch_work/test_bento_extensions_integration.py`:
+Create `tests/launch_work/test_lifecycle_extensions_integration.py`:
 
 ```python
 import json
@@ -1458,7 +1458,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/bento-extensions.py"
+CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/run-lifecycle-extensions.py"
 
 
 def _write(path: Path, content: str = "x", executable: bool = False) -> None:
@@ -1561,17 +1561,17 @@ class IntegrationTest(unittest.TestCase):
 
 - [ ] **Step 2: Run the integration tests**
 
-Run: `python -m pytest tests/launch_work/test_bento_extensions_integration.py -v`
+Run: `python -m pytest tests/launch_work/test_lifecycle_extensions_integration.py -v`
 Expected: PASS — three tests green.
 
-- [ ] **Step 3: Run the full bento-extensions test set as a final sanity pass**
+- [ ] **Step 3: Run the full lifecycle extensions test set as a final sanity pass**
 
 Run:
 ```bash
-python -m pytest tests/launch_work/test_bento_extensions_discover.py \
-  tests/launch_work/test_bento_extensions_cli.py \
-  tests/launch_work/test_bento_extensions_run_hooks.py \
-  tests/launch_work/test_bento_extensions_integration.py -v
+python -m pytest tests/launch_work/test_lifecycle_extensions_discover.py \
+  tests/launch_work/test_lifecycle_extensions_cli.py \
+  tests/launch_work/test_lifecycle_extensions_run_hooks.py \
+  tests/launch_work/test_lifecycle_extensions_integration.py -v
 ```
 Expected: all green.
 
@@ -1584,7 +1584,7 @@ before committing — this design should not affect existing behavior.
 - [ ] **Step 5: Commit**
 
 ```bash
-git add tests/launch_work/test_bento_extensions_integration.py
+git add tests/launch_work/test_lifecycle_extensions_integration.py
 git commit -m "test(extensions): add integration tests for pre/post + advisory + no-extensions cases (bento-5v2)"
 ```
 
@@ -1594,7 +1594,7 @@ git commit -m "test(extensions): add integration tests for pre/post + advisory +
 
 After all eight tasks:
 
-- Six new files: `bento_extensions.py`, `bento-extensions.py`, four test files, `project-actions.md`.
+- Six new files: `lifecycle_extensions.py`, `run-lifecycle-extensions.py`, four test files, `project-actions.md`.
 - Three modified files: `project-hooks.md`, `launch-work/SKILL.md`, `land-work/SKILL.md`.
 - ~25 new test cases covering discovery, ordering, exclusions, env protocol, exit codes, advisory mode, timeout, and integration.
 - No behavioral change for repos with no hooks/actions configured.

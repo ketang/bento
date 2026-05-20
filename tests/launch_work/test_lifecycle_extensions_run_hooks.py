@@ -9,7 +9,7 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/bento-extensions.py"
+CLI = REPO_ROOT / "catalog/skills/launch-work/scripts/run-lifecycle-extensions.py"
 
 
 def _write_hook(path: Path, body: str) -> None:

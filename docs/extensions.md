@@ -126,7 +126,7 @@ for the full list):
 To list what extensions a project has installed at a given position:
 
 ```bash
-catalog/skills/launch-work/scripts/bento-extensions.py discover \
+catalog/skills/launch-work/scripts/run-lifecycle-extensions.py discover \
   --repo-root . --skill launch-work --kind hooks --position pre
 ```
 

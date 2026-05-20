@@ -349,7 +349,7 @@ skill continues to its next normal step without remarking on the absence.
 design. The hook/action invocation logic lives in the skill workflow text,
 not in these helpers.
 
-A small new helper, `bento-extensions-discover.py` (placement TBD between
+A small new helper, `run-lifecycle-extensions.py` (placement TBD between
 `launch-work/scripts/` and `land-work/scripts/`, with a shared
 `extensions-common.py` if duplication grows), may be useful to:
 
@@ -404,7 +404,7 @@ and the missing-prefix warning are easy to get subtly wrong in shell.
 
 ## Open questions
 
-1. **Discovery helper placement.** A shared `bento-extensions-discover.py` is
+1. **Discovery helper placement.** A shared `run-lifecycle-extensions.py` is
    useful but lives awkwardly between the two skills. Options: place under
    `launch-work/scripts/` and have `land-work` reference it; create a new
    `catalog/skills/_shared/` directory; inline the discovery into each skill

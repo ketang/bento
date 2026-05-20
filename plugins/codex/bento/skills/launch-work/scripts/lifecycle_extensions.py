@@ -1,6 +1,6 @@
 """Discover and run launch-work / land-work project extensions.
 
-This module is the importable core. The CLI front end is bento-extensions.py
+This module is the importable core. The CLI front end is run-lifecycle-extensions.py
 in the same directory.
 
 Layout under `<root>/.agent-plugins/bento/bento/`:

@@ -50,7 +50,7 @@ and non-executable files are silently ignored.
 The skill invokes:
 
 ```
-catalog/skills/launch-work/scripts/bento-extensions.py run-hooks \
+catalog/skills/launch-work/scripts/run-lifecycle-extensions.py run-hooks \
   --repo-root <repo> --skill <skill> --position <pre|post> \
   --branch <branch> --worktree <worktree> ...
 ```

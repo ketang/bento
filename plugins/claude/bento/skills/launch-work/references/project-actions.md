@@ -84,7 +84,7 @@ Subsequent actions continue to apply.
 The skill invokes:
 
 ```
-catalog/skills/launch-work/scripts/bento-extensions.py discover \
+catalog/skills/launch-work/scripts/run-lifecycle-extensions.py discover \
   --repo-root <repo> --skill <skill> --kind actions --position <pre|post>
 ```
 

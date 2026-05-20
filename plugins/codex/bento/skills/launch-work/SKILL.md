@@ -92,7 +92,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     after worktree verification and before dependency installation:
 
     ```bash
-    launch-work/scripts/bento-extensions.py run-hooks \
+    launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill launch-work \
       --position pre \
@@ -105,7 +105,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     Then discover and apply prose actions for the `pre` position:
 
     ```bash
-    launch-work/scripts/bento-extensions.py discover \
+    launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
       --kind actions \
@@ -134,7 +134,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 11a. Run the **`post`** extensions before declaring the work ready to land:
 
     ```bash
-    launch-work/scripts/bento-extensions.py run-hooks \
+    launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill launch-work \
       --position post \
@@ -148,7 +148,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     Then discover and apply `post` prose actions:
 
     ```bash
-    launch-work/scripts/bento-extensions.py discover \
+    launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
       --kind actions \

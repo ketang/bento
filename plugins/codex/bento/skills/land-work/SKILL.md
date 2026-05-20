@@ -89,7 +89,7 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
     merging:
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py run-hooks \
+    ../launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill land-work \
       --position pre \
@@ -104,7 +104,7 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
     Then discover and apply `pre` prose actions:
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py discover \
+    ../launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill land-work \
       --kind actions \
@@ -175,7 +175,7 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
     already succeeded; abort cannot reverse it):
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py run-hooks \
+    ../launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill land-work \
       --position post \
@@ -192,7 +192,7 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
     Then discover and apply `post` prose actions (also advisory):
 
     ```bash
-    ../launch-work/scripts/bento-extensions.py discover \
+    ../launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill land-work \
       --kind actions \
