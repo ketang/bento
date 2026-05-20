@@ -5,7 +5,7 @@ Subcommands:
     discover    List extensions in execution order as JSON.
     run-hooks   Execute hooks at a position with the env-var protocol.
 
-The importable logic lives in bento_extensions.py beside this script.
+The importable logic lives in lifecycle_extensions.py beside this script.
 """
 
 from __future__ import annotations
@@ -22,8 +22,8 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def _load_module():
-    path = SCRIPT_DIR / "bento_extensions.py"
-    spec = importlib.util.spec_from_file_location("bento_extensions", path)
+    path = SCRIPT_DIR / "lifecycle_extensions.py"
+    spec = importlib.util.spec_from_file_location("lifecycle_extensions", path)
     if spec is None or spec.loader is None:
         raise RuntimeError(f"cannot load {path}")
     module = importlib.util.module_from_spec(spec)
@@ -35,8 +35,8 @@ def _load_module():
 
 
 def _cmd_discover(args: argparse.Namespace) -> int:
-    bento_extensions = _load_module()
-    result = bento_extensions.discover(
+    lifecycle_extensions = _load_module()
+    result = lifecycle_extensions.discover(
         repo_root=Path(args.repo_root).resolve(),
         skill=args.skill,
         kind=args.kind,
@@ -54,17 +54,17 @@ def _cmd_discover(args: argparse.Namespace) -> int:
 
 
 def _cmd_run_hooks(args: argparse.Namespace) -> int:
-    bento_extensions = _load_module()
-    result = bento_extensions.discover(
+    lifecycle_extensions = _load_module()
+    result = lifecycle_extensions.discover(
         repo_root=Path(args.repo_root).resolve(),
         skill=args.skill,
         kind="hooks",
         position=args.position,
     )
     for warning in result.warnings:
-        print(f"[bento-extensions] WARNING: {warning}", file=sys.stderr)
+        print(f"[run-lifecycle-extensions] WARNING: {warning}", file=sys.stderr)
 
-    ctx = bento_extensions.HookContext(
+    ctx = lifecycle_extensions.HookContext(
         repo_root=Path(args.repo_root).resolve(),
         skill=args.skill,
         position=args.position,
@@ -81,7 +81,7 @@ def _cmd_run_hooks(args: argparse.Namespace) -> int:
     )
 
     cwd = Path(args.worktree) if args.worktree else Path(args.repo_root)
-    overall, outcomes = bento_extensions.run_hooks(
+    overall, outcomes = lifecycle_extensions.run_hooks(
         hooks=result.files,
         ctx=ctx,
         advisory=args.advisory,
@@ -94,7 +94,7 @@ def _cmd_run_hooks(args: argparse.Namespace) -> int:
             "TIMEOUT" if outcome.timed_out else f"EXIT {outcome.returncode}"
         )
         print(
-            f"[bento-extensions] {outcome.path.name}: {marker}",
+            f"[run-lifecycle-extensions] {outcome.path.name}: {marker}",
             file=sys.stderr,
         )
 
