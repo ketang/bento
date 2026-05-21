@@ -323,10 +323,10 @@ Always start at `--min-confidence 80`; lower confidences are noisy.
 - [ ] **Step 2: Verify file exists and has four language sections**
 
 ```bash
-rg -c "^## (TypeScript|Go|Python|Rust)" catalog/skills/code-bloat-sniffer/references/tools-by-language.md
+rg -c "^## (TypeScript|Go$|Python$|Rust$)" catalog/skills/code-bloat-sniffer/references/tools-by-language.md
 ```
 
-Expected: `4`
+Expected: `4`. (The `TypeScript` section header is `## TypeScript / JavaScript`; anchoring the others with `$` keeps it specific to the four day-one language sections.)
 
 - [ ] **Step 3: Commit**
 
