@@ -1,0 +1,19 @@
+{
+  "id": "msg_test_e2e_hook",
+  "type": "message",
+  "role": "assistant",
+  "content": [
+    {
+      "type": "tool_use",
+      "id": "toolu_test_e2e_hook",
+      "name": "Write",
+      "input": {
+        "file_path": "probe.txt",
+        "content": "probe\n"
+      }
+    }
+  ],
+  "model": "claude-sonnet-4-5",
+  "stop_reason": "tool_use",
+  "usage": {"input_tokens": 10, "output_tokens": 20}
+}
