@@ -40,7 +40,7 @@ Use this skill only when the project documents Beads as the issue tracker.
 
 ## Filing New Issues
 
-Before `bd create`, use the `issue-completeness-precheck` skill on the
+Before `bd create`, use the `issue-readiness-check` skill on the
 proposed title and description. Only create the Beads issue after the shared
 precheck returns `ready: yes`, or `ready: triage-only` with the repo's
 documented triage marker and unresolved questions included in the description.

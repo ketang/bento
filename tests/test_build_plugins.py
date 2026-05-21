@@ -386,7 +386,7 @@ class BuildPluginsTest(unittest.TestCase):
                     / platform
                     / plugin
                     / "skills"
-                    / "issue-completeness-precheck"
+                    / "issue-readiness-check"
                     / "SKILL.md"
                 )
                 self.assertTrue(skill_path.exists(), skill_path)
@@ -404,7 +404,7 @@ class BuildPluginsTest(unittest.TestCase):
             source_text = (
                 self.root / "catalog" / "skills" / skill_name / "SKILL.md"
             ).read_text(encoding="utf-8")
-            self.assertIn("issue-completeness-precheck", source_text)
+            self.assertIn("issue-readiness-check", source_text)
             self.assertIn("## Filing New Issues", source_text)
             self.assertNotIn("## Pre-Filing Readiness Check", source_text)
             self.assertNotIn("Use a blank-slate subagent as reviewer", source_text)
