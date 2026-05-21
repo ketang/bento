@@ -110,13 +110,53 @@ is declined, do not file the issue as normal ready work.
    too_broad: yes|no plus reason
    ```
 
-4. Read the verdict.
-   - `ready: yes` permits normal filing.
+4. Read the verdict and handle the `ready` field:
+   - `ready: yes` permits normal filing only after the recovery loop below has
+     no unresolved code-recoverable lookups.
    - `ready: triage-only` permits filing only with the repo's documented
-     triage marker and unresolved questions copied into the issue body.
+     triage marker, unresolved questions copied into the issue body, and the
+     recovery loop below completed for cheap bounded lookups.
    - `ready: no` means revise the draft and repeat the precheck before filing.
 
-5. Delete the temp files after the issue is submitted or abandoned.
+5. Run the lead-agent recovery loop before any filing path when the verdict
+   has a non-empty `ambiguities_or_missing_info` list.
+
+   Classify each item as one of:
+
+   - **Lookup**: a current repo fact answerable by reading a bounded set of
+     files already named or directly discoverable from the draft. Examples:
+     existing symbol names, file paths, function signatures, config values,
+     dependency versions, or whether a referenced surface is already wired.
+     A lookup does not require choosing behavior, external information, broad
+     investigation, or running an environment.
+   - **Decision**: a choice that requires judgment, user input, external state,
+     product direction, or has no single current answer in the repo.
+
+   Resolve each Lookup before filing. Read the relevant file(s), then edit the
+   draft so the answer is available in the issue body itself. Prefer a
+   `Current Code Facts` or `Resolved Lookups` section with concrete bullets:
+   exact path, symbol or config key, current value, and why the fact matters.
+   Include line numbers only when they materially help. Do not file normal
+   ready work with unresolved code-recoverable lookups.
+
+   For each Decision, leave the draft unresolved only if the issue is marked
+   for triage or if deferring that choice to the implementing agent is an
+   explicit and appropriate part of the work. Otherwise ask the user or split
+   the issue before filing.
+
+   Keep the recovery loop bounded. If a supposed Lookup cannot be resolved
+   from cited or directly relevant files after a focused pass, reclassify it as
+   investigation or Decision and handle it through triage, user escalation, or
+   issue splitting. The lead must not turn the pre-filing check into the
+   implementation task.
+
+   Re-run the fresh reviewer once if lookup resolutions changed scope,
+   acceptance checks, reproduction steps, implementation boundaries, or the
+   shape of the work. Skip the recheck for mechanical fact insertion only.
+   If a second pass still finds blocking gaps, ask the user or file only as
+   triage according to the repo's tracker policy.
+
+6. Delete the temp files after the issue is submitted or abandoned.
 
 The tracker never receives a normal issue that has not passed this loop.
 
@@ -130,6 +170,8 @@ recovering hidden context:
 - acceptance checks or observable done criteria
 - explicit in-scope and out-of-scope boundaries when scope could expand
 - rough size signal when the work might exceed one normal task
+- resolved codebase lookups as concrete current facts, not pointers that make
+  the future agent repeat the same reconnaissance
 - unresolved questions, if filing for triage
 
 ## Non-Negotiable Rules
@@ -143,5 +185,9 @@ recovering hidden context:
   review; ask for the required authorization instead.
 - Do not file `ready: no` drafts.
 - Do not file `ready: triage-only` drafts as normal ready work.
+- Do not file normal ready work while reviewer-flagged ambiguities still
+  include unresolved code-recoverable lookups. "The implementing agent will
+  find it" is not an acceptable deferral for bounded facts already present in
+  the repo.
 - Do not invent tracker labels, statuses, or project fields; use only the
   repo's documented tracker policy.

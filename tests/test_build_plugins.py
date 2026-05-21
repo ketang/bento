@@ -394,6 +394,8 @@ class BuildPluginsTest(unittest.TestCase):
                 self.assertIn("Hard trigger before creating, filing, drafting", skill_text)
                 self.assertIn("The fresh reviewer is a required part of this precheck", skill_text)
                 self.assertIn("Do not treat \"no subagent delegation was requested\" as a valid fallback reason", skill_text)
+                self.assertIn("Run the lead-agent recovery loop before any filing path", skill_text)
+                self.assertIn("Do not file normal ready work while reviewer-flagged ambiguities still", skill_text)
 
     def test_tracker_flows_delegate_filing_precheck_to_shared_skill(self) -> None:
         self.module.build_repo(run_verification=False)
