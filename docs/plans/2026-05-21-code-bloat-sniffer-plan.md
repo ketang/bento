@@ -649,8 +649,11 @@ Follow that skill's workflow end-to-end. It will:
 
 - [ ] **Step 2: Confirm `main` has the new skill**
 
+After `bento:land-work` tears down the linked worktree, cd into the primary bento checkout (the first entry of `git worktree list`) and run:
+
 ```bash
-cd /home/ketan/project/bento && git log --oneline main -5 && ls catalog/skills/code-bloat-sniffer/
+git log --oneline main -5
+ls catalog/skills/code-bloat-sniffer/
 ```
 
 Expected: a merge commit referencing `code-bloat-sniffer`, and the skill directory present on `main`.
