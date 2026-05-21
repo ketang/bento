@@ -188,6 +188,17 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
   predicate (actions) is a human handoff, not a destructive failure;
   preserve the branch and linked worktree and surface the message.
 
+## Anti-Rationalization
+
+| Excuse | Counter-argument |
+|---|---|
+| "This is a tiny docs/config edit; a worktree would be overhead." | Content type and size are not exceptions. Any repo-artifact edit needs the dedicated branch and linked worktree so the primary checkout stays untouched and the task remains landable. |
+| "Main is already dirty, so I might as well edit there." | Existing primary-checkout dirt is not permission to add more. Treat those changes as someone else's state and isolate this task in its own worktree. |
+| "An old branch/worktree is close enough to reuse." | A branch/worktree pair records ownership and scope. Reusing it mixes histories, claims, hooks, and cleanup decisions across tasks. Create a fresh pair for this approved scope. |
+| "I'll claim or file the issue after I make progress." | Tracker claims prevent duplicate work and encode ownership before implementation. If the repo uses active-work claims, inspect and claim before editing. |
+| "The hook/action probably does not matter for this change." | Project extensions are part of the repo's local contract. Skipping them bypasses stop conditions and project-specific checks that the base skill cannot know. |
+| "I'll add tests after the implementation works." | For new work or behavioral changes with feasible coverage, the failing test is the specification checkpoint. Deferring it invites unverifiable changes and stale final summaries. |
+
 ## Stop Conditions
 
 Stop and ask or re-plan if:

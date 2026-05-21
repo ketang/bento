@@ -194,6 +194,17 @@ worktree-verify gate) before any file edit. A plan that jumps straight to
 edits without a passing verify is not acceptable, even if the teammate
 claims to already be in the right worktree.
 
+## Anti-Rationalization
+
+| Excuse | Counter-argument |
+|---|---|
+| "The tasks look independent from their titles; I can launch them together." | Titles are not enough to predict overlap. Inspect scope, likely paths, dependencies, and active work before batching, then re-triage after each landed branch. |
+| "A teammate can fix worktree setup after starting edits." | Worktree verification is a hard gate before any file edit or write command. If verification fails, the teammate must stop and create or enter the correct worktree first. |
+| "The teammate promised to be careful, so a weak plan is acceptable." | Plan review is the lead's safety checkpoint. Reject plans that omit branch/worktree proof, quality gates, test strategy, or overlap handling. |
+| "Several teammates are done, so I can land them as a batch." | Landing changes the base for every remaining branch. Land one branch at a time, run required post-land hooks, then re-triage conflicts and readiness before continuing. |
+| "The user is silent, so the human-gated step is approved." | Silence is not approval. Teammates park and idle, the lead serializes user attention, and work resumes only after the lead routes an explicit decision back. |
+| "A stalled teammate is probably done enough to clean up." | Runtime resources close only after the work is safely landed or explicitly deferred. Never discard a teammate's branch or worktree while its status is unresolved. |
+
 ## Phase 4: Monitor and Land
 
 Land one completed branch at a time onto the landing target (default: the detected primary branch). Use the project's documented landing workflow (see `land-work` unless project docs define a stricter flow):
