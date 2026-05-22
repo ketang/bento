@@ -41,7 +41,7 @@ tracker.
 
 ## Filing New Issues
 
-Before `gh issue create`, use the `issue-completeness-precheck` skill on the
+Before `gh issue create`, use the `issue-readiness-check` skill on the
 proposed title and body. Only create the GitHub issue after the shared
 precheck returns `ready: yes`, or `ready: triage-only` with the repo's
 documented triage label and unresolved questions included in the body.

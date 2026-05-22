@@ -89,7 +89,7 @@ PLUGIN_DEFS = {
             "maintain-web-demo",
             "project-memory",
             "compress-docs",
-            "issue-completeness-precheck",
+            "issue-readiness-check",
             "beads-issue-flow",
             "github-issue-flow",
             "go-pgx-goose",
@@ -125,7 +125,7 @@ PLUGIN_DEFS = {
             "surface": (15, 41, 32),
         },
         "skills": [
-            "issue-completeness-precheck",
+            "issue-readiness-check",
             "beads-issue-flow",
             "github-issue-flow",
         ],

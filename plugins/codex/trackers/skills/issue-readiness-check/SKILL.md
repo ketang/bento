@@ -1,10 +1,10 @@
 ---
-name: issue-completeness-precheck
+name: issue-readiness-check
 description: Hard trigger before creating, filing, drafting, or submitting any new tracker issue. Use for Beads, GitHub Issues, Jira, Linear, or other issue trackers to verify that the issue title and body are complete enough for a fresh agent to start work without hidden session context.
 recommended_model: low
 ---
 
-# Issue Completeness Precheck
+# Issue Readiness Check
 
 ## Model Guidance
 
