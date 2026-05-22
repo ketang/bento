@@ -46,6 +46,8 @@ Every finding must carry all four evidence pieces (see `SKILL.md`). If you canno
 
 **Evidence required:** caller count, the wrapper body, what (if anything) it actually adds.
 
+**Blast radius cues:** Module-private wrappers (safe) → package-internal → public interface or exported symbol (high risk; external callers may depend on the indirection). Check whether the wrapper is in an index/barrel export.
+
 ## Fully rolled-out feature flags
 
 **Look for:** flag checks whose value has been pinned for a long time.
@@ -58,6 +60,8 @@ Every finding must carry all four evidence pieces (see `SKILL.md`). If you canno
 
 **Evidence required:** flag name, definition site, all read sites, default value, last-changed date from git, recommended branch to keep.
 
+**Blast radius cues:** Single-service env var (contained) → shared config or LaunchDarkly/remote flag (check all services that read it). Verify the flag is not read from deployment configs, Helm charts, or infrastructure-as-code files outside the repo.
+
 ## Finished migrations and version-compat shims
 
 **Look for:** code labeled "legacy", "v1", "old", "compat", "transition", or dated comments.
@@ -69,9 +73,18 @@ Every finding must carry all four evidence pieces (see `SKILL.md`). If you canno
 
 **Evidence required:** the marker, the condition for removal, evidence that the condition is met, callers of the deprecated path.
 
+**Blast radius cues:** Single-file shim (contained) → package-level compat layer → cross-service protocol shim (verify no consumers in sibling packages or workspace siblings before proposing removal).
+
 ## Commented-out blocks
 
 **Look for:** large blocks of code disabled by line or block comments.
+
+**Searches to run:**
+- For line-comment blocks (JS/TS/Go/Rust/Java): `grep -n "^[[:space:]]*//" <file>` — runs of 3+ consecutive commented lines are candidates.
+- For block comments: scan for `/*` ... `*/` or `"""` ... `"""` blocks spanning more than 5 lines.
+- For Python line-comment blocks: `grep -n "^[[:space:]]*#" <file>` — same 3-consecutive-line heuristic.
+- Run `git blame` on each candidate block to get the last-changed date; skip blocks changed within 90 days.
+- Check for any surrounding prose comment referencing the disabled block (e.g., "see disabled block above" — a signal it's a known-intentional disable).
 
 Be conservative. Comment-outs sometimes preserve known-good fallbacks. Only flag blocks where:
 - The block is older than 90 days in `git blame`, AND
@@ -89,6 +102,8 @@ Be conservative. Comment-outs sometimes preserve known-good fallbacks. Only flag
 - Distinguish runtime deps (`dependencies`) from dev deps; report both but mark separately.
 - Check for transitive use via tool configs, lint configs, build scripts.
 
-**Evidence required:** dependency name, no-imports search result, blast radius (dev vs runtime).
+**Evidence required:** dependency name, no-imports search result.
+
+**Blast radius cues:** Dev dependency (safe to remove; affects only the build toolchain) → runtime dependency (check for transitive consumers and dynamic requires before filing). Peer dependencies are especially risky — flag but don't propose removal without noting the peer constraint.
 
 **Do not propose uninstalling.** Report only; the issue implementer runs the uninstall.

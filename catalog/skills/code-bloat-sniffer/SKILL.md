@@ -48,7 +48,8 @@ produces a markdown audit, never edits source, never files issues.
      loaded explicitly so it appears in the subagent's context,
    - the per-language tool list
      (`code-bloat-sniffer/references/tools-by-language.md`),
-   - the finding schema (below) it must return.
+   - the finding contract (`## Finding contract`) it must follow when
+     returning findings; each finding must carry all four evidence pieces.
 
 5. **Aggregate** subagent findings into a single working list.
 
