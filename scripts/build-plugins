@@ -97,6 +97,7 @@ PLUGIN_DEFS = {
             "graphql-gqlgen-gql-tada",
             "dev-skill",
             "bentobug",
+            "code-bloat-sniffer",
         ],
         "hooks": ["bento", "telemetry"],
     },
