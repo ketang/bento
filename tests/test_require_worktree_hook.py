@@ -1,3 +1,6 @@
+import datetime
+import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -193,6 +196,132 @@ class RequireWorktreeHookTest(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0)
             self.assertIn("require-worktree", result.stdout)
+
+
+class RequireWorktreeHookAuditTest(unittest.TestCase):
+    """Audit logging: verify rejection records written to daily JSONL."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self._hook_cwd_tmp = tempfile.TemporaryDirectory()
+        self.hook_cwd = Path(self._hook_cwd_tmp.name).resolve()
+        # Fake HOME so audit writes go to an isolated directory.
+        self.fake_home = self.root / "home"
+        self.fake_home.mkdir()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+        self._hook_cwd_tmp.cleanup()
+
+    def _git(self, cwd: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+    def _init_repo(self, branch: str = "main") -> Path:
+        repo = self.root / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", branch)
+        self._git(repo, "config", "user.name", "Audit Test")
+        self._git(repo, "config", "user.email", "audit-test@example.com")
+        (repo / "README.md").write_text("test\n", encoding="utf-8")
+        self._git(repo, "add", "README.md")
+        self._git(repo, "commit", "-q", "-m", "init")
+        return repo
+
+    def _run(self, payload: dict, *, repo_cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+        env = os.environ.copy()
+        env["HOME"] = str(self.fake_home)
+        stdin = json.dumps(payload) + "\n"
+        return subprocess.run(
+            [str(HOOK_SCRIPT)],
+            input=stdin,
+            cwd=repo_cwd or self.hook_cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def _today_log(self) -> Path:
+        date_str = datetime.date.today().isoformat()
+        return self.fake_home / ".claude" / "hooks" / f"require-worktree-rejections.{date_str}.jsonl"
+
+    def test_audit_log_written_on_rejection(self) -> None:
+        repo = self._init_repo()
+
+        result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {"file_path": "x.py"}})
+
+        self.assertNotEqual(result.returncode, 0)
+        log = self._today_log()
+        self.assertTrue(log.exists(), msg=f"audit log not found at {log}")
+
+    def test_audit_log_contains_correct_fields(self) -> None:
+        repo = self._init_repo()
+        payload = {
+            "cwd": str(repo),
+            "session_id": "sess-abc123",
+            "tool_name": "Write",
+            "tool_input": {"file_path": "catalog/foo.py", "content": "big"},
+        }
+
+        self._run(payload)
+
+        record = json.loads(self._today_log().read_text().splitlines()[0])
+        self.assertIn("timestamp", record)
+        self.assertEqual(record["session_id"], "sess-abc123")
+        self.assertEqual(record["tool_name"], "Write")
+        self.assertEqual(record["cwd"], str(repo))
+        self.assertEqual(record["branch"], "main")
+        self.assertIn("repo_root", record)
+        self.assertIn("tool_input", record)
+
+    def test_audit_log_strips_large_fields(self) -> None:
+        repo = self._init_repo()
+        payload = {
+            "cwd": str(repo),
+            "tool_name": "Edit",
+            "tool_input": {
+                "file_path": "foo.py",
+                "old_string": "old" * 1000,
+                "new_string": "new" * 1000,
+            },
+        }
+
+        self._run(payload)
+
+        record = json.loads(self._today_log().read_text().splitlines()[0])
+        ti = record["tool_input"]
+        self.assertEqual(ti.get("file_path"), "foo.py")
+        self.assertNotIn("old_string", ti)
+        self.assertNotIn("new_string", ti)
+
+    def test_audit_log_uses_payload_cwd_not_process_cwd(self) -> None:
+        repo = self._init_repo()
+        # Process CWD is hook_cwd (a non-git temp dir); payload carries the repo.
+        result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {}}, repo_cwd=self.hook_cwd)
+
+        self.assertNotEqual(result.returncode, 0)
+        record = json.loads(self._today_log().read_text().splitlines()[0])
+        self.assertEqual(record["cwd"], str(repo))
+
+    def test_no_audit_log_when_allowed(self) -> None:
+        repo = self._init_repo()
+        self._git(repo, "checkout", "-q", "-b", "feature-x")
+
+        result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {}})
+
+        self.assertEqual(result.returncode, 0)
+        self.assertFalse(self._today_log().exists(), msg="audit log should not be written when hook allows")
+
+    def test_audit_appends_multiple_records(self) -> None:
+        repo = self._init_repo()
+        payload = {"cwd": str(repo), "tool_name": "Write", "tool_input": {"file_path": "a.py"}}
+
+        self._run(payload)
+        self._run(payload)
+
+        lines = [l for l in self._today_log().read_text().splitlines() if l.strip()]
+        self.assertEqual(len(lines), 2)
 
 
 if __name__ == "__main__":
