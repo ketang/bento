@@ -820,5 +820,103 @@ class PatchEquivalentCheckedOutTest(unittest.TestCase):
         self.assertIn("feature-squash-landed", branches)
 
 
+class LaunchWorkLogScanTest(unittest.TestCase):
+    """Tests for launch-work log scanning and its influence on apply-mode decisions."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        write_file(self.repo / "README.md", "root\n")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "initial")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _create_merged_branch_with_worktree(self) -> Path:
+        git(self.repo, "checkout", "-b", "feature-done")
+        write_file(self.repo / "work.txt", "done\n")
+        git(self.repo, "add", "work.txt")
+        git(self.repo, "commit", "-m", "add work")
+        git(self.repo, "checkout", "main")
+        git(self.repo, "merge", "--no-ff", "feature-done", "-m", "merge feature-done")
+        wt = Path(self.temp_dir.name) / "wt-done"
+        git(self.repo, "worktree", "add", str(wt), "feature-done")
+        return wt
+
+    def _write_launch_work_log(self, wt: Path, checkpoint: str) -> None:
+        r = subprocess.run(
+            ["git", "rev-parse", "--absolute-git-dir"],
+            cwd=wt,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        log_dir = Path(r.stdout.strip()) / "launch-work"
+        log_dir.mkdir(parents=True, exist_ok=True)
+        log_content = (
+            f"<!-- launch-work-log\n"
+            f"last-updated: 2026-01-01T00:00:00\n"
+            f"checkpoint: {checkpoint}\n"
+            f"-->\n"
+        )
+        (log_dir / "log.md").write_text(log_content, encoding="utf-8")
+
+    def test_scan_includes_launch_work_field_when_log_present(self) -> None:
+        wt = self._create_merged_branch_with_worktree()
+        self._write_launch_work_log(wt, "ready-to-land")
+
+        scan = json.loads(run([str(SCRIPT), "--no-liveness"], self.repo).stdout)
+
+        wt_entries = [w for w in scan["worktrees"] if w["path"] == str(wt)]
+        self.assertEqual(len(wt_entries), 1)
+        lw = wt_entries[0].get("launch_work")
+        self.assertIsNotNone(lw, "expected launch_work field on worktree entry")
+        self.assertEqual(lw["checkpoint"], "ready-to-land")
+
+    def test_apply_emits_warning_for_ready_to_land_log_on_merged_branch(self) -> None:
+        wt = self._create_merged_branch_with_worktree()
+        self._write_launch_work_log(wt, "ready-to-land")
+
+        scan = json.loads(
+            run(
+                [str(SCRIPT), "--no-liveness", "--apply", "delete-local-merged-branches"],
+                self.repo,
+            ).stdout
+        )
+
+        warnings = scan.get("warnings", [])
+        self.assertTrue(
+            any("ready-to-land" in w and "feature-done" in w for w in warnings),
+            f"expected ready-to-land warning, got {warnings}",
+        )
+
+    def test_apply_blocks_removal_when_in_flight_checkpoint(self) -> None:
+        wt = self._create_merged_branch_with_worktree()
+        self._write_launch_work_log(wt, "pre-land-checks")
+
+        scan = json.loads(
+            run(
+                [str(SCRIPT), "--no-liveness", "--apply", "delete-local-merged-branches"],
+                self.repo,
+            ).stdout
+        )
+
+        skipped_reasons = {
+            s.get("reason")
+            for s in scan["skipped_actions"]
+            if s.get("branch") == "feature-done"
+        }
+        self.assertTrue(
+            any("in flight" in (r or "") for r in skipped_reasons),
+            f"expected in-flight skip reason, got {skipped_reasons}",
+        )
+        self.assertTrue(wt.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
