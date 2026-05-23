@@ -1,3 +1,4 @@
+import contextlib
 import importlib.machinery
 import importlib.util
 import json
@@ -41,8 +42,22 @@ class BuildPluginsTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
+    @contextlib.contextmanager
+    def maybe_skip_assets(self, *, enabled: bool):
+        original = self.module.write_assets
+        if not enabled:
+            self.module.write_assets = lambda plugin, platform: None
+        try:
+            yield
+        finally:
+            self.module.write_assets = original
+
+    def build_repo(self, *, with_assets: bool = False) -> None:
+        with self.maybe_skip_assets(enabled=with_assets):
+            self.module.build_repo(run_verification=False)
+
     def test_build_repo_generates_manifests_assets_and_claude_marketplace(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo(with_assets=True)
 
         claude_bento = self.root / "plugins" / "claude" / "bento"
         codex_bento = self.root / "plugins" / "codex" / "bento"
@@ -100,7 +115,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(claude_marketplace["plugins"][3]["name"], "session-id")
 
     def test_session_id_plugin_is_claude_only(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         claude_session = self.root / "plugins" / "claude" / "session-id"
         codex_session = self.root / "plugins" / "codex" / "session-id"
@@ -122,7 +137,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue(os.access(hook_script, os.X_OK))
 
     def test_bento_hook_peers_materialize_for_claude_and_codex(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         claude_bento_hooks = self.root / "plugins" / "claude" / "bento" / "hooks"
         codex_bento = self.root / "plugins" / "codex" / "bento"
@@ -170,7 +185,7 @@ class BuildPluginsTest(unittest.TestCase):
         )
 
     def test_bento_claude_plugin_packages_telemetry_hook_support(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         claude_bento_hooks = self.root / "plugins" / "claude" / "bento" / "hooks"
         hooks_json = json.loads((claude_bento_hooks / "hooks.json").read_text(encoding="utf-8"))
@@ -196,7 +211,7 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertTrue(os.access(script, os.X_OK), script)
 
     def test_codex_bento_plugin_packages_codex_telemetry_hook_support(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         codex_bento_hooks = self.root / "plugins" / "codex" / "bento" / "hooks"
         hooks_json = json.loads((codex_bento_hooks / "hooks.json").read_text(encoding="utf-8"))
@@ -224,7 +239,7 @@ class BuildPluginsTest(unittest.TestCase):
         (hook_dir / "hooks.json").write_text('{"hooks": {}}\n', encoding="utf-8")
         self.module.PLUGIN_DEFS["bento"]["hooks"] = ["experimental"]
 
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         self.assertTrue((self.root / "plugins" / "claude" / "bento").exists())
         self.assertTrue((self.root / "plugins" / "codex" / "bento").exists())
@@ -237,7 +252,7 @@ class BuildPluginsTest(unittest.TestCase):
         packaging = self.root / "catalog" / "skills" / "closure" / "packaging.json"
         packaging.write_text(json.dumps({"platforms": ["codex"]}), encoding="utf-8")
 
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         claude_closure = self.root / "plugins" / "claude" / "bento" / "skills" / "closure"
         codex_closure = self.root / "plugins" / "codex" / "bento" / "skills" / "closure"
@@ -249,7 +264,7 @@ class BuildPluginsTest(unittest.TestCase):
         packaging = self.root / "catalog" / "skills" / "closure" / "packaging.json"
         packaging.write_text(json.dumps({"platforms": ["claude", "codex"]}), encoding="utf-8")
 
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         for platform in ("claude", "codex"):
             copied = self.root / "plugins" / platform / "bento" / "skills" / "closure" / "packaging.json"
@@ -260,7 +275,7 @@ class BuildPluginsTest(unittest.TestCase):
         (skill_dir / "CLAUDE.md").write_text("Claude-only requirements.\n", encoding="utf-8")
         (skill_dir / "CODEX.md").write_text("Codex-only requirements.\n", encoding="utf-8")
 
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         claude_text = (
             self.root / "plugins" / "claude" / "bento" / "skills" / "closure" / "SKILL.md"
@@ -281,7 +296,7 @@ class BuildPluginsTest(unittest.TestCase):
         (skill_dir / "CLAUDE.md").write_text("Claude-only requirements.\n", encoding="utf-8")
         (skill_dir / "CODEX.md").write_text("Codex-only requirements.\n", encoding="utf-8")
 
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         for platform in ("claude", "codex"):
             generated_skill = self.root / "plugins" / platform / "bento" / "skills" / "closure"
@@ -304,7 +319,7 @@ class BuildPluginsTest(unittest.TestCase):
             encoding="utf-8",
         )
 
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         for platform in ("claude", "codex"):
             generated_skill = self.root / "plugins" / platform / "bento" / "skills" / "closure"
@@ -322,10 +337,10 @@ class BuildPluginsTest(unittest.TestCase):
         packaging.write_text(json.dumps({"platforms": ["klingon"]}), encoding="utf-8")
 
         with self.assertRaises(SystemExit):
-            self.module.build_repo(run_verification=False)
+            self.build_repo()
 
     def test_build_repo_copies_red_green_tdd_guidance_into_generated_skills(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         skills_dir = self.root / "plugins" / "claude" / "bento" / "skills"
         expected_phrases = {
@@ -341,7 +356,7 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertIn(expected_phrase, normalized_skill_text)
 
     def test_workflow_hook_contract_is_documented_without_tool_specific_names(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         skills_dir = self.root / "plugins" / "claude" / "bento" / "skills"
         contract = skills_dir / "launch-work" / "references" / "project-hooks.md"
@@ -364,7 +379,7 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertNotIn(forbidden, combined_text.lower())
 
     def test_build_repo_copies_land_work_codex_execution_guidance(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         skill_text = (
             self.root / "plugins" / "codex" / "bento" / "skills" / "land-work" / "SKILL.md"
@@ -376,7 +391,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertIn("git worktree list --porcelain", normalized_skill_text)
 
     def test_issue_completeness_precheck_is_packaged_with_tracker_flows(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         for platform in ("claude", "codex"):
             for plugin in ("bento", "trackers"):
@@ -398,7 +413,7 @@ class BuildPluginsTest(unittest.TestCase):
                 self.assertIn("Do not file normal ready work while reviewer-flagged ambiguities still", skill_text)
 
     def test_tracker_flows_delegate_filing_precheck_to_shared_skill(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         for skill_name in ("beads-issue-flow", "github-issue-flow"):
             source_text = (
@@ -428,7 +443,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(storystore["repo"], "ketang/storystore")
 
     def test_bugshot_appears_in_claude_marketplace_as_external(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
         marketplace = json.loads(
             (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
         )
@@ -440,7 +455,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(bugshot["source"]["repo"], "ketang/bugshot")
 
     def test_storystore_appears_in_claude_marketplace_as_external(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
         marketplace = json.loads(
             (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
         )
@@ -452,7 +467,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(storystore["source"]["repo"], "ketang/storystore")
 
     def test_bugshot_not_bundled_in_bento_plugin(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
         for platform in ("claude", "codex"):
             bento_bugshot = self.root / "plugins" / platform / "bento" / "skills" / "bugshot"
             self.assertFalse(
@@ -516,7 +531,7 @@ class BuildPluginsTest(unittest.TestCase):
         return repo
 
     def test_bugshot_external_skill_not_built_as_top_level_plugin(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         for platform in ("claude", "codex"):
             self.assertFalse((self.root / "plugins" / platform / "bugshot").exists())
@@ -526,12 +541,12 @@ class BuildPluginsTest(unittest.TestCase):
         stale_dir.mkdir(parents=True)
         (stale_dir / "orphan.txt").write_text("stale\n", encoding="utf-8")
 
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
 
         self.assertFalse(stale_dir.exists())
 
     def test_build_repo_includes_dev_skill_in_claude_bento_plugin(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
         dev_skill_md = (
             self.root / "plugins" / "claude" / "bento" / "skills" / "dev-skill" / "SKILL.md"
         )
@@ -542,7 +557,7 @@ class BuildPluginsTest(unittest.TestCase):
         )
 
     def test_dev_skill_is_excluded_from_codex_bento_plugin(self) -> None:
-        self.module.build_repo(run_verification=False)
+        self.build_repo()
         codex_path = self.root / "plugins" / "codex" / "bento" / "skills" / "dev-skill"
         self.assertFalse(codex_path.exists(), "dev-skill must not appear in codex bento plugin")
 
