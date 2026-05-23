@@ -20,10 +20,11 @@ if [[ "${1:-}" == "-h" || "${1:-}" == "--help" ]]; then
 fi
 
 # Claude Code runs hook processes from $HOME, not the project root.
-# Read the project directory from the stdin JSON payload; fall back to
-# process CWD so manual invocations and tests that don't supply a payload
-# still work.
-payload_cwd="$(python3 -c "
+# Read the full stdin payload once; subsequent steps parse from this variable
+# so stdin is not consumed twice.
+payload_raw="$(cat 2>/dev/null || true)"
+
+payload_cwd="$(echo "$payload_raw" | python3 -c "
 import json, sys
 try:
     d = json.load(sys.stdin)
@@ -66,4 +67,37 @@ cat >&2 <<'MESSAGE'
 Blocked: editing files directly on 'main' is not allowed.
 To disable this check for this repo, add 'require_worktree=false' to .agent-mode.local.
 MESSAGE
+
+BENTO_PAYLOAD="$payload_raw" \
+BENTO_REPO_ROOT="$repo_root" \
+BENTO_BRANCH="$branch" \
+python3 -c "
+import datetime, json, os
+from pathlib import Path
+
+STRIP_KEYS = frozenset(['content', 'old_string', 'new_string', 'new_source', 'source'])
+
+try:
+    raw = os.environ.get('BENTO_PAYLOAD', '')
+    d = json.loads(raw) if raw else {}
+    tool_input = {k: v for k, v in d.get('tool_input', {}).items() if k not in STRIP_KEYS}
+    record = {
+        'timestamp': datetime.datetime.utcnow().strftime('%Y-%m-%dT%H:%M:%S.%f')[:-3] + 'Z',
+        'session_id': d.get('session_id'),
+        'tool_name': d.get('tool_name'),
+        'cwd': d.get('cwd'),
+        'repo_root': os.environ.get('BENTO_REPO_ROOT', ''),
+        'branch': os.environ.get('BENTO_BRANCH', ''),
+        'tool_input': tool_input,
+    }
+    date_str = datetime.date.today().isoformat()
+    log_dir = Path.home() / '.claude' / 'hooks'
+    log_dir.mkdir(parents=True, exist_ok=True)
+    log_path = log_dir / f'require-worktree-rejections.{date_str}.jsonl'
+    with open(log_path, 'a', encoding='utf-8') as f:
+        f.write(json.dumps(record) + '\n')
+except Exception:
+    pass
+" 2>/dev/null || true
+
 exit 1
