@@ -38,6 +38,33 @@ Use this skill only when the project documents Beads as the issue tracker.
     partially landed, update or leave the issue open according to repo policy
     instead of closing it.
 
+### Epic Filtering in Work Discovery
+
+Never claim or start an `issue_type=epic` from `bd ready` as ordinary
+implementation work. Epics are containers for child issues, not actionable tasks.
+
+When selecting work from `bd ready`:
+
+1. Prefer `bd ready --json` for programmatic selection. Filter out any item
+   where `issue_type` equals `epic` before choosing work.
+2. Do not rely solely on `bd ready --exclude-type=epic` — that flag may not
+   exist in all Beads versions. Always apply your own filtering as the primary
+   mechanism.
+3. If `bd ready` returns only epics (no non-epic issues):
+   - Run `bd epic status` to inspect open epics.
+   - For each relevant epic, run `bd children <epic-id>` to list its children.
+   - If all non-epic children are blocked, claimed, deferred, or closed, report
+     that there is no actionable ready work. Do not fabricate tasks.
+   - If actionable children exist but are not yet marked ready, report that and
+     let the user or dependency resolution advance them.
+4. Do not mark epics `blocked` or `deferred` merely to hide them from
+   `bd ready`. Those states have semantic meaning; applying them to suppress
+   display corrupts the dependency graph.
+
+Parent-child links remain organizational, not sequencing dependencies. An epic
+appearing in `bd ready` does not imply its children are ready or that the epic
+itself is workable.
+
 ## Filing New Issues
 
 Before `bd create`, use the `issue-readiness-check` skill on the
