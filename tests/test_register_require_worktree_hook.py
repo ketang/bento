@@ -123,6 +123,92 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
 
         self.assertEqual(self._settings_path().read_text(encoding="utf-8"), first)
 
+    def test_evicts_stale_versioned_entries(self) -> None:
+        stale_command_50 = (
+            "/home/u/.claude/plugins/cache/bento/bento/1.0.50/hooks/scripts/require-worktree.sh"
+        )
+        stale_command_51 = (
+            "/home/u/.claude/plugins/cache/bento/bento/1.0.51/hooks/scripts/require-worktree.sh"
+        )
+        self._write_settings(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Edit",
+                            "hooks": [{"type": "command", "command": stale_command_50}],
+                        },
+                        {
+                            "matcher": "Edit",
+                            "hooks": [{"type": "command", "command": stale_command_51}],
+                        },
+                        {
+                            "matcher": "Write",
+                            "hooks": [{"type": "command", "command": stale_command_50}],
+                        },
+                        {
+                            "matcher": "NotebookEdit",
+                            "hooks": [{"type": "command", "command": stale_command_51}],
+                        },
+                    ]
+                }
+            }
+        )
+
+        self.assertEqual(self._run(), 0)
+
+        settings = self._read_settings()
+        pre_tool_use = settings["hooks"]["PreToolUse"]
+        current = f"{self.plugin_root}/hooks/scripts/require-worktree.sh"
+
+        # No stale entries remain
+        commands = [
+            hook["command"]
+            for entry in pre_tool_use
+            for hook in entry["hooks"]
+        ]
+        self.assertNotIn(stale_command_50, commands)
+        self.assertNotIn(stale_command_51, commands)
+
+        # Exactly one current-version entry per matcher
+        by_matcher: dict[str, list[dict]] = {}
+        for entry in pre_tool_use:
+            by_matcher.setdefault(entry["matcher"], []).append(entry)
+        for matcher in ("Edit", "Write", "NotebookEdit"):
+            self.assertEqual(len(by_matcher[matcher]), 1)
+            self.assertEqual(by_matcher[matcher][0]["hooks"][0]["command"], current)
+
+    def test_does_not_evict_other_plugins(self) -> None:
+        other_plugin_command = (
+            "/home/u/.claude/plugins/cache/some-other-plugin/scripts/require-worktree.sh"
+        )
+        self._write_settings(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "matcher": "Edit",
+                            "hooks": [
+                                {"type": "command", "command": other_plugin_command}
+                            ],
+                        }
+                    ]
+                }
+            }
+        )
+
+        self.assertEqual(self._run(), 0)
+
+        commands = [
+            hook["command"]
+            for entry in self._read_settings()["hooks"]["PreToolUse"]
+            for hook in entry["hooks"]
+        ]
+        self.assertIn(other_plugin_command, commands)
+        self.assertIn(
+            f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands
+        )
+
     def test_malformed_settings_is_silent_no_op(self) -> None:
         path = self._settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
