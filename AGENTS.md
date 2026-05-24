@@ -15,6 +15,19 @@ installable plugin bundles from them.
 - `.agents/plugins/marketplace.json` contains generated Codex marketplace metadata
 - `hooks/` contains related automation scripts, but hook wiring is external
 
+## Issue tracking
+
+This repository uses `bd` (Beads) for issue tracking.
+
+- Run `rtk bd prime` for the current workflow context
+- Run `rtk bd ready` to find unblocked work
+- Run `rtk bd show <id>` to inspect an issue
+- Run `rtk bd close <id>` only after the work is verified as landed
+
+When you are in a linked git worktree, run Beads mutations from the primary
+checkout at `/home/ketan/project/bento`. Beads stores repo-local tracker state
+there for multi-worktree repositories.
+
 ## Rules for agents
 
 - Treat `catalog/skills/` as the source of truth

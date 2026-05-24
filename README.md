@@ -17,7 +17,14 @@ workflows.
 
 ## Project tracking
 
-This repository uses GitHub Issues as its issue tracker.
+This repository uses `bd` (Beads) as its issue tracker.
+
+Run `bd prime` for the current workflow context.
+
+When you are working from a linked git worktree, run Beads mutations such as
+`bd create`, `bd update`, `bd close`, and `bd rename-prefix` from the primary
+checkout at `/home/ketan/project/bento`. Read-only queries such as `bd ready`,
+`bd list`, and `bd show` can run from either checkout.
 
 ## Repository model
 
