@@ -174,6 +174,33 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue((codex_bento_hooks / "scripts" / "seed-agent-plugins.py").exists())
         self.assertFalse((codex_bento_hooks / "scripts" / "auto-allow.py").exists())
         self.assertFalse((codex_bento_hooks / "scripts" / "ensure-worktree-permissions.py").exists())
+        # bento-gs7: the register script writes to ~/.claude/settings.json
+        # using whatever plugin root it is invoked with. The Codex build must
+        # not ship the script and must not list it in hooks.json, otherwise a
+        # Codex SessionStart will plant Codex cache paths into Claude Code's
+        # settings file (the "command not found" cross-runtime dispatch bug).
+        self.assertFalse(
+            (codex_bento_hooks / "scripts" / "register-require-worktree-hook.py").exists(),
+            msg="Codex plugin must not ship the Claude-only register-require-worktree-hook.py",
+        )
+        self.assertFalse(
+            (codex_bento_hooks / "scripts" / "require-worktree.sh").exists(),
+            msg="Codex plugin must not ship the Claude-only require-worktree.sh",
+        )
+        codex_session_commands = [
+            hook["command"]
+            for entry in codex_hooks["hooks"].get("SessionStart", [])
+            for hook in entry["hooks"]
+        ]
+        for cmd in codex_session_commands:
+            self.assertNotIn(
+                "register-require-worktree-hook",
+                cmd,
+                msg=(
+                    "Codex hooks.json SessionStart must not reference the "
+                    f"Claude-only register script (bento-gs7); got: {cmd!r}"
+                ),
+            )
         self.assertIn("PermissionRequest", codex_hooks["hooks"])
         self.assertIn(
             "${PLUGIN_ROOT}/hooks/scripts/permission-request.py bento ${PLUGIN_ROOT}",

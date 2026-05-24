@@ -4,6 +4,17 @@
 Idempotently adds PreToolUse hooks for Edit, Write, and NotebookEdit to
 ~/.claude/settings.json. Malformed settings and unexpected errors are silent
 no-ops so session startup is never blocked.
+
+Cross-runtime safety (bento-gs7): the script's only effect — patching
+~/.claude/settings.json — is meaningful for Claude Code only. Codex wires
+PreToolUse hooks through each plugin's own ``hooks/hooks.json`` and does not
+read ~/.claude/settings.json. If the script is ever invoked from a Codex
+SessionStart (whether because of a stale build, a manual install, or future
+packaging mistake) it must no-op rather than plant a Codex plugin path into
+the Claude settings file. The plugin root provided as ``argv[1]`` is the
+authoritative runtime signal: Codex plugins live under ``~/.codex/``, Claude
+plugins under ``~/.claude/``. We detect ``/.codex/`` in the plugin root path
+and bail early.
 """
 
 from __future__ import annotations
@@ -16,6 +27,19 @@ from pathlib import Path
 
 
 EDIT_TOOL_MATCHERS = ("Edit", "Write", "NotebookEdit")
+
+
+def _looks_like_codex_plugin_root(plugin_root: str) -> bool:
+    """True if ``plugin_root`` looks like a Codex plugin cache path.
+
+    Codex installs plugins under ``~/.codex/plugins/cache/...``; Claude Code
+    uses ``~/.claude/plugins/cache/...``. The presence of ``/.codex/`` in
+    the path is the reliable runtime signal — substring rather than prefix
+    so the check is independent of ``$HOME``. Posix path separators only:
+    the script is Claude Code- and Codex-targeted and both runtimes pass
+    forward-slash paths.
+    """
+    return "/.codex/" in plugin_root
 
 
 def _usage() -> str:
@@ -157,6 +181,13 @@ def main(argv: list[str] | None = None) -> int:
         sys.stdout.write(_usage())
         return 0
     if len(argv) < 2:
+        return 0
+
+    # Defense in depth (bento-gs7): the canonical build does not include this
+    # script in the Codex plugin's hooks.json, but a stray Codex SessionStart
+    # invocation (stale install, manual wiring) must not write a Codex plugin
+    # path into ~/.claude/settings.json. Bail before touching the file.
+    if _looks_like_codex_plugin_root(argv[1]):
         return 0
 
     try:
