@@ -1,0 +1,5 @@
+id: e2e-auto-allow-tool
+provider: anthropic
+version: v1
+status: 200
+stream: false

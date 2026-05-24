@@ -1,0 +1,8 @@
+provider: anthropic
+version: v1
+fixtures:
+  - expression: 'true'
+    sequence:
+      id: conversation
+      on_exhaust: last
+      steps: [turn-tool, turn-end]
