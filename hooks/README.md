@@ -24,3 +24,9 @@ is not materialized for that runtime.
 Use separate peer implementations when hook protocols differ. For example,
 Claude Bash auto-approval is implemented as a `PreToolUse` permission decision,
 while Codex uses `PermissionRequest` with Codex's decision shape.
+
+## Hook contract
+
+For exit-code and JSON-decision semantics — what blocks, what allows, and the
+common mistake of using `exit 1` when you meant `exit 2` — see
+[`references/hook-contract.md`](references/hook-contract.md).

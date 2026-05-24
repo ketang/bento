@@ -1,4 +1,6 @@
 #!/usr/bin/env bash
+# See hooks/references/hook-contract.md for the blocking contract
+# (exit 2 = block, exit 1 = non-blocking failure, JSON decision shapes).
 set -euo pipefail
 
 usage() {
