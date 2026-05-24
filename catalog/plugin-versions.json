@@ -2,5 +2,6 @@
   "bento": "1.0.61",
   "trackers": "1.0.24",
   "stacks": "1.0.17",
-  "session-id": "1.0.14"
+  "session-id": "1.0.14",
+  "intent-stories": "1.0.1"
 }

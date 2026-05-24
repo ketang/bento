@@ -136,6 +136,25 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue(hook_script.exists())
         self.assertTrue(os.access(hook_script, os.X_OK))
 
+    def test_intent_stories_plugin_is_standalone_on_claude_and_codex(self) -> None:
+        self.module.build_repo(run_verification=False)
+
+        for platform, manifest_dir in (("claude", ".claude-plugin"), ("codex", ".codex-plugin")):
+            plugin = self.root / "plugins" / platform / "intent-stories"
+            self.assertTrue((plugin / manifest_dir / "plugin.json").exists(), platform)
+            for skill in (
+                "generate-intent-stories",
+                "audit-intent-stories",
+                "update-intent-stories",
+            ):
+                self.assertTrue((plugin / "skills" / skill / "SKILL.md").exists(), f"{platform}:{skill}")
+
+        claude_marketplace = json.loads(
+            (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
+        )
+        plugin_names = [p["name"] for p in claude_marketplace["plugins"] if "version" in p]
+        self.assertIn("intent-stories", plugin_names)
+
     def test_bento_hook_peers_materialize_for_claude_and_codex(self) -> None:
         self.build_repo()
 

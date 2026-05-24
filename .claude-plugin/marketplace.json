@@ -44,6 +44,15 @@
       }
     },
     {
+      "name": "intent-stories",
+      "description": "Durable intent story documentation and fidelity auditing skills for coding agents",
+      "version": "1.0.1",
+      "source": "./plugins/claude/intent-stories",
+      "author": {
+        "name": "Ketan Gangatirkar"
+      }
+    },
+    {
       "name": "bugshot",
       "description": "Ephemeral screenshot gallery for visual bug review and issue filing",
       "source": {
