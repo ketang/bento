@@ -311,3 +311,9 @@ If the repo intentionally merges directly into its real integration branch,
 read `references/direct-primary-branch.md` before landing. That overlay only
 clarifies how to identify and target the actual integration branch; it does not
 replace the safety rules or merge flow above.
+
+## Claude Code Requirements
+
+Compound multi-line shell commands can trigger Claude Code "Unhandled node
+type" rendering errors. In Claude Code, issue landing commands one step at a
+time rather than as chained `Bash` invocations.
