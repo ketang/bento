@@ -1,21 +1,21 @@
-# Project Hook Contract
+# Project Hook Script Contract
 
 Use this reference when `launch-work` or `land-work` needs to run
-project-supplied executable hooks. Hooks are optional: projects without any
-matching executable hook files behave exactly as if no hooks were configured.
+project-supplied hook scripts. Hook scripts are optional: projects without any
+matching executable files behave exactly as if no hook scripts were configured.
 
 ## Layout
 
-Hooks live under one of these roots, in order of precedence:
+Hook scripts live under one of these roots, in order of precedence:
 
 1. `<repo-root>/.agent-plugins/bento/bento/`
 2. `$XDG_CONFIG_HOME/agent-plugins/bento/bento/`
 3. `~/.config/agent-plugins/bento/bento/` when `XDG_CONFIG_HOME` is unset
 
-Within each root, hooks are organized by skill, then kind, then position:
+Within each root, hook scripts are organized by skill, then position:
 
 ```
-<root>/<skill>/hooks/<position>/<two-digit>-<slug>.<ext>
+<root>/<skill>/hook-scripts/<position>/<two-digit>-<slug>.<ext>
 ```
 
 - `<skill>` is `launch-work` or `land-work`
@@ -25,7 +25,16 @@ Within each root, hooks are organized by skill, then kind, then position:
 - `<ext>` is any executable type (`.sh`, `.py`, no extension, etc.); only the
   executable bit matters
 
-## When hooks fire
+For example, repo-scoped hook scripts may live at
+`<repo-root>/.agent-plugins/bento/bento/launch-work/hook-scripts/pre/` and
+`<repo-root>/.agent-plugins/bento/bento/land-work/hook-scripts/pre/`.
+
+User-global hook scripts may live at
+`~/.config/agent-plugins/bento/bento/launch-work/hook-scripts/pre/` when
+`XDG_CONFIG_HOME` is unset, or under `$XDG_CONFIG_HOME/agent-plugins/bento/bento/`
+otherwise.
+
+## When hook scripts fire
 
 | Skill | Position | Fires at | Worktree state |
 |---|---|---|---|
@@ -36,10 +45,10 @@ Within each root, hooks are organized by skill, then kind, then position:
 
 ## Filename convention
 
-Each hook filename **must** start with two decimal digits and a hyphen:
+Each hook script filename **must** start with two decimal digits and a hyphen:
 `<two-digit>-<slug>`. Files are sorted by ascending numeric prefix; ties
 break by lexicographic filename order. Leave gaps (10, 20, 30…) so later
-additions can slot between existing hooks without renumbering. Files that
+additions can slot between existing hook scripts without renumbering. Files that
 don't match the prefix convention are ignored with a warning.
 
 Hidden files (leading dot), editor backups (`~`, `.bak`, `.swp`, `.orig`),
@@ -55,8 +64,8 @@ catalog/skills/launch-work/scripts/run-lifecycle-extensions.py run-hooks \
   --branch <branch> --worktree <worktree> ...
 ```
 
-Hooks at a position run sequentially. The first non-zero exit halts further
-hooks at that position (except in advisory mode — see below).
+Hook scripts at a position run sequentially. The first non-zero exit halts further
+hook scripts at that position (except in advisory mode — see below).
 
 The working directory is the linked worktree (launch-work) or feature-branch
 worktree (land-work).
@@ -95,28 +104,28 @@ Unavailable values are set to empty strings, not omitted.
 ### Advisory mode (`land-work/post` only)
 
 After a successful merge, abort cannot reverse the landing. The skill runs
-`land-work/post` hooks in advisory mode: non-zero exits surface the
+`land-work/post` hook scripts in advisory mode: non-zero exits surface the
 message but do not unwind the merge or block tracker mutations. Continue
-running remaining hooks past a failure.
+running remaining hook scripts past a failure.
 
 ## Timeouts
 
-There is no built-in timeout. Interactive hooks (`gh auth login`,
+There is no built-in timeout. Interactive hook scripts (`gh auth login`,
 passphrase prompts) work without ceremony. The agent surfaces a soft
 heartbeat message after long quiet stretches; Ctrl-C reaches the running
-hook directly.
+hook script directly.
 
 A repo that wants a bounded run sets `BENTO_HOOK_TIMEOUT=<seconds>` (e.g.,
-in repo-local environment for CI). Default unset means no timeout. Hooks
+in repo-local environment for CI). Default unset means no timeout. Hook scripts
 that exceed the timeout are killed and reported with exit code `124`.
 
-Hooks that need to detect a non-interactive context can check
+Hook scripts that need to detect a non-interactive context can check
 `BENTO_HOOK_TTY`:
 
 ```sh
 #!/bin/sh
 if [ "$BENTO_HOOK_TTY" != "1" ]; then
-  echo "This hook needs an interactive terminal."
+  echo "This hook script needs an interactive terminal."
   exit "$BENTO_HOOK_REQUIRES_HUMAN"
 fi
 exec gh auth login

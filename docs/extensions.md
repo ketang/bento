@@ -4,9 +4,9 @@ The `launch-work` and `land-work` skills support project-supplied
 extensions at two boundaries — `pre` (skill entry) and `post` (skill
 exit) — in two flavors:
 
-- **Hooks** are executable scripts. They gate the skill via exit codes
+- **Hook scripts** are executable scripts. They gate the skill via exit codes
   (0 pass, 75 human handoff, other non-zero failure).
-- **Actions** are markdown files the agent reads and applies as
+- **Hook skills** are markdown files the agent reads and applies as
   additive prose guidance, with an optional `## Stop conditions`
   section that halts the skill if any predicate matches.
 
@@ -25,7 +25,7 @@ exactly as before.
 ## Where extensions live
 
 ```
-<root>/<skill>/{hooks,actions}/{pre,post}/<two-digit>-<slug>.{sh,md}
+<root>/<skill>/{hook-scripts,hook-skills}/{pre,post}/<two-digit>-<slug>.{sh,md}
 ```
 
 `<root>` is one of (in precedence order):
@@ -37,7 +37,7 @@ exactly as before.
 The two-digit prefix sets execution order (10, 20, 30…). Files without
 the prefix are ignored with a warning.
 
-## Worked example: a hook + an action
+## Worked example: a hook script + a hook skill
 
 Suppose your project wants two project-specific extensions:
 
@@ -46,9 +46,9 @@ Suppose your project wants two project-specific extensions:
 2. A note at `land-work/pre` reminding the agent to regenerate
    GraphQL bindings if the schema changed in this branch.
 
-### 1. The pre-launch hook
+### 1. The pre-launch hook script
 
-Create `.agent-plugins/bento/bento/launch-work/hooks/pre/10-pending-migration.sh`:
+Create `.agent-plugins/bento/bento/launch-work/hook-scripts/pre/10-pending-migration.sh`:
 
 ```sh
 #!/bin/sh
@@ -65,16 +65,16 @@ exit 0
 Make it executable:
 
 ```bash
-chmod +x .agent-plugins/bento/bento/launch-work/hooks/pre/10-pending-migration.sh
+chmod +x .agent-plugins/bento/bento/launch-work/hook-scripts/pre/10-pending-migration.sh
 ```
 
-When `launch-work` runs, this hook fires after the worktree is verified.
-Exit `75` triggers human handoff: the skill halts, surfaces the hook's
+When `launch-work` runs, this hook script fires after the worktree is verified.
+Exit `75` triggers human handoff: the skill halts, surfaces the hook script's
 stdout to the user, and preserves the branch and worktree.
 
-### 2. The pre-land action
+### 2. The pre-land hook skill
 
-Create `.agent-plugins/bento/bento/land-work/actions/pre/10-regen-graphql.md`:
+Create `.agent-plugins/bento/bento/land-work/hook-skills/pre/10-regen-graphql.md`:
 
 ````markdown
 # Regenerate GraphQL bindings before landing
@@ -102,14 +102,14 @@ feature-branch worktree before proceeding with the merge:
   attempting to merge stale bindings.
 ````
 
-When `land-work` runs and the `pre` hooks all pass, the agent reads
-this action and applies its guidance. If the schema changed and
+When `land-work` runs and the `pre` hook scripts all pass, the agent reads
+this hook skill and applies its guidance. If the schema changed and
 generation fails, the matched stop condition halts the skill.
 
-## Available environment for hooks
+## Available environment for hook scripts
 
-Hooks receive these env vars (subset; see
-[`project-hooks.md`](../catalog/skills/launch-work/references/project-hooks.md)
+Hook scripts receive these env vars (subset; see
+[`project-hook-scripts.md`](../catalog/skills/launch-work/references/project-hook-scripts.md)
 for the full list):
 
 - `BENTO_HOOK_PHASE` — `launch-work` or `land-work`
@@ -127,7 +127,7 @@ To list what extensions a project has installed at a given position:
 
 ```bash
 catalog/skills/launch-work/scripts/run-lifecycle-extensions.py discover \
-  --repo-root . --skill launch-work --kind hooks --position pre
+  --repo-root . --skill launch-work --kind hook-scripts --position pre
 ```
 
 Output is JSON with `files` (in execution order) and `warnings` (for
@@ -135,6 +135,6 @@ files that don't match the prefix convention).
 
 ## Full reference
 
-- Hook contract: [`catalog/skills/launch-work/references/project-hooks.md`](../catalog/skills/launch-work/references/project-hooks.md)
-- Action contract: [`catalog/skills/launch-work/references/project-actions.md`](../catalog/skills/launch-work/references/project-actions.md)
+- Hook script contract: [`catalog/skills/launch-work/references/project-hook-scripts.md`](../catalog/skills/launch-work/references/project-hook-scripts.md)
+- Hook skill contract: [`catalog/skills/launch-work/references/project-hook-skills.md`](../catalog/skills/launch-work/references/project-hook-skills.md)
 - Design: [`docs/specs/2026-05-06-launch-land-extension-points-design.md`](specs/2026-05-06-launch-land-extension-points-design.md)

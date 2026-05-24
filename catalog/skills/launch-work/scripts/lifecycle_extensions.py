@@ -7,9 +7,9 @@ Layout under `<root>/.agent-plugins/bento/bento/`:
 
     <skill>/<kind>/<position>/<two-digit>-<slug>.<ext>
 
-where <skill> is launch-work or land-work, <kind> is hooks or actions,
-<position> is pre or post. <ext> is shell-executable for hooks, .md for
-actions.
+where <skill> is launch-work or land-work, <kind> is hook-scripts or hook-skills,
+<position> is pre or post. <ext> is shell-executable for hook-scripts, .md for
+hook-skills.
 """
 
 from __future__ import annotations
@@ -37,7 +37,7 @@ class DiscoveryResult:
 def discover_directory(directory: Path, kind: str) -> DiscoveryResult:
     """Return ordered, filtered files from one position directory.
 
-    kind is "hooks" or "actions".
+    kind is "hook-scripts" or "hook-skills".
     """
     result = DiscoveryResult()
     if not directory.is_dir():
@@ -62,12 +62,12 @@ def discover_directory(directory: Path, kind: str) -> DiscoveryResult:
             )
             continue
 
-        if kind == "hooks":
+        if kind == "hook-scripts":
             mode = entry.stat().st_mode
             is_executable = bool(mode & (stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH))
             if not is_executable:
                 continue
-        elif kind == "actions":
+        elif kind == "hook-skills":
             if entry.suffix != ".md":
                 continue
         else:
@@ -108,7 +108,7 @@ def discover(
     """
     if skill not in ("launch-work", "land-work"):
         raise ValueError(f"unknown skill: {skill!r}")
-    if kind not in ("hooks", "actions"):
+    if kind not in ("hook-scripts", "hook-skills"):
         raise ValueError(f"unknown kind: {kind!r}")
     if position not in ("pre", "post"):
         raise ValueError(f"unknown position: {position!r}")

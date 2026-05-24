@@ -58,7 +58,7 @@ def _cmd_run_hooks(args: argparse.Namespace) -> int:
     result = lifecycle_extensions.discover(
         repo_root=Path(args.repo_root).resolve(),
         skill=args.skill,
-        kind="hooks",
+        kind="hook-scripts",
         position=args.position,
     )
     for warning in result.warnings:
@@ -108,7 +108,7 @@ def main(argv: list[str] | None = None) -> int:
     p_disc = sub.add_parser("discover", help="list extensions as JSON")
     p_disc.add_argument("--repo-root", required=True)
     p_disc.add_argument("--skill", required=True, choices=["launch-work", "land-work"])
-    p_disc.add_argument("--kind", required=True, choices=["hooks", "actions"])
+    p_disc.add_argument("--kind", required=True, choices=["hook-scripts", "hook-skills"])
     p_disc.add_argument("--position", required=True, choices=["pre", "post"])
     p_disc.set_defaults(func=_cmd_discover)
 

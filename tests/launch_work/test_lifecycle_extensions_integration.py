@@ -33,16 +33,16 @@ class IntegrationTest(unittest.TestCase):
 
     def test_pre_pass_then_actions_discoverable(self) -> None:
         # A passing pre hook
-        hook_dir = self.repo / ".agent-plugins/bento/bento/launch-work/hooks/pre"
+        hook_dir = self.repo / ".agent-plugins/bento/bento/launch-work/hook-scripts/pre"
         _write(
             hook_dir / "10-ok.sh",
             "#!/bin/sh\necho pre-ok\nexit 0\n",
             executable=True,
         )
-        # Two prose actions in order
-        action_dir = self.repo / ".agent-plugins/bento/bento/launch-work/actions/pre"
-        _write(action_dir / "10-first.md", "# First action\n\n## Body\nDo X.\n")
-        _write(action_dir / "20-second.md", "# Second action\n\n## Body\nDo Y.\n")
+        # Two prose hook skills in order
+        action_dir = self.repo / ".agent-plugins/bento/bento/launch-work/hook-skills/pre"
+        _write(action_dir / "10-first.md", "# First hook skill\n\n## Body\nDo X.\n")
+        _write(action_dir / "20-second.md", "# Second hook skill\n\n## Body\nDo Y.\n")
 
         run_args = [
             str(CLI), "run-hooks",
@@ -58,7 +58,7 @@ class IntegrationTest(unittest.TestCase):
             str(CLI), "discover",
             "--repo-root", str(self.repo),
             "--skill", "launch-work",
-            "--kind", "actions",
+            "--kind", "hook-skills",
             "--position", "pre",
         ]
         disc = subprocess.run(
@@ -71,7 +71,7 @@ class IntegrationTest(unittest.TestCase):
         )
 
     def test_post_advisory_continues_past_failure(self) -> None:
-        d = self.repo / ".agent-plugins/bento/bento/land-work/hooks/post"
+        d = self.repo / ".agent-plugins/bento/bento/land-work/hook-scripts/post"
         _write(
             d / "10-fails.sh",
             "#!/bin/sh\necho first-failed\nexit 5\n",

@@ -405,7 +405,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.build_repo()
 
         skills_dir = self.root / "plugins" / "claude" / "bento" / "skills"
-        contract = skills_dir / "launch-work" / "references" / "project-hooks.md"
+        contract = skills_dir / "launch-work" / "references" / "project-hook-scripts.md"
         self.assertTrue(contract.exists())
 
         launch_text = (skills_dir / "launch-work" / "SKILL.md").read_text(encoding="utf-8")
@@ -414,13 +414,13 @@ class BuildPluginsTest(unittest.TestCase):
         combined_text = "\n".join([launch_text, land_text, contract_text])
         normalized_text = re.sub(r"\s+", " ", combined_text)
 
-        self.assertIn("Project Hook Contract", contract_text)
+        self.assertIn("Project Hook Script Contract", contract_text)
         self.assertIn("agent-plugins/bento/bento/", contract_text)
-        self.assertIn("<root>/<skill>/hooks/<position>/", contract_text)
+        self.assertIn("<root>/<skill>/hook-scripts/<position>/", contract_text)
         self.assertIn("BENTO_HOOK_REQUIRES_HUMAN", contract_text)
         self.assertIn("EX_TEMPFAIL", contract_text)
-        self.assertIn("Run the **`pre`** extensions after worktree verification and before dependency installation", normalized_text)
-        self.assertIn("Run the **`pre`** extensions before creating or verifying the merge preview, rebasing, or merging", normalized_text)
+        self.assertIn("Run the **`pre`** hook scripts after worktree verification and before dependency installation", normalized_text)
+        self.assertIn("Run the **`pre`** hook scripts before creating or verifying the merge preview, rebasing, or merging", normalized_text)
         for forbidden in ("bugshot", "vizdiff", "playwright"):
             self.assertNotIn(forbidden, combined_text.lower())
 

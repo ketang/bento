@@ -66,11 +66,11 @@ When updating docs or structure:
   When editing a bento skill that exposes user-editable customization files,
   follow this convention; do not invent ad hoc locations.
 - `launch-work` and `land-work` extension points: projects can drop
-  executable hooks or markdown actions under
-  `<root>/<skill>/{hooks,actions}/{pre,post}/<two-digit>-<slug>.{sh,md}`
+  executable hook scripts or markdown hook skills under
+  `<root>/<skill>/{hook-scripts,hook-skills}/{pre,post}/<two-digit>-<slug>.{sh,md}`
   to extend either skill at its `pre` or `post` boundary. See
-  [`catalog/skills/launch-work/references/project-hooks.md`](catalog/skills/launch-work/references/project-hooks.md),
-  [`catalog/skills/launch-work/references/project-actions.md`](catalog/skills/launch-work/references/project-actions.md),
+  [`catalog/skills/launch-work/references/project-hook-scripts.md`](catalog/skills/launch-work/references/project-hook-scripts.md),
+  [`catalog/skills/launch-work/references/project-hook-skills.md`](catalog/skills/launch-work/references/project-hook-skills.md),
   and [`docs/extensions.md`](docs/extensions.md) for the worked example.
 
 ## Safe editing guidance
