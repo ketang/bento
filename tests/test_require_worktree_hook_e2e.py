@@ -7,7 +7,14 @@ revealed: unit tests pass with a synthetic stdin payload, but cannot catch
 bugs in how Claude Code constructs or passes the hook payload at runtime.
 
 The test is skipped when ``zolem`` or ``claude`` is not on PATH, so it is
-safe to ship without forcing those binaries into CI.
+safe to ship without forcing those binaries into CI. The skip is
+intentional: zolem is not yet packaged for general installation, so most
+contributor and CI environments will not have it available. When zolem is
+present, this test exercises the full Claude Code -> hook dispatch path
+and is the only place we catch a regression where the hook executes but
+fails to actually block the edit (e.g. the bento-fko ``exit 1`` bug:
+unit tests asserted ``returncode != 0`` while Claude Code silently
+proceeded with the tool call).
 """
 
 from __future__ import annotations

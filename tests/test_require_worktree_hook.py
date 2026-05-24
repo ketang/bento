@@ -90,7 +90,16 @@ class RequireWorktreeHookTest(unittest.TestCase):
 
         result = self._run(payload_cwd=repo)
 
-        self.assertNotEqual(result.returncode, 0)
+        # Exit code 2 is the documented PreToolUse blocking signal for both
+        # Claude Code and Codex. Exit code 1 is classified as a non-blocking
+        # failure and lets the tool call proceed; asserting != 0 is not
+        # enough to catch that regression, so assert exactly 2.
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertNotEqual(
+            result.returncode,
+            1,
+            msg="exit 1 is non-blocking in PreToolUse; hook must exit 2",
+        )
         self.assertEqual(result.stderr, BLOCKED_MESSAGE)
 
     def test_allows_opt_out(self) -> None:
@@ -113,7 +122,7 @@ class RequireWorktreeHookTest(unittest.TestCase):
 
         result = self._run(payload_cwd=repo)
 
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
         self.assertEqual(result.stderr, BLOCKED_MESSAGE)
 
     def test_allows_non_git_directory(self) -> None:
@@ -156,7 +165,7 @@ class RequireWorktreeHookTest(unittest.TestCase):
 
         result = self._run(payload_cwd=repo)
 
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
         self.assertEqual(result.stderr, BLOCKED_MESSAGE)
 
     def test_allows_opt_out_when_hook_cwd_is_outside_repo(self) -> None:
@@ -251,7 +260,7 @@ class RequireWorktreeHookAuditTest(unittest.TestCase):
 
         result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {"file_path": "x.py"}})
 
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
         log = self._today_log()
         self.assertTrue(log.exists(), msg=f"audit log not found at {log}")
 
@@ -300,7 +309,7 @@ class RequireWorktreeHookAuditTest(unittest.TestCase):
         # Process CWD is hook_cwd (a non-git temp dir); payload carries the repo.
         result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {}}, repo_cwd=self.hook_cwd)
 
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
         record = json.loads(self._today_log().read_text().splitlines()[0])
         self.assertEqual(record["cwd"], str(repo))
 
@@ -322,6 +331,83 @@ class RequireWorktreeHookAuditTest(unittest.TestCase):
 
         lines = [l for l in self._today_log().read_text().splitlines() if l.strip()]
         self.assertEqual(len(lines), 2)
+
+
+class RequireWorktreeBlockingExitCodeRegressionTest(unittest.TestCase):
+    """Regression guard for bento-fko.
+
+    The require-worktree PreToolUse hook originally ended with ``exit 1``,
+    which both Claude Code and Codex classify as a non-blocking failure: the
+    stderr message is logged but the tool call proceeds. The blocking
+    contract requires either ``exit 2`` (with the reason on stderr) or a
+    JSON deny decision on stdout. This test pins the exit code so the hook
+    cannot silently regress back to 1 (or any other non-blocking value).
+    """
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self._hook_cwd_tmp = tempfile.TemporaryDirectory()
+        self.hook_cwd = Path(self._hook_cwd_tmp.name).resolve()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+        self._hook_cwd_tmp.cleanup()
+
+    def _git(self, cwd: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+    def _init_main_repo(self) -> Path:
+        repo = self.root / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", "main")
+        self._git(repo, "config", "user.name", "Regression Test")
+        self._git(repo, "config", "user.email", "regression@example.com")
+        (repo / "README.md").write_text("x\n", encoding="utf-8")
+        self._git(repo, "add", "README.md")
+        self._git(repo, "commit", "-q", "-m", "init")
+        return repo
+
+    def test_blocking_exit_code_is_exactly_2(self) -> None:
+        repo = self._init_main_repo()
+        stdin = json.dumps({"cwd": str(repo)}) + "\n"
+        result = subprocess.run(
+            [str(HOOK_SCRIPT)],
+            input=stdin,
+            cwd=self.hook_cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(
+            result.returncode,
+            2,
+            msg=(
+                "PreToolUse must exit 2 to actually block; "
+                f"got rc={result.returncode}, stderr={result.stderr!r}"
+            ),
+        )
+
+    def test_blocking_exit_code_is_not_1(self) -> None:
+        repo = self._init_main_repo()
+        stdin = json.dumps({"cwd": str(repo)}) + "\n"
+        result = subprocess.run(
+            [str(HOOK_SCRIPT)],
+            input=stdin,
+            cwd=self.hook_cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertNotEqual(
+            result.returncode,
+            1,
+            msg=(
+                "exit 1 is classified as a non-blocking PreToolUse failure "
+                "by both Claude Code and Codex; the hook never blocks any "
+                "edit at this exit code (bento-fko)."
+            ),
+        )
 
 
 if __name__ == "__main__":
