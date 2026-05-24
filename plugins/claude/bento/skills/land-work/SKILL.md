@@ -257,6 +257,17 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 - Do not land changes that include deploy-critical artifacts without verifying
   the committed blob content matches what was tested locally.
 
+## Anti-Rationalization
+
+| Excuse | Counter-argument |
+|---|---|
+| "Tests passed before the rebase, so the branch is verified." | Verification attaches to the exact candidate being landed. Rebase, merge, cherry-pick, conflict resolution, or artifact regeneration makes earlier results stale. |
+| "The primary branch probably did not move; the lease check is ceremony." | Landing is compare-and-set. If the leased ref moved after verification, the verified candidate is no longer the candidate that would land. |
+| "This repo usually accepts quick merges, so I can fast-forward or squash." | The default landing record is a regular merge commit unless the repo explicitly requires otherwise. Fast-forward and squash erase the branch boundary this workflow relies on. |
+| "The issue is functionally done, so I can close it before merging." | Tracker closure advertises landed availability to dependent work. Closing before verified landing can make downstream agents claim work against code that is not on the integration branch. |
+| "The diff is simple; I can skip the preview/exact-candidate checks." | Simplicity does not prove candidate identity. Preview, lease, and landing verification protect against stale bases, helper mismatch, generated artifacts, and accidental local-only state. |
+| "Closure will clean up my just-landed branch." | The landing agent owns direct post-merge cleanup: leave the feature worktree, remove that worktree, then delete the merged branch. Closure is only a fallback for stale or ambiguous leftovers. |
+
 ## Tracker Handoff
 
 - If the project uses Beads, use the `beads-issue-flow` skill to close or update

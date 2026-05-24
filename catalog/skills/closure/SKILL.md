@@ -261,6 +261,16 @@ tracked file with uncommitted changes.  Untracked files are excluded.
 - **Never treat "no safe_to_delete branches" as a complete result when linked
   worktrees are present.** Worktrees are the primary subject of investigation.
 
+## Anti-Rationalization
+
+| Excuse | Counter-argument |
+|---|---|
+| "I just landed my own branch; closure can clean up the rest." | `land-work` owns routine cleanup for the active agent's just-landed branch. Closure is for other-agent or stale leftovers, and its self-invocation/liveness gates are expected to reject your own recent worktree. |
+| "The worktree has no live process, so it is safe to delete." | Absence of a live process is not proof of abandonment. An agent may be waiting for user input, and `possibly_live`, `recently_active`, and `unknown` findings remain review-driven outside the helper's explicit apply mode. |
+| "The branch is merged, so I can delete it manually." | Merged branches with linked worktrees still require ordered cleanup through the helper apply mode. Manual `git branch -d`/`-D` commands bypass the helper's classification, liveness, and worktree-order checks. |
+| "The tracker item looks done; I can close it during cleanup." | Closure gathers and presents landing evidence, then hands tracker mutation to the tracker workflow skill. Tracker items close only after verified landing on the integration branch. |
+| "This is only a dry-run scan, so I can stop after saying nothing is safe to delete." | A dry-run pass must still account for linked worktrees, stashes, unmerged branches, and next actions. Linked worktrees are the main investigation target, not an optional appendix. |
+
 ## Workflow
 
 1. Run the helper in dry-run mode to detect the primary branch and collect
