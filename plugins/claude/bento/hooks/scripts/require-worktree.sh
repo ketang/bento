@@ -100,4 +100,9 @@ except Exception:
     pass
 " 2>/dev/null || true
 
-exit 1
+# Exit code 2 is the documented PreToolUse blocking signal for both
+# Claude Code and Codex; the reason message above (on stderr) is shown to
+# the user. `exit 1` is classified as a non-blocking failure and the tool
+# call proceeds, so the hook must use 2 (or a JSON deny decision on stdout)
+# to actually block the edit.
+exit 2
