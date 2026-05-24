@@ -33,7 +33,7 @@ their own `hooks.json` and scripts where their hook contracts differ.
 | Hook management | Platform-peer hook sources under `catalog/hooks/<hook-name>/<platform>/` | Keeps Claude and Codex protocols explicit without making either runtime the default |
 | Hook organization | One peer source per runtime, each with its own `hooks.json` and scripts | Supports shared intent while allowing event names, output shapes, and command wiring to differ |
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
-| Issue tracking | GitHub Issues | Matches the repository host and the included tracker workflow skills |
+| Issue tracking | Beads (`bd`) | Keeps tracker state in-repo and matches the included `beads-issue-flow` workflow |
 | Skill source model | Canonical skills in `catalog/skills/`; generated installable plugins in `plugins/` | Supports both broad and narrow install options without maintaining duplicate skill content |
 | Initial plugin set | `bento`, `trackers`, `stacks` | Keeps installation overhead low while still allowing narrower opt-in installs |
 
