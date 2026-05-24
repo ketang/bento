@@ -209,6 +209,102 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands
         )
 
+    def test_claude_invocation_writes_settings(self) -> None:
+        """Baseline: a Claude-style plugin root path triggers the write."""
+        # plugin_root in setUp is under self.root (no /.codex/ component),
+        # which models a Claude install. Confirm the write path runs.
+        self.assertEqual(self._run(), 0)
+        self.assertTrue(self._settings_path().exists())
+        commands = [
+            hook["command"]
+            for entry in self._read_settings()["hooks"]["PreToolUse"]
+            for hook in entry["hooks"]
+        ]
+        self.assertIn(
+            f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands
+        )
+
+    def test_codex_invocation_is_silent_no_op(self) -> None:
+        """bento-gs7: a Codex-cache plugin root must not touch Claude settings.
+
+        Codex wires PreToolUse hooks through each plugin's own
+        ``hooks/hooks.json`` and ignores ``~/.claude/settings.json``. If this
+        script is ever invoked from a Codex SessionStart, it must bail before
+        writing or creating the Claude settings file.
+        """
+        codex_plugin_root = self.root / ".codex" / "plugins" / "cache" / "bento" / "bento" / "1.0.99"
+        (codex_plugin_root / "hooks" / "scripts").mkdir(parents=True)
+        (codex_plugin_root / "hooks" / "scripts" / "require-worktree.sh").write_text(
+            "#!/bin/sh\n", encoding="utf-8"
+        )
+
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.fake_home)
+        try:
+            rc = self.module.main(
+                ["register-require-worktree-hook.py", str(codex_plugin_root)]
+            )
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+        self.assertEqual(rc, 0)
+        # No file was created, and if a stub already existed it was not touched.
+        self.assertFalse(
+            self._settings_path().exists(),
+            msg=(
+                "Codex invocation must not create ~/.claude/settings.json; "
+                "register-require-worktree-hook should bail before writing."
+            ),
+        )
+
+    def test_codex_invocation_preserves_existing_claude_settings(self) -> None:
+        """A Codex-cache argv[1] must not mutate a pre-existing Claude settings file."""
+        original = {
+            "model": "opus",
+            "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {"type": "command", "command": "existing-command"}
+                        ],
+                    }
+                ]
+            },
+        }
+        self._write_settings(original)
+
+        codex_plugin_root = self.root / ".codex" / "plugins" / "cache" / "bento" / "bento" / "1.0.99"
+        (codex_plugin_root / "hooks" / "scripts").mkdir(parents=True)
+
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.fake_home)
+        try:
+            rc = self.module.main(
+                ["register-require-worktree-hook.py", str(codex_plugin_root)]
+            )
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+        self.assertEqual(rc, 0)
+        self.assertEqual(self._read_settings(), original)
+
+    def test_codex_detector_matches_codex_paths_only(self) -> None:
+        detector = self.module._looks_like_codex_plugin_root
+        self.assertTrue(detector("/home/u/.codex/plugins/cache/bento/bento/1.0.55"))
+        self.assertTrue(detector("/some/prefix/.codex/anything"))
+        self.assertFalse(detector("/home/u/.claude/plugins/cache/bento/bento/1.0.55"))
+        # Substrings that merely contain "codex" without the "/.codex/"
+        # boundary must not trigger a false-positive bail.
+        self.assertFalse(detector("/home/u/projects/codex-related/plugin"))
+        self.assertFalse(detector("/home/u/.claude-codex/plugin"))
+
     def test_malformed_settings_is_silent_no_op(self) -> None:
         path = self._settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)
