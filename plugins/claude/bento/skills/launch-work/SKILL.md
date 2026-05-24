@@ -36,14 +36,6 @@ of launching work that benefit from repeatable checks:
 - `launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
   to verify the current checkout is the intended linked worktree on the intended
   branch
-- `launch-work/scripts/launch-work-log.py {init|update|read}` to manage the
-  branch-local progress log at `<worktree-git-dir>/launch-work/log.md` (i.e.
-  under `.git/worktrees/<name>/launch-work/log.md` for a linked worktree).
-  The log is **never** in the working tree and is **never** committed —
-  storing it under `$GIT_DIR` makes it structurally untrackable, which is the
-  invariant: launch-work scaffolding never lands on the integration branch.
-- `launch-work/scripts/launch-work-discover.py` to scan linked worktrees for
-  in-flight progress logs
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script.
@@ -53,17 +45,20 @@ target branch and worktree path are confirmed correct.
 
 ## Workflow
 
-0. Run `launch-work/scripts/launch-work-discover.py` first. If it reports an
-   in-flight log that matches the user's described task — by branch name, by
-   the "Original task" slot, or by an explicit user request to resume — read
-   that log, run `launch-work-verify.py` against the recorded branch and
-   worktree, and resume from the recorded checkpoint instead of bootstrapping
-   a fresh task. Otherwise proceed.
 1. Read the repo's local instructions and confirm the approved task scope.
 2. Determine whether the work is tracker-backed or just an approved change.
    - If the repo uses Beads, use the `beads-issue-flow` skill.
    - If the repo uses GitHub Issues, use the `github-issue-flow` skill.
    - If the work is not tracker-backed, record that explicitly and continue.
+
+   When the repo uses a tracker but no specific issue has been identified for
+   this work, scan open issues before creating anything:
+   - Run the tracker's list command and read titles and descriptions of open
+     issues for one that covers the current task.
+   - If a match is found, use it — claim it per the repo's active-work policy
+     and proceed.
+   - If no issue matches well, file a new one via the tracker skill's filing
+     flow (including its pre-filing review step), claim it, then proceed.
 3. If the current task is only to create, inspect, claim, update, or close a
    tracker item, follow the tracker skill directly and do not create a branch
    or linked worktree unless the repo explicitly requires that workflow.
@@ -105,73 +100,49 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     scripts after worktree verification and before dependency installation:
 
     ```bash
-    launch-work/scripts/bento-extensions.py run-hooks \
+    launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill launch-work \
       --position pre \
       --branch <branch> \
       --worktree <worktree> \
       --base-ref <primary-branch> \
-      --runtime claude
+      --runtime <runtime>
     ```
 
     Then discover and apply hook skills for the `pre` position:
 
     ```bash
-    launch-work/scripts/bento-extensions.py discover \
+    launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
       --kind hook-skills \
       --position pre
     ```
 
-    Read each listed file in order. Treat any `## Stop conditions` predicate
-    as a halt signal. If a hook script exited non-zero, follow the contract's
-    abort or human-handoff semantics; hook skills do not load in that case.
+    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
+    agent runtime. Read each listed file in order. Treat any `## Stop
+    conditions` predicate as a halt signal. If a hook script exited non-zero,
+    follow the contract's abort or human-handoff semantics; hook skills do not
+    load in that case.
 10. Install build/runtime dependencies in the new worktree before the first
     build, test, or typecheck. Prefer the repo's documented bootstrap command;
     otherwise detect by lockfile per
     `launch-work/references/dependency-bootstrap.md`, which also covers
     disk-efficient choices on ext4 (pnpm store, shared module caches). Avoid
     overriding global cache directories per worktree unless the repo documents
-    a reason to do so. After deps are installed:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint deps-installed
-    ```
+    a reason to do so.
 
 11. Before editing implementation code for new work or a behavioral change
     with feasible automated coverage, identify the relevant verification
     target and write or update the smallest relevant test so it fails against
-    the current or missing behavior. Commit the failing test, then update the
-    log:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint red-test-written
-    ```
-
-    Implement the change, make the test pass, and update the log:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint tests-green
-    ```
-
-    Run the relevant verification gates. After they pass:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint verification-passed
-    ```
-
-    Once the work is ready to land:
-
-    ```bash
-    launch-work/scripts/launch-work-log.py update --checkpoint ready-to-land
-    ```
+    the current or missing behavior. Commit the failing test, then implement
+    the change, make the test pass, and run the relevant verification gates.
 
 11a. Run the **`post`** hook scripts before declaring the work ready to land:
 
     ```bash
-    launch-work/scripts/bento-extensions.py run-hooks \
+    launch-work/scripts/run-lifecycle-extensions.py run-hooks \
       --repo-root <repo-root> \
       --skill launch-work \
       --position post \
@@ -179,67 +150,28 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
       --worktree <worktree> \
       --base-ref <primary-branch> \
       --head-sha $(git rev-parse HEAD) \
-      --runtime claude
+      --runtime <runtime>
     ```
 
     Then discover and apply `post` hook skills:
 
     ```bash
-    launch-work/scripts/bento-extensions.py discover \
+    launch-work/scripts/run-lifecycle-extensions.py discover \
       --repo-root <repo-root> \
       --skill launch-work \
       --kind hook-skills \
       --position post
     ```
 
-    Read each listed file in order. Apply additive guidance and evaluate
-    `## Stop conditions` predicates. If a hook script or hook skill halts,
+    Use `claude`, `codex`, or `unknown` for `<runtime>` to match the current
+    agent runtime. Read each listed file in order. Apply additive guidance and
+    evaluate `## Stop conditions` predicates. If a hook script or hook skill
+    halts,
     preserve branch and linked worktree and surface the message.
 
 12. In the final task summary, include a brief note describing any additions
     or expansions made to the automated test suite. If test coverage did not
     change, say so explicitly.
-
-## Progress Log Cadence
-
-The progress log at `<worktree-git-dir>/launch-work/log.md` is the
-crash-recovery breadcrumb: a fresh agent reads it to resume in-flight work.
-The file lives under `$GIT_DIR`, not in the working tree, and is never
-committed. Write rules:
-
-- **Mandatory** at every checkpoint transition listed in the workflow: run
-  `launch-work-log.py update --checkpoint <name>` before proceeding.
-- **Discretionary** when recording a non-obvious decision, ruling out an
-  approach, hitting or resolving a blocker, or when the "Next action" slot
-  would be wrong if read by a recovery agent — pass `--slot <name> --content
-  -` to the helper and pipe the new slot text on stdin.
-- Always rewrite the whole file via the helper. Never append. Never edit the
-  log file directly during checkpoint writes.
-- Skip trivial mid-step state (every test run, every file edited). The log is
-  for recovery, not telemetry.
-
-### Legacy fallback
-
-Branches in flight before the move out of the working tree may still carry
-`<worktree>/.launch-work/log.md`. Read paths (`launch-work-log.py read`,
-`launch-work-discover.py`, `closure`) fall back to that location. Updates
-refuse to silently mix locations; clean the legacy log first via
-`land-work-clean-log.py --base <primary> --apply`, then run
-`launch-work-log.py init` to create the new `$GIT_DIR`-based log.
-
-## Resume Protocol
-
-When `launch-work-discover.py` reports an in-flight log for the current task:
-
-1. Read the log first, before any other action.
-2. Run `launch-work-verify.py --expected-branch <slot-3-branch> --expected-worktree <slot-3-worktree> --require-linked-worktree`
-   from the recorded worktree. On mismatch, stop and surface it.
-3. If the log's `last-updated` is older than system boot time (e.g.,
-   `uptime -s` on Linux), warn the user that the previous agent likely
-   crashed before its last action completed and that the "Next action" slot
-   may be stale by one step.
-4. Resume from the recorded checkpoint. Do not re-claim, do not re-create the
-   worktree, do not re-install deps.
 
 ## Non-Negotiable Rules
 
@@ -270,7 +202,17 @@ When `launch-work-discover.py` reports an in-flight log for the current task:
   positions. A `75` exit code (hook scripts) or matched `## Stop conditions`
   predicate (hook skills) is a human handoff, not a destructive failure;
   preserve the branch and linked worktree and surface the message.
-- Never create a progress log on the primary branch.
+
+## Anti-Rationalization
+
+| Excuse | Counter-argument |
+|---|---|
+| "This is a tiny docs/config edit; a worktree would be overhead." | Content type and size are not exceptions. Any repo-artifact edit needs the dedicated branch and linked worktree so the primary checkout stays untouched and the task remains landable. |
+| "Main is already dirty, so I might as well edit there." | Existing primary-checkout dirt is not permission to add more. Treat those changes as someone else's state and isolate this task in its own worktree. |
+| "An old branch/worktree is close enough to reuse." | A branch/worktree pair records ownership and scope. Reusing it mixes histories, claims, hooks, and cleanup decisions across tasks. Create a fresh pair for this approved scope. |
+| "I'll claim or file the issue after I make progress." | Tracker claims prevent duplicate work and encode ownership before implementation. If the repo uses active-work claims, inspect and claim before editing. |
+| "The hook/action probably does not matter for this change." | Project extensions are part of the repo's local contract. Skipping them bypasses stop conditions and project-specific checks that the base skill cannot know. |
+| "I'll add tests after the implementation works." | For new work or behavioral changes with feasible coverage, the failing test is the specification checkpoint. Deferring it invites unverifiable changes and stale final summaries. |
 
 ## Stop Conditions
 
