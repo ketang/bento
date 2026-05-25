@@ -95,6 +95,20 @@ class DecideTest(unittest.TestCase):
         decision, _ = self._decide(f"{self.script}\nrm -rf /")
         self.assertIsNone(decision)
 
+    def test_allows_multiline_continuation(self) -> None:
+        """Backslash-newline line continuations should be normalized and allowed."""
+        cmd = f"{self.script} \\\n  --branch foo \\\n  --worktree /some/path 2>&1"
+        decision, reason = self._decide(cmd)
+        self.assertIsNotNone(decision, msg=f"expected allow, got: {reason}")
+        self.assertEqual(decision["hookSpecificOutput"]["permissionDecision"], "allow")
+
+    def test_refuses_bare_newline_after_continuation_norm(self) -> None:
+        """A bare newline (not preceded by backslash) is still rejected even when
+        the same command also contains benign backslash continuations."""
+        cmd = f"{self.script} \\\n  --branch foo\nrm -rf /"
+        decision, _ = self._decide(cmd)
+        self.assertIsNone(decision)
+
     def test_refuses_when_file_missing(self) -> None:
         missing = self.root / "skills" / "foo" / "scripts" / "missing.py"
         decision, reason = self._decide(str(missing))
