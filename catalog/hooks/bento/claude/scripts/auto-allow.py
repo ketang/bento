@@ -174,6 +174,11 @@ def decide(
     if not command:
         return None, "empty command"
 
+    # Normalize bash line continuations (\<newline>) to a single space so that
+    # multi-line invocations produced by Claude Code are treated as flat
+    # single-line commands before the hard-reject check.
+    command = re.sub(r"\\\n\s*", " ", command).strip()
+
     hard_reason = _hard_reject(command)
     if hard_reason:
         return None, hard_reason
