@@ -7,6 +7,7 @@ and claude CLI invocation.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shutil
@@ -43,6 +44,7 @@ class E2ETestCase(unittest.TestCase):
         self.root = Path(self.tmp.name).resolve()
         self.zolem_log_path = self.root / "zolem.log"
         self.zolem_log = open(self.zolem_log_path, "wb")
+        self.calls_file = self.root / "zolem-calls.jsonl"
 
         cmd = [
             "zolem",
@@ -52,6 +54,8 @@ class E2ETestCase(unittest.TestCase):
             "anthropic",
             "-local-backend",
             self.BACKEND,
+            "-local-calls-file",
+            str(self.calls_file),
         ]
         if self.FIXTURE_NS is not None:
             cmd += ["-local-fixtures-dir", str(FIXTURES_BASE)]
@@ -144,6 +148,37 @@ class E2ETestCase(unittest.TestCase):
             _, hex_port = local.split(":")
             return int(hex_port, 16)
         return None
+
+    # ----- zolem call recording -----------------------------------------------
+
+    def _read_calls(self) -> list[dict]:
+        """Return parsed records from the zolem calls file, or [] if absent/empty."""
+        if not self.calls_file.exists():
+            return []
+        lines = self.calls_file.read_text(encoding="utf-8").splitlines()
+        result = []
+        for line in lines:
+            line = line.strip()
+            if line:
+                try:
+                    result.append(json.loads(line))
+                except json.JSONDecodeError:
+                    pass
+        return result
+
+    def assertZolemHit(self, min_calls: int = 1) -> None:
+        """Assert that zolem intercepted at least *min_calls* API requests."""
+        calls = self._read_calls()
+        if len(calls) < min_calls:
+            zolem_log = ""
+            try:
+                zolem_log = self.zolem_log_path.read_text(errors="replace")
+            except Exception:  # noqa: BLE001
+                pass
+            self.fail(
+                f"Expected at least {min_calls} zolem call(s) but got {len(calls)}. "
+                f"calls_file={self.calls_file}  zolem_log:\n{zolem_log}"
+            )
 
     # ----- repo helpers --------------------------------------------------------
 

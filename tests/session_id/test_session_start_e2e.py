@@ -50,6 +50,7 @@ class SessionStartHookE2ETest(E2ETestCase):
         self.assertTrue(session_id_file.exists(), "session_id file not written by hook")
         content = session_id_file.read_text(encoding="utf-8").strip()
         self.assertGreater(len(content), 0, "session_id file is empty")
+        self.assertZolemHit()
 
     def test_hook_creates_scratch_directory(self) -> None:
         repo = self._init_repo_with_hook()
@@ -59,6 +60,7 @@ class SessionStartHookE2ETest(E2ETestCase):
         session_id = session_id_file.read_text(encoding="utf-8").strip()
         scratch = self.temp_tmp / f"claude-session-{session_id}"
         self.assertTrue(scratch.is_dir(), f"scratch dir not created: {scratch}")
+        self.assertZolemHit()
 
 
 if __name__ == "__main__":

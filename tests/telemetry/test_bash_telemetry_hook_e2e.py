@@ -107,6 +107,7 @@ class BashTelemetryHookE2ETest(E2ETestCase):
         self.assertEqual(last["class"], "ok")
         self.assertEqual(last["exit"], 0)
         self.assertEqual(last["v"], 1)
+        self.assertZolemHit()
 
 
 if __name__ == "__main__":

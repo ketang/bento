@@ -119,6 +119,7 @@ class AutoAllowHookE2ETest(E2ETestCase):
             f"Sentinel not created; hook should have auto-allowed.\n"
             f"stdout: {result.stdout}\nstderr: {result.stderr}",
         )
+        self.assertZolemHit()
 
     def test_blocks_outside_plugin(self) -> None:
         evil_script = Path(self._fixture_tmp.name) / f"evil-e2e-{uuid.uuid4()}.py"
@@ -138,6 +139,7 @@ class AutoAllowHookE2ETest(E2ETestCase):
             sentinel.exists(),
             "Sentinel was created; hook should have blocked the outside script.",
         )
+        self.assertZolemHit()
 
 
 if __name__ == "__main__":
