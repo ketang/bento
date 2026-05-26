@@ -80,7 +80,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             command = by_matcher[matcher]["hooks"][0]["command"]
             self.assertEqual(
                 command,
-                f"{self.plugin_root}/hooks/scripts/require-worktree.sh",
+                str(self._stable_symlink_path()),
             )
 
     def test_preserves_existing_settings_and_hooks(self) -> None:
@@ -113,7 +113,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             for hook in entry["hooks"]
         ]
         self.assertIn("existing-command", commands)
-        self.assertIn(f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands)
+        self.assertIn(str(self._stable_symlink_path()), commands)
 
     def test_idempotent(self) -> None:
         self._run()
@@ -159,7 +159,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
 
         settings = self._read_settings()
         pre_tool_use = settings["hooks"]["PreToolUse"]
-        current = f"{self.plugin_root}/hooks/scripts/require-worktree.sh"
+        current = str(self._stable_symlink_path())
 
         # No stale entries remain
         commands = [
@@ -205,9 +205,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             for hook in entry["hooks"]
         ]
         self.assertIn(other_plugin_command, commands)
-        self.assertIn(
-            f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands
-        )
+        self.assertIn(str(self._stable_symlink_path()), commands)
 
     def test_claude_invocation_writes_settings(self) -> None:
         """Baseline: a Claude-style plugin root path triggers the write."""
@@ -220,9 +218,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             for entry in self._read_settings()["hooks"]["PreToolUse"]
             for hook in entry["hooks"]
         ]
-        self.assertIn(
-            f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands
-        )
+        self.assertIn(str(self._stable_symlink_path()), commands)
 
     def test_codex_invocation_is_silent_no_op(self) -> None:
         """bento-gs7: a Codex-cache plugin root must not touch Claude settings.
@@ -312,6 +308,82 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
 
         self.assertEqual(self._run(), 0)
         self.assertEqual(path.read_text(encoding="utf-8"), "{not json")
+
+
+    # --- Stable symlink tests (bento-zew) ---
+
+    def _stable_symlink_dir(self) -> Path:
+        return self.fake_home / ".claude" / "hooks" / "bento"
+
+    def _stable_symlink_path(self) -> Path:
+        return self._stable_symlink_dir() / "require-worktree.sh"
+
+    def test_symlink_created_on_first_run(self) -> None:
+        self.assertEqual(self._run(), 0)
+        stable = self._stable_symlink_path()
+        self.assertTrue(stable.is_symlink(), f"Expected symlink at {stable}")
+        self.assertEqual(
+            Path(os.readlink(stable)),
+            self.plugin_root / "hooks" / "scripts" / "require-worktree.sh",
+        )
+
+    def test_symlink_updated_on_version_bump(self) -> None:
+        self.assertEqual(self._run(), 0)
+
+        new_plugin_root = self.root / "plugin-v2"
+        (new_plugin_root / "hooks" / "scripts").mkdir(parents=True)
+        new_script = new_plugin_root / "hooks" / "scripts" / "require-worktree.sh"
+        new_script.write_text("#!/bin/sh\n# v2\n", encoding="utf-8")
+
+        old_home = os.environ.get("HOME")
+        os.environ["HOME"] = str(self.fake_home)
+        try:
+            self.module.main(
+                ["register-require-worktree-hook.py", str(new_plugin_root)]
+            )
+        finally:
+            if old_home is None:
+                os.environ.pop("HOME", None)
+            else:
+                os.environ["HOME"] = old_home
+
+        stable = self._stable_symlink_path()
+        self.assertTrue(stable.is_symlink())
+        self.assertEqual(
+            Path(os.readlink(stable)),
+            new_plugin_root / "hooks" / "scripts" / "require-worktree.sh",
+        )
+
+    def test_preexisting_symlink_at_stable_path_is_overwritten(self) -> None:
+        stable = self._stable_symlink_path()
+        stable.parent.mkdir(parents=True, exist_ok=True)
+        unrelated = self.root / "unrelated-script.sh"
+        unrelated.write_text("#!/bin/sh\n", encoding="utf-8")
+        os.symlink(unrelated, stable)
+
+        self.assertEqual(self._run(), 0)
+
+        self.assertTrue(stable.is_symlink())
+        self.assertEqual(
+            Path(os.readlink(stable)),
+            self.plugin_root / "hooks" / "scripts" / "require-worktree.sh",
+        )
+
+    def test_settings_json_has_stable_path_not_versioned_path(self) -> None:
+        self.assertEqual(self._run(), 0)
+
+        stable = str(self._stable_symlink_path())
+        versioned = str(
+            self.plugin_root / "hooks" / "scripts" / "require-worktree.sh"
+        )
+        settings = self._read_settings()
+        commands = [
+            hook["command"]
+            for entry in settings["hooks"]["PreToolUse"]
+            for hook in entry["hooks"]
+        ]
+        self.assertIn(stable, commands)
+        self.assertNotIn(versioned, commands)
 
 
 if __name__ == "__main__":
