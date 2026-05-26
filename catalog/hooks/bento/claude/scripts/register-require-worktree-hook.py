@@ -55,6 +55,45 @@ def _settings_path() -> Path:
     return Path(os.environ.get("HOME", str(Path.home()))) / ".claude" / "settings.json"
 
 
+def _stable_symlink_path() -> Path:
+    """Stable (version-independent) path for the require-worktree.sh symlink.
+
+    Lives under ~/.claude/hooks/bento/ — a location owned by this script.
+    Any pre-existing file or symlink there is overwritten unconditionally.
+    """
+    return (
+        Path(os.environ.get("HOME", str(Path.home())))
+        / ".claude"
+        / "hooks"
+        / "bento"
+        / "require-worktree.sh"
+    )
+
+
+def _update_symlink(target: Path, stable: Path) -> None:
+    """Atomically create or update stable to point at target.
+
+    Uses mkstemp to get a unique temp name in the same directory, removes the
+    placeholder file, creates a symlink at that path, then os.replace()s it
+    onto stable — atomic on POSIX so concurrent sessions never see a missing
+    or broken link mid-update.
+    """
+    stable.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp_name = tempfile.mkstemp(prefix=".symlink-", dir=str(stable.parent))
+    os.close(fd)
+    tmp_path = Path(tmp_name)
+    try:
+        tmp_path.unlink()
+        os.symlink(target, tmp_path)
+        os.replace(tmp_path, stable)
+    except Exception:
+        try:
+            tmp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+        raise
+
+
 def _load_settings(path: Path) -> dict | None:
     if not path.is_file():
         return {}
@@ -139,6 +178,8 @@ def register(settings: dict, command: str) -> bool:
     if not isinstance(pre_tool_use, list):
         return False
 
+    # TODO(bento-stable-symlink): remove this entire block after migration release ships.
+    # It exists only to sweep versioned paths written by older plugin versions.
     # Evict stale bento require-worktree.sh entries from older plugin versions.
     changed = False
     kept: list = []
@@ -192,7 +233,10 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         plugin_root = Path(argv[1])
-        command = str(plugin_root / "hooks" / "scripts" / "require-worktree.sh")
+        target = plugin_root / "hooks" / "scripts" / "require-worktree.sh"
+        stable = _stable_symlink_path()
+        _update_symlink(target, stable)
+        command = str(stable)
         settings_path = _settings_path()
         settings = _load_settings(settings_path)
         if settings is None:
