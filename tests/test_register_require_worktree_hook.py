@@ -80,7 +80,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             command = by_matcher[matcher]["hooks"][0]["command"]
             self.assertEqual(
                 command,
-                f"{self.plugin_root}/hooks/scripts/require-worktree.sh",
+                str(self._stable_symlink_path()),
             )
 
     def test_preserves_existing_settings_and_hooks(self) -> None:
@@ -113,7 +113,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             for hook in entry["hooks"]
         ]
         self.assertIn("existing-command", commands)
-        self.assertIn(f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands)
+        self.assertIn(str(self._stable_symlink_path()), commands)
 
     def test_idempotent(self) -> None:
         self._run()
@@ -159,7 +159,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
 
         settings = self._read_settings()
         pre_tool_use = settings["hooks"]["PreToolUse"]
-        current = f"{self.plugin_root}/hooks/scripts/require-worktree.sh"
+        current = str(self._stable_symlink_path())
 
         # No stale entries remain
         commands = [
@@ -205,9 +205,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             for hook in entry["hooks"]
         ]
         self.assertIn(other_plugin_command, commands)
-        self.assertIn(
-            f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands
-        )
+        self.assertIn(str(self._stable_symlink_path()), commands)
 
     def test_claude_invocation_writes_settings(self) -> None:
         """Baseline: a Claude-style plugin root path triggers the write."""
@@ -220,9 +218,7 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
             for entry in self._read_settings()["hooks"]["PreToolUse"]
             for hook in entry["hooks"]
         ]
-        self.assertIn(
-            f"{self.plugin_root}/hooks/scripts/require-worktree.sh", commands
-        )
+        self.assertIn(str(self._stable_symlink_path()), commands)
 
     def test_codex_invocation_is_silent_no_op(self) -> None:
         """bento-gs7: a Codex-cache plugin root must not touch Claude settings.
