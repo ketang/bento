@@ -401,6 +401,37 @@ class BuildPluginsTest(unittest.TestCase):
             normalized_skill_text = re.sub(r"\s+", " ", skill_text)
             self.assertIn(expected_phrase, normalized_skill_text)
 
+    def test_launch_work_guidance_does_not_reference_missing_progress_log_helper(self) -> None:
+        self.build_repo()
+
+        launch_work_paths = [
+            self.root / "catalog" / "skills" / "launch-work" / "SKILL.md",
+            self.root / "plugins" / "claude" / "bento" / "skills" / "launch-work" / "SKILL.md",
+            self.root / "plugins" / "codex" / "bento" / "skills" / "launch-work" / "SKILL.md",
+            self.root
+            / "plugins"
+            / "claude"
+            / "bento"
+            / "skills"
+            / "launch-work"
+            / "references"
+            / "project-hook-skills.md",
+            self.root
+            / "plugins"
+            / "codex"
+            / "bento"
+            / "skills"
+            / "launch-work"
+            / "references"
+            / "project-hook-skills.md",
+        ]
+
+        for path in launch_work_paths:
+            self.assertTrue(path.exists(), path)
+            text = path.read_text(encoding="utf-8")
+            self.assertNotIn("launch-work-log.py", text, path)
+            self.assertNotIn("progress log", text.lower(), path)
+
     def test_workflow_hook_contract_is_documented_without_tool_specific_names(self) -> None:
         self.build_repo()
 
