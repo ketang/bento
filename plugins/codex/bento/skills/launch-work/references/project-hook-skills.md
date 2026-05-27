@@ -59,7 +59,7 @@ A typical hook skill file:
 ## Context
 
 Optional. Describe what state the hook skill assumes (e.g., "linked worktree
-exists; progress log is at worktree-ready").
+exists and pre hook scripts have passed").
 
 ## Body
 
