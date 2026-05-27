@@ -32,10 +32,12 @@ class E2ETestCase(unittest.TestCase):
     """Base class for zolem-backed end-to-end tests.
 
     Subclasses override class variables to configure the zolem backend:
-      BACKEND  — "fixture" (default) or "lorem"
+      PROVIDER   — "anthropic" (default) or "openai"
+      BACKEND    — "fixture" (default) or "lorem"
       FIXTURE_NS — subdirectory name under tests/fixtures/ (None omits -local-fixtures-dir)
     """
 
+    PROVIDER: str = "anthropic"
     BACKEND: str = "fixture"
     FIXTURE_NS: str | None = None
 
@@ -51,14 +53,14 @@ class E2ETestCase(unittest.TestCase):
             "-local-addr",
             "127.0.0.1:0",
             "-local-provider",
-            "anthropic",
+            self.PROVIDER,
             "-local-backend",
             self.BACKEND,
             "-local-calls-file",
             str(self.calls_file),
         ]
         if self.FIXTURE_NS is not None:
-            cmd += ["-local-fixtures-dir", str(FIXTURES_BASE)]
+            cmd += ["-local-fixtures-dir", str(FIXTURES_BASE / self.FIXTURE_NS)]
 
         self.zolem = subprocess.Popen(
             cmd,

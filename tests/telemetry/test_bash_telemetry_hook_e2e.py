@@ -12,7 +12,7 @@ from __future__ import annotations
 import json
 import shutil
 import unittest
-from datetime import date
+from datetime import date, datetime, timezone
 from pathlib import Path
 
 import sys
@@ -39,10 +39,26 @@ class BashTelemetryHookE2ETest(E2ETestCase):
         self.xdg_state.mkdir(parents=True, exist_ok=True)
 
     def _init_repo_with_hook(self) -> Path:
-        """Create a git repo wired with the bash-telemetry PostToolUse hook."""
+        """Create a git repo wired with the bash-telemetry PostToolUse hook.
+
+        The repo is structured as a bento source repository (with
+        .claude-plugin markers) so the auto-allow PreToolUse hook recognises
+        scripts inside it.  Both hooks are wired:
+
+          PreToolUse  → auto-allow.py  (grants permission in --print mode)
+          PostToolUse → record-bash.py (writes the telemetry JSONL record)
+        """
         repo = self._init_repo()
 
-        # Wire the PostToolUse hook for Bash into project settings.
+        auto_allow_script = (
+            REPO_ROOT
+            / "catalog"
+            / "hooks"
+            / "bento"
+            / "claude"
+            / "scripts"
+            / "auto-allow.py"
+        )
         hook_script = (
             REPO_ROOT
             / "catalog"
@@ -52,8 +68,22 @@ class BashTelemetryHookE2ETest(E2ETestCase):
             / "scripts"
             / "record-bash.py"
         )
+
         settings = {
             "hooks": {
+                "PreToolUse": [
+                    {
+                        "matcher": "Bash",
+                        "hooks": [
+                            {
+                                "type": "command",
+                                # auto-allow recognises scripts inside a bento
+                                # source repo (detected via .claude-plugin).
+                                "command": f"python3 {auto_allow_script} bento {repo}",
+                            }
+                        ],
+                    }
+                ],
                 "PostToolUse": [
                     {
                         "matcher": "Bash",
@@ -64,12 +94,23 @@ class BashTelemetryHookE2ETest(E2ETestCase):
                             }
                         ],
                     }
-                ]
+                ],
             }
         }
         (repo / ".claude").mkdir()
         (repo / ".claude" / "settings.json").write_text(
             json.dumps(settings, indent=2) + "\n", encoding="utf-8"
+        )
+
+        # Bento source-repo markers so auto-allow recognises scripts in repo.
+        (repo / ".claude-plugin").mkdir()
+        (repo / ".claude-plugin" / "marketplace.json").write_text(
+            json.dumps({"name": "bento"}) + "\n", encoding="utf-8"
+        )
+        plugin_meta = repo / "plugins" / "claude" / "bento" / ".claude-plugin"
+        plugin_meta.mkdir(parents=True)
+        (plugin_meta / "plugin.json").write_text(
+            json.dumps({"name": "bento"}) + "\n", encoding="utf-8"
         )
 
         # Create a dummy bento-attributed script for the fixture command to
@@ -91,7 +132,8 @@ class BashTelemetryHookE2ETest(E2ETestCase):
         )
 
         # The hook writes to XDG_STATE_HOME/bento/telemetry/<date>.jsonl
-        today = date.today().strftime("%Y-%m-%d")
+        # The hook uses UTC for the file date; use UTC here to match.
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
         jsonl = self.xdg_state / "bento" / "telemetry" / f"{today}.jsonl"
         self.assertTrue(jsonl.exists(), f"telemetry JSONL not found: {jsonl}")
 

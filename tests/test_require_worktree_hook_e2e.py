@@ -97,11 +97,19 @@ class RequireWorktreeHookE2ETest(E2ETestCase):
             msg=f"probe.txt should not have been written on main; "
             f"stdout={result.stdout!r} stderr={result.stderr!r}",
         )
-        combined = result.stderr + result.stdout
+        # In --print mode the hook's block message is captured in the
+        # tool_result sent back to the model rather than printed to
+        # claude's own stdout/stderr.  Verify it appears somewhere in the
+        # raw recorded API traffic (request bodies) instead.
+        raw_calls = (
+            self.calls_file.read_text(encoding="utf-8")
+            if self.calls_file.exists()
+            else ""
+        )
         self.assertIn(
             "Blocked: editing files directly on 'main' is not allowed.",
-            combined,
-            msg=f"expected block message in claude output; got: {combined!r}",
+            raw_calls,
+            msg="expected block message in recorded API calls (tool_result body)",
         )
         self.assertZolemHit()
 
