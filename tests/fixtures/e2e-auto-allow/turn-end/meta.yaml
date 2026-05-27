@@ -1,4 +1,4 @@
-id: e2e-auto-allow-end
+id: turn-end
 provider: anthropic
 version: v1
 status: 200

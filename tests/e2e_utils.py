@@ -2,7 +2,7 @@
 
 Provides an E2ETestCase base class that manages zolem lifecycle (startup,
 port discovery, teardown) and common helpers for git repo initialization
-and claude CLI invocation.
+and claude/codex CLI invocation.
 """
 
 from __future__ import annotations
@@ -32,12 +32,16 @@ class E2ETestCase(unittest.TestCase):
     """Base class for zolem-backed end-to-end tests.
 
     Subclasses override class variables to configure the zolem backend:
-      BACKEND  — "fixture" (default) or "lorem"
-      FIXTURE_NS — subdirectory name under tests/fixtures/ (None omits -local-fixtures-dir)
+      PROVIDER    — "anthropic" (default) or "openai"
+      BACKEND     — "fixture" (default) or "lorem"
+      FIXTURE_NS  — subdirectory name under tests/fixtures/ (None omits -local-fixtures-dir)
+      FIXTURE_DIR — absolute Path to a fixtures dir, overrides FIXTURE_NS when set
     """
 
+    PROVIDER: str = "anthropic"
     BACKEND: str = "fixture"
     FIXTURE_NS: str | None = None
+    FIXTURE_DIR: Path | None = None
 
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
@@ -51,14 +55,16 @@ class E2ETestCase(unittest.TestCase):
             "-local-addr",
             "127.0.0.1:0",
             "-local-provider",
-            "anthropic",
+            self.PROVIDER,
             "-local-backend",
             self.BACKEND,
             "-local-calls-file",
             str(self.calls_file),
         ]
-        if self.FIXTURE_NS is not None:
-            cmd += ["-local-fixtures-dir", str(FIXTURES_BASE)]
+        if self.FIXTURE_DIR is not None:
+            cmd += ["-local-fixtures-dir", str(self.FIXTURE_DIR)]
+        elif self.FIXTURE_NS is not None:
+            cmd += ["-local-fixtures-dir", str(FIXTURES_BASE / self.FIXTURE_NS)]
 
         self.zolem = subprocess.Popen(
             cmd,
@@ -220,4 +226,44 @@ class E2ETestCase(unittest.TestCase):
             text=True,
             check=False,
             timeout=60,
+        )
+
+    def _run_codex(
+        self,
+        repo: Path,
+        prompt: str = "say ok",
+        extra_env: dict | None = None,
+    ) -> subprocess.CompletedProcess[str]:
+        """Invoke ``codex exec`` against the zolem proxy (OpenAI Responses API).
+
+        Uses CODEX_API_KEY to force API-key auth mode so the WS endpoint
+        resolves to ws://127.0.0.1:{port}/v1/responses (zolem's handler).
+
+        approval_policy="on-failure" allows tool calls to run in the sandbox
+        so PostToolUse hooks fire.  --dangerously-bypass-hook-trust bypasses
+        project-trust checks so hooks from installed plugins load regardless
+        of whether the temp repo is in the trusted-projects list.
+        """
+        env = os.environ.copy()
+        env["CODEX_API_KEY"] = "sk-test"
+        # Suppress the ChatGPT login so API-key auth mode is used.
+        env.pop("OPENAI_API_KEY", None)
+        if extra_env:
+            env.update(extra_env)
+        return subprocess.run(
+            [
+                "codex",
+                "-c", f'openai_base_url="http://127.0.0.1:{self.port}/v1"',
+                "-c", 'model="gpt-4o"',
+                "-c", 'approval_policy="on-failure"',
+                "--dangerously-bypass-hook-trust",
+                "exec",
+                prompt,
+            ],
+            cwd=repo,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=90,
         )

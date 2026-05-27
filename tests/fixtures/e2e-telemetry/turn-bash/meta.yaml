@@ -1,4 +1,4 @@
-id: e2e-telemetry-bash
+id: turn-bash
 provider: anthropic
 version: v1
 status: 200
