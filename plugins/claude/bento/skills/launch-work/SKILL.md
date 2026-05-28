@@ -86,16 +86,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 ```
 
 9. Confirm implementation will happen in that linked worktree, not in the
-   primary checkout. Then initialize the progress log:
-
-   ```bash
-   launch-work/scripts/launch-work-log.py init
-   ```
-
-   This creates `<worktree-git-dir>/launch-work/log.md` at checkpoint
-   `worktree-ready`. The log is not committed and does not appear in the
-   working tree.
-9a. Read `launch-work/references/project-hook-scripts.md` and
+   primary checkout. Then read `launch-work/references/project-hook-scripts.md` and
     `launch-work/references/project-hook-skills.md`. Run the **`pre`** hook
     scripts after worktree verification and before dependency installation:
 
@@ -139,7 +130,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     the current or missing behavior. Commit the failing test, then implement
     the change, make the test pass, and run the relevant verification gates.
 
-11a. Run the **`post`** hook scripts before declaring the work ready to land:
+12. Run the **`post`** hook scripts before declaring the work ready to land:
 
     ```bash
     launch-work/scripts/run-lifecycle-extensions.py run-hooks \
@@ -169,7 +160,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     halts,
     preserve branch and linked worktree and surface the message.
 
-12. In the final task summary, include a brief note describing any additions
+13. In the final task summary, include a brief note describing any additions
     or expansions made to the automated test suite. If test coverage did not
     change, say so explicitly.
 
@@ -192,12 +183,6 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
 - If automated coverage is not feasible, state that explicitly and use the
   closest available verification path.
-- Never proceed past a checkpoint without writing the log first.
-- Never edit the log file directly during checkpoint writes; always use
-  `launch-work/scripts/launch-work-log.py update` so the header stays
-  canonical. The log lives under `$GIT_DIR/launch-work/log.md`, not in the
-  working tree, and must never be committed or land on the integration
-  branch.
 - Do not skip discovered hook scripts or hook skills at the `pre` and `post`
   positions. A `75` exit code (hook scripts) or matched `## Stop conditions`
   predicate (hook skills) is a human handoff, not a destructive failure;

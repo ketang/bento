@@ -39,7 +39,7 @@ otherwise.
 | Skill | Position | Fires at | Worktree state |
 |---|---|---|---|
 | launch-work | pre | After worktree verify, before deps install | Linked worktree exists |
-| launch-work | post | After ready-to-land checkpoint, before skill returns | Linked worktree exists |
+| launch-work | post | Before declaring the work ready to land | Linked worktree exists |
 | land-work | pre | Before merge preview/rebase/merge | Feature-branch worktree |
 | land-work | post | After merge succeeds, before skill returns | Feature-branch worktree |
 
