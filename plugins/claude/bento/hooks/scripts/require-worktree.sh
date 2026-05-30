@@ -11,8 +11,9 @@ Usage:
   require-worktree.sh
   require-worktree.sh -h|--help
 
-Allows non-git directories, detached HEAD, non-main branches, and repos with
-.agent-mode.local containing require_worktree=false.
+Allows non-git directories, detached HEAD, non-main branches, repos with
+.agent-mode.local containing require_worktree=false, and Write/Edit calls
+targeting .md or .markdown files.
 USAGE
 }
 
@@ -63,6 +64,23 @@ if [[ -f "$config_file" ]]; then
       exit 0
     fi
   done < "$config_file"
+fi
+
+# Allow Write/Edit targeting .md or .markdown files — these are often
+# legitimate on main (specs, plans, notes) and don't need a feature branch.
+markdown_exempt="$(echo "$payload_raw" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+    tool = d.get('tool_name', '')
+    fp = (d.get('tool_input') or {}).get('file_path', '')
+    if tool in ('Write', 'Edit') and (fp.endswith('.md') or fp.endswith('.markdown')):
+        print('yes')
+except Exception:
+    pass
+" 2>/dev/null || true)"
+if [[ "$markdown_exempt" == "yes" ]]; then
+  exit 0
 fi
 
 cat >&2 <<'MESSAGE'

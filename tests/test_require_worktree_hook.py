@@ -410,5 +410,93 @@ class RequireWorktreeBlockingExitCodeRegressionTest(unittest.TestCase):
         )
 
 
+class RequireWorktreeMarkdownExemptionTest(unittest.TestCase):
+    """Markdown files (.md, .markdown) on main are allowed through without blocking."""
+
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name).resolve()
+        self._hook_cwd_tmp = tempfile.TemporaryDirectory()
+        self.hook_cwd = Path(self._hook_cwd_tmp.name).resolve()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+        self._hook_cwd_tmp.cleanup()
+
+    def _git(self, cwd: Path, *args: str) -> None:
+        subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
+
+    def _init_repo(self, branch: str = "main") -> Path:
+        repo = self.root / "repo"
+        repo.mkdir()
+        self._git(repo, "init", "-q", "-b", branch)
+        self._git(repo, "config", "user.name", "Markdown Exemption Test")
+        self._git(repo, "config", "user.email", "md-test@example.com")
+        (repo / "README.md").write_text("test\n", encoding="utf-8")
+        self._git(repo, "add", "README.md")
+        self._git(repo, "commit", "-q", "-m", "init")
+        return repo
+
+    def _run(self, payload: dict) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(HOOK_SCRIPT)],
+            input=json.dumps(payload) + "\n",
+            cwd=self.hook_cwd,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+    def test_write_md_on_main_is_allowed(self) -> None:
+        repo = self._init_repo()
+        result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {"file_path": "docs/plan.md"}})
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_edit_md_on_main_is_allowed(self) -> None:
+        repo = self._init_repo()
+        result = self._run({"cwd": str(repo), "tool_name": "Edit", "tool_input": {"file_path": "README.md"}})
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_write_markdown_extension_on_main_is_allowed(self) -> None:
+        repo = self._init_repo()
+        result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {"file_path": "notes.markdown"}})
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_write_py_on_main_is_blocked(self) -> None:
+        repo = self._init_repo()
+        result = self._run({"cwd": str(repo), "tool_name": "Write", "tool_input": {"file_path": "foo.py"}})
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+
+    def test_edit_ts_on_main_is_blocked(self) -> None:
+        repo = self._init_repo()
+        result = self._run({"cwd": str(repo), "tool_name": "Edit", "tool_input": {"file_path": "src/index.ts"}})
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+
+    def test_bash_on_main_is_blocked(self) -> None:
+        repo = self._init_repo()
+        result = self._run({"cwd": str(repo), "tool_name": "Bash", "tool_input": {"command": "echo hi"}})
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+
+    def test_write_md_no_audit_log_written(self) -> None:
+        repo = self._init_repo()
+        fake_home = self.root / "home"
+        fake_home.mkdir()
+        env = os.environ.copy()
+        env["HOME"] = str(fake_home)
+        result = subprocess.run(
+            [str(HOOK_SCRIPT)],
+            input=json.dumps({"cwd": str(repo), "tool_name": "Write", "tool_input": {"file_path": "spec.md"}}) + "\n",
+            cwd=self.hook_cwd,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0)
+        log_dir = fake_home / ".claude" / "hooks"
+        logs = list(log_dir.glob("require-worktree-rejections.*.jsonl")) if log_dir.exists() else []
+        self.assertEqual(logs, [], msg="no audit log should be written when markdown write is allowed")
+
+
 if __name__ == "__main__":
     unittest.main()
