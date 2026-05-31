@@ -30,3 +30,9 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
 For exit-code and JSON-decision semantics — what blocks, what allows, and the
 common mistake of using `exit 1` when you meant `exit 2` — see
 [`references/hook-contract.md`](references/hook-contract.md).
+
+## Hook execution environment
+
+For working directory, environment variable inheritance, stdin shape, stdout
+handling, TTY status, and common invalid assumptions — see
+[`references/hook-environment.md`](references/hook-environment.md).
