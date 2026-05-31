@@ -133,3 +133,9 @@ failure and allowed the edit through. Any hook that means to block must exit
   `{"decision": "block"}` shape is still accepted.
 - Does the runtime call your hook with `cwd` in the stdin JSON payload? Read
   it from there, not from `$PWD` — Claude Code spawns hooks from `$HOME`.
+
+## See Also
+
+For working directory, environment variable inheritance, stdin shape, stdout
+handling, TTY status, and common invalid assumptions, see
+[`hook-environment.md`](hook-environment.md).
