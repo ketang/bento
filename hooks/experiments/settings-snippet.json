@@ -1,0 +1,85 @@
+{
+  "_comment": "Paste the relevant block(s) into ~/.claude/settings.json under 'hooks'.",
+  "_comment2": "Replace /PATH/TO/BENTO with your local clone of this repo.",
+  "_comment3": "settings.json is read once at session start — restart Claude after editing.",
+
+  "hooks": {
+    "PostToolUse": [
+      {
+        "_purpose": "probe-env: wire this to test env inheritance, cwd, TTY, process chain",
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "/PATH/TO/BENTO/hooks/experiments/probe-env.sh"
+          }
+        ]
+      }
+    ],
+
+    "PreToolUse": [
+      {
+        "_purpose": "probe-stdin (PreToolUse/Bash): captures the Bash pre-call payload shape",
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROBE_EVENT=PreToolUse_Bash /PATH/TO/BENTO/hooks/experiments/probe-stdin.sh"
+          }
+        ]
+      },
+      {
+        "_purpose": "probe-stdin (PreToolUse/Edit): captures the Edit pre-call payload shape",
+        "matcher": "Edit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROBE_EVENT=PreToolUse_Edit /PATH/TO/BENTO/hooks/experiments/probe-stdin.sh"
+          }
+        ]
+      }
+    ],
+
+    "SessionStart": [
+      {
+        "_purpose": "probe-stdin (SessionStart): captures the session-start payload shape",
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROBE_EVENT=SessionStart /PATH/TO/BENTO/hooks/experiments/probe-stdin.sh"
+          }
+        ]
+      }
+    ],
+
+    "Stop": [
+      {
+        "_purpose": "probe-stdin (Stop): captures the stop payload shape",
+        "matcher": "",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "PROBE_EVENT=Stop /PATH/TO/BENTO/hooks/experiments/probe-stdin.sh"
+          }
+        ]
+      }
+    ]
+  },
+
+  "_stdout_experiments": {
+    "_note": "Run each stdout experiment in isolation — the block mode prevents subsequent hooks.",
+    "PostToolUse_noise": {
+      "matcher": "Bash",
+      "hooks": [{ "type": "command", "command": "MODE=noise /PATH/TO/BENTO/hooks/experiments/probe-stdout.sh" }]
+    },
+    "PostToolUse_json_allow": {
+      "matcher": "Bash",
+      "hooks": [{ "type": "command", "command": "MODE=json_allow /PATH/TO/BENTO/hooks/experiments/probe-stdout.sh" }]
+    },
+    "PreToolUse_stderr_on_block": {
+      "matcher": "Bash",
+      "hooks": [{ "type": "command", "command": "MODE=stderr_on_block /PATH/TO/BENTO/hooks/experiments/probe-stdout.sh" }]
+    }
+  }
+}

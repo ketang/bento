@@ -147,3 +147,4 @@ sandbox. Hooks can make outbound HTTP requests, connect to local sockets
 
 - [`hook-contract.md`](hook-contract.md) — exit codes, JSON decision shapes, blocking vs. non-blocking semantics
 - [`../README.md`](../README.md) — hook layout and platform peer structure
+- [`../experiments/README.md`](../experiments/README.md) — runnable probe scripts with step-by-step reproduction instructions for every claim in this document
