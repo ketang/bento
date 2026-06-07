@@ -144,13 +144,74 @@ land-work/scripts/land-work-clean-log.py --base <primary> --apply
 3. Treat any verification that ran before a rebase, merge, cherry-pick, or
    manual conflict resolution as stale evidence only. It does not authorize a
    landing after the candidate changes.
-4. Review the landing diff for design concerns mechanical checks miss:
-   - Optional capabilities that crash instead of degrading on missing resources.
-   - Committed artifacts diverging from workspace state (see
-     `references/artifact-verification.md` when binary or LFS files are in
-     the diff).
-   - Container build inputs that differ between local and remote platforms.
-   Use `requesting-code-review` for this step if available.
+4. Run an independent code review of the feature diff before merging.
+
+   **Why independent:** the reviewer must see only the code and its stated
+   purpose — not the implementation session's reasoning. A reviewer who
+   absorbed your rationale cannot catch the gaps your rationale missed.
+
+   Compute the feature-only diff base (excludes any primary-branch commits
+   merged in during development):
+
+   ```bash
+   BASE_SHA=$(git merge-base HEAD origin/<primary-branch>)
+   HEAD_SHA=$(git rev-parse HEAD)
+   ```
+
+   **Preferred — built-in review skill:**
+
+   *Claude Code:* invoke the `code-review` skill, targeting the range
+   `$BASE_SHA..$HEAD_SHA`. Prepend a one- or two-sentence purpose statement
+   drawn from the tracker issue title and description — not from your session
+   context.
+
+   *Codex:* use the equivalent built-in review command.
+
+   **Fallback — explicit subagent:**
+
+   If no built-in skill is available, dispatch a subagent with only this
+   prompt — no additional session context:
+
+   ```
+   You are a senior code reviewer examining this change for the first time.
+   Evaluate the code on its own merits; do not ask about implementation
+   rationale.
+
+   Purpose: {one or two sentences from the tracker issue title and description}
+
+   Review the diff:
+     git diff {BASE_SHA}..{HEAD_SHA}
+
+   Criteria, in priority order:
+   1. Correctness — does it do what the purpose states? Edge cases handled?
+   2. Duplication — before concluding a new helper is warranted, search the
+      codebase for existing utilities that already do the same thing. Flag
+      any logic that duplicates something elsewhere.
+   3. Maintainability — clear naming, single responsibility, no unnecessary
+      abstraction, no surprising side effects. Would a reader unfamiliar with
+      this session understand it?
+   4. Safety — error handling at system boundaries, no silent failures?
+   5. Fit — consistent with surrounding code style and conventions?
+
+   For each issue: file:line, what is wrong, why it matters, how to fix it.
+   Categorize as Critical / Important / Minor.
+   Verdict: Ready to merge | Merge with fixes | Do not merge.
+   ```
+
+   **Acting on findings:**
+   - Fix Critical and Important issues before rebasing or merging.
+   - Create tracker follow-up items for Minor issues that are real but
+     non-blocking.
+   - If the reviewer is wrong, push back with technical reasoning — do not
+     silently discard valid findings.
+   - A "Merge with fixes" verdict requires the fixes to be committed before
+     proceeding to the next step.
+
+   Also check design concerns automated tools miss: optional capabilities that
+   crash instead of degrading on missing resources; committed artifacts
+   diverging from workspace state (see `references/artifact-verification.md`
+   when binary or LFS files are in the diff); container build inputs that
+   differ between local and remote platforms.
 5. Rebase onto the preferred primary-branch base reported by the helper, usually
    `origin/<primary-branch>` when available.
    If you are preparing to merge into local `main`, rebase against local
