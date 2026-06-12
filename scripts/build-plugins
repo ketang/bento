@@ -6,6 +6,7 @@ import os
 import shutil
 import struct
 import subprocess
+import sys
 import tempfile
 import zlib
 from pathlib import Path
@@ -828,7 +829,72 @@ def build_repo(run_verification: bool = True) -> None:
         run_verify_commands()
 
 
+def _relative_files(root: Path) -> set[Path]:
+    if not root.exists():
+        return set()
+    return {path.relative_to(root) for path in root.rglob("*") if path.is_file()}
+
+
+def _diff_trees(fresh_root: Path, committed_root: Path, label: str) -> list[str]:
+    """Differences that make *committed_root* diverge from a fresh build."""
+    problems: list[str] = []
+    fresh = _relative_files(fresh_root)
+    committed = _relative_files(committed_root)
+    for rel in sorted(fresh - committed):
+        problems.append(f"missing from {label} (rebuild needed): {rel}")
+    for rel in sorted(committed - fresh):
+        problems.append(f"unexpected hand-added file in {label}: {rel}")
+    for rel in sorted(fresh & committed):
+        if (fresh_root / rel).read_bytes() != (committed_root / rel).read_bytes():
+            problems.append(f"out of date in {label} (rebuild needed): {rel}")
+    return problems
+
+
+def check_repo() -> int:
+    """Build into a temp dir and verify the committed artifacts match it byte-for-byte.
+
+    Enforces the AGENTS.md invariant that generated copies under plugins/ and the
+    generated Claude marketplace manifest are never hand-edited and always match a
+    fresh build of catalog/. Builds into a temp tree (no verification, so it does
+    not recurse into the test suite) and never mutates the working tree.
+    """
+    global PLUGINS_DIR, CLAUDE_MARKETPLACE_FILE
+    committed_plugins = PLUGINS_DIR
+    committed_marketplace = CLAUDE_MARKETPLACE_FILE
+    problems: list[str] = []
+    with tempfile.TemporaryDirectory() as tmp:
+        tmp_root = Path(tmp)
+        PLUGINS_DIR = tmp_root / "plugins"
+        CLAUDE_MARKETPLACE_FILE = tmp_root / ".claude-plugin" / "marketplace.json"
+        try:
+            build_repo(run_verification=False)
+            fresh_plugins = PLUGINS_DIR
+            fresh_marketplace = CLAUDE_MARKETPLACE_FILE
+            problems += _diff_trees(fresh_plugins, committed_plugins, "plugins/")
+            marketplace_label = committed_marketplace.relative_to(ROOT_DIR)
+            if not committed_marketplace.exists():
+                problems.append(f"missing generated file (rebuild needed): {marketplace_label}")
+            elif fresh_marketplace.read_bytes() != committed_marketplace.read_bytes():
+                problems.append(f"out of date (rebuild needed): {marketplace_label}")
+        finally:
+            PLUGINS_DIR = committed_plugins
+            CLAUDE_MARKETPLACE_FILE = committed_marketplace
+    if problems:
+        print(
+            "build-plugins --check: committed artifacts do not match a fresh build:",
+            file=sys.stderr,
+        )
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        print("Run scripts/build-plugins to regenerate.", file=sys.stderr)
+        return 1
+    print("build-plugins --check: committed plugins/ and marketplace match a fresh build.")
+    return 0
+
+
 def main() -> None:
+    if "--check" in sys.argv[1:]:
+        raise SystemExit(check_repo())
     run_verification = os.environ.get("BENTO_SKIP_VERIFY") != "1"
     build_repo(run_verification=run_verification)
 
