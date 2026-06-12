@@ -166,6 +166,28 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertIn("merge preview has conflicts", payload["errors"])
         self.assertIn("README.md", payload["conflicting_paths"])
 
+    def test_preview_cleans_up_worktree_on_conflict(self) -> None:
+        (self.repo / "README.md").write_text("main branch\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "main edit")
+
+        (self.worktree / "README.md").write_text("feature branch\n", encoding="utf-8")
+        git(self.worktree, "add", "README.md")
+        git(self.worktree, "commit", "-m", "feature edit")
+
+        preview_dir = Path(self.temp_dir.name) / "preview-conflict-cleanup"
+        result = self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        # A failed preview must not leave its scratch worktree behind: neither
+        # registered with git nor on disk. Otherwise /tmp/land-work-preview-*
+        # dirs accumulate after every conflicting landing attempt (bento-gd2).
+        self.assertFalse(payload["merge_clean"])
+        self.assertTrue(payload["preview_cleaned_up"])
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertNotIn(str(preview_dir.resolve()), registered)
+        self.assertFalse(preview_dir.exists())
+
     def test_lease_check_matches_expected_sha(self) -> None:
         expected_sha = git(self.repo, "rev-parse", "refs/heads/main").stdout.strip()
 
