@@ -174,7 +174,7 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
 
         self.assertTrue(payload["updated"])
         self.assertTrue(payload["merged"])
-        self.assertTrue(payload["rebased"])
+        self.assertNotIn("rebased", payload)
 
         state = self.read_state(base_worktree)
         self.assertEqual(state["status"], "ready_for_task")
@@ -210,7 +210,7 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
 
         self.assertTrue(payload["updated"])
         self.assertFalse(payload["merged"])
-        self.assertFalse(payload["rebased"])
+        self.assertNotIn("rebased", payload)
 
         state = self.read_state(base_worktree)
         self.assertEqual(state["status"], "ready_for_task")
