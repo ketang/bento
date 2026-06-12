@@ -12,7 +12,8 @@ installable plugin bundles from them.
 - `catalog/skills/` contains the canonical source material
 - `plugins/` contains generated installable artifacts
 - `.claude-plugin/marketplace.json` contains generated Claude marketplace metadata
-- `.agents/plugins/marketplace.json` contains generated Codex marketplace metadata
+- the Codex marketplace manifest is not a checked-in artifact; it is produced at
+  install time by `install/_codex-installer-lib.sh`
 - `hooks/` contains related automation scripts, but hook wiring is external
 
 ## Issue tracking
@@ -87,7 +88,6 @@ Be careful in:
 
 - `plugins/` because contents are generated
 - `.claude-plugin/marketplace.json` because it is generated
-- `.agents/plugins/marketplace.json` because it is generated
 
 ## Version Management
 

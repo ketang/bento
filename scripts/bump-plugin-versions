@@ -14,7 +14,6 @@ VERSIONS_FILE = ROOT_DIR / "catalog" / "plugin-versions.json"
 BUILD_PLUGINS_SCRIPT = ROOT_DIR / "scripts" / "build-plugins"
 IGNORED_PATHS = {
     ".claude-plugin/marketplace.json",
-    ".agents/plugins/marketplace.json",
     "catalog/plugin-versions.json",
 }
 IGNORED_PREFIXES = (

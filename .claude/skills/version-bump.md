@@ -84,7 +84,7 @@ Apply these judgment criteria to the diff:
 2. If bumps were applied, run `scripts/build-plugins` to regenerate artifacts.
 3. Commit the version bump and regenerated files together:
    ```
-   git add catalog/plugin-versions.json plugins/ .claude-plugin/marketplace.json .agents/plugins/marketplace.json
+   git add catalog/plugin-versions.json plugins/ .claude-plugin/marketplace.json
    git commit -m "chore: bump plugin versions for <brief description of changes>"
    ```
 
