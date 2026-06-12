@@ -653,6 +653,47 @@ class BuildPluginsTest(unittest.TestCase):
         codex_path = self.root / "plugins" / "codex" / "bento" / "skills" / "dev-skill"
         self.assertFalse(codex_path.exists(), "dev-skill must not appear in codex bento plugin")
 
+    def test_check_mode_passes_when_committed_tree_matches_fresh_build(self) -> None:
+        with self.maybe_skip_assets(enabled=False):
+            self.module.build_repo(run_verification=False)
+            self.assertEqual(self.module.check_repo(), 0)
+
+    def test_check_mode_detects_hand_edited_generated_file(self) -> None:
+        with self.maybe_skip_assets(enabled=False):
+            self.module.build_repo(run_verification=False)
+            target = next((self.root / "plugins").rglob("SKILL.md"))
+            target.write_text(
+                target.read_text(encoding="utf-8") + "\nhand edit\n", encoding="utf-8"
+            )
+            self.assertEqual(self.module.check_repo(), 1)
+
+    def test_check_mode_detects_unexpected_committed_file(self) -> None:
+        with self.maybe_skip_assets(enabled=False):
+            self.module.build_repo(run_verification=False)
+            stray = self.root / "plugins" / "claude" / "bento" / "stray.txt"
+            stray.write_text("not generated\n", encoding="utf-8")
+            self.assertEqual(self.module.check_repo(), 1)
+
+
+class BuildPluginsCheckCLITest(unittest.TestCase):
+    """End-to-end: the committed plugins/ tree in this repo must already match a
+    fresh build, enforcing the no-hand-edit invariant on every test run."""
+
+    def test_committed_plugins_match_fresh_build(self) -> None:
+        result = subprocess.run(
+            [str(SCRIPT), "--check"],
+            cwd=REPO_ROOT,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            result.returncode,
+            0,
+            "scripts/build-plugins --check reported drift between the committed "
+            "plugins/ tree and a fresh build of catalog/. Run scripts/build-plugins "
+            f"to regenerate.\nstdout:\n{result.stdout}\nstderr:\n{result.stderr}",
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
