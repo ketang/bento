@@ -5,6 +5,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -78,6 +79,26 @@ class SessionStartTest(unittest.TestCase):
         self.module.run({"session_id": "a/b"}, home=self.home, tmp=self.tmp)
         self.assertFalse((self.home / ".claude" / "session_id").exists())
 
+    def test_rejects_all_dot_session_ids(self) -> None:
+        for bad in (".", "..", "..."):
+            self.module.run({"session_id": bad}, home=self.home, tmp=self.tmp)
+            self.assertFalse(
+                (self.home / ".claude" / "session_id").exists(),
+                f"all-dot session id {bad!r} must be rejected",
+            )
+            self.assertFalse((self.tmp / f"claude-session-{bad}").exists())
+
+    def test_prune_skips_symlinks(self) -> None:
+        target = self.root / "target"
+        target.mkdir()
+        old_time = time.time() - 30 * 86400
+        os.utime(target, (old_time, old_time))
+        link = self.tmp / "claude-session-link"
+        link.symlink_to(target)
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertTrue(link.is_symlink(), "symlink scratch entry must be skipped")
+        self.assertTrue(target.is_dir(), "symlink target must not be removed")
+
     def test_prunes_stale_scratch_dirs(self) -> None:
         stale = self.tmp / "claude-session-old"
         stale.mkdir()
@@ -101,23 +122,14 @@ class SessionStartTest(unittest.TestCase):
         self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
         self.assertTrue(unrelated.is_dir(), "non-scratch dirs must not be pruned")
 
-    def test_default_path_honors_home_and_tmpdir_env(self) -> None:
-        # Exercise run() with no dependency injection: it must resolve HOME via
-        # Path.home() and the scratch root via tempfile.gettempdir() (TMPDIR).
-        env = {"HOME": str(self.home), "TMPDIR": str(self.tmp)}
-        old = {k: os.environ.get(k) for k in env}
-        os.environ.update(env)
-        # tempfile caches the resolved tmpdir; clear it so TMPDIR takes effect.
-        tempfile.tempdir = None
-        try:
+    def test_default_path_resolves_home_and_tmpdir(self) -> None:
+        # Exercise run() with no dependency injection: the home arg falls
+        # through to Path.home() and the scratch root to tempfile.gettempdir().
+        # Patch those resolvers (rather than mutating the tempfile.tempdir
+        # global) so the default branches run without touching the real home.
+        with mock.patch.object(self.module.Path, "home", return_value=self.home), \
+                mock.patch.object(self.module.tempfile, "gettempdir", return_value=str(self.tmp)):
             self.module.run({"session_id": "envcheck"})
-        finally:
-            tempfile.tempdir = None
-            for k, v in old.items():
-                if v is None:
-                    os.environ.pop(k, None)
-                else:
-                    os.environ[k] = v
         self.assertEqual(
             (self.home / ".claude" / "session_id").read_text(encoding="utf-8").strip(),
             "envcheck",

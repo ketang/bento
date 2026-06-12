@@ -33,7 +33,9 @@ def _prune_stale_scratch(scratch_root: Path, now: float, max_age_days: int) -> N
         if not entry.name.startswith(SCRATCH_PREFIX):
             continue
         try:
-            if not entry.is_dir():
+            # Skip symlinks: rmtree refuses them anyway, and following one
+            # would judge staleness by an unrelated target's mtime.
+            if entry.is_symlink() or not entry.is_dir():
                 continue
             if entry.stat().st_mtime >= cutoff:
                 continue
@@ -50,7 +52,9 @@ def run(
     max_age_days: int = SCRATCH_MAX_AGE_DAYS,
 ) -> None:
     session_id = hook_input.get("session_id", "")
-    if not session_id or not SESSION_ID_RE.match(session_id):
+    # Reject empty, disallowed characters, and all-dot ids ("." / ".." /
+    # "...") which are special path components rather than real session ids.
+    if not session_id or not SESSION_ID_RE.match(session_id) or set(session_id) <= {"."}:
         return
 
     base = home or Path.home()
