@@ -115,32 +115,8 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
     agent runtime. Read each listed file in order and apply. If a hook script
     exits non-zero or a `## Stop conditions` predicate matches, halt; the merge
     has not started.
-2b. **Legacy migration only** — current launch-work stores the progress log
-    under `$GIT_DIR/launch-work/log.md`, which never enters the working tree
-    and never lands. If the working tree still carries a tracked
-    `.launch-work/log.md` (a branch started before the move), run the
-    log-cleanup pass before rebasing or verifying:
-
-    - Verify the log's `checkpoint` is `ready-to-land`. If it is not, stop
-      and ask the user — the work is not actually ready, or the agent forgot
-      to update the log.
-    - Preview the cleanup:
-
-```bash
-land-work/scripts/land-work-clean-log.py --base <primary>
-```
-
-    - Apply the cleanup:
-
-```bash
-land-work/scripts/land-work-clean-log.py --base <primary> --apply
-```
-
-    - On rebase conflict (a non-log commit also touched the log file), retry
-      with `--apply --keep-commits` to accept the log-only commits as clutter
-      and proceed; the deletion commit still runs.
-    - The rebase rewrites local history. The next steps assume the rewritten
-      branch.
+2b. If a tracked `.launch-work/log.md` exists on the branch, remove it in a
+    normal commit before review.
 3. Treat any verification that ran before a rebase, merge, cherry-pick, or
    manual conflict resolution as stale evidence only. It does not authorize a
    landing after the candidate changes.
