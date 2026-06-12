@@ -7,7 +7,7 @@ REPO_REF="${BENTO_REPO_REF:-main}"
 ARCHIVE_URL="${BENTO_ARCHIVE_URL:-https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_REF}}"
 
 # Populated after the archive is extracted, from the build-generated
-# plugins/codex/plugin-names.txt manifest. See load_plugin_names below.
+# plugins/codex/plugin-names.txt manifest (see the mapfile read below).
 PLUGIN_NAMES=()
 INSTALL_SCOPE="${BENTO_INSTALL_SCOPE:?BENTO_INSTALL_SCOPE must be set to home or project}"
 INSTALL_ROOT="${BENTO_INSTALL_ROOT:?BENTO_INSTALL_ROOT must be set}"
@@ -87,9 +87,12 @@ for plugin in "${PLUGIN_NAMES[@]}"; do
   dest="${PLUGIN_ROOT}/${plugin}"
   staging="${PLUGIN_ROOT}/.${plugin}.tmp"
 
+  # The manifest lists exactly the built codex plugin dirs, so a missing
+  # source dir means the archive is corrupt or partial, not that the plugin
+  # lacks Codex content. Fail loudly rather than silently skipping.
   if [[ ! -d "${src}" ]]; then
-    # Plugin has no Codex-compatible content; skip silently.
-    continue
+    echo "missing Codex plugin source dir for ${plugin}: ${src}" >&2
+    exit 1
   fi
 
   if [[ ! -f "${src}/.codex-plugin/plugin.json" ]]; then
