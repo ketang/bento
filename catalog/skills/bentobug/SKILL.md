@@ -83,9 +83,31 @@ and tell them this is not a bento bug.
    - `context` — one short paragraph naming the recent bento command,
      skill, or artifact that surfaced the bug, when known.
 4. Emit the report block in chat as a fenced markdown section so the user
-   can confirm it before any persistence step ships.
-5. Tell the user persistence ships in a follow-up (the report writer); for
-   now the captured block is the artifact.
+   can confirm it before it is persisted.
+5. After the user confirms the block, persist it by invoking the report
+   writer, mapping each block field to a flag:
+
+   ```bash
+   scripts/bentobug-report.py \
+     --note "<note>" \
+     --target "<target>" \
+     --target-resolution <explicit|inferred> \
+     --cwd "<cwd>" \
+     --branch "<branch>" \
+     --worktree "<worktree>" \
+     --context "<context>"
+   ```
+
+   - `--note` (required) and `--target` (required) carry the verbatim note
+     and the resolved component.
+   - `--target-resolution` is `explicit` when the user named the target and
+     `inferred` when resolved from context; it defaults to `explicit`.
+   - Omit `--cwd`, `--branch`, `--worktree`, and `--context` when the value
+     is unknown; pass `--candidate <name>` once per considered component
+     when disambiguation was needed.
+
+   The writer prints the record `id` and `path` as JSON; report the saved
+   path to the user.
 
 ## Telemetry Independence
 
