@@ -1,6 +1,6 @@
 {
   "name": "intent-stories",
-  "version": "1.0.2",
+  "version": "1.0.3",
   "description": "Durable intent story documentation and fidelity auditing skills for coding agents",
   "author": {
     "name": "Ketan Gangatirkar",
