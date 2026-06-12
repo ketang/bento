@@ -219,7 +219,9 @@ land-work/scripts/land-work-create-preview.py --base-ref <sha>
 land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 ```
 
-   - abort if the lease changed
+   - abort if the lease changed — and before stopping, remove the preview
+     worktree (the cleanup command below); an aborted landing must not leave
+     its scratch worktree registered
    - commit and push only if the lease still matches
    - verify the landed primary-branch ref still matches the verified preview:
 
@@ -227,13 +229,20 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
 land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
 ```
 
-   - remove the preview worktree once verification has succeeded; the
-     directory is a registered git worktree and accumulates under `/tmp`
-     otherwise:
+   - **Always** remove the preview worktree once you are done with it, on every
+     exit path — verified landing, aborted lease, or any error after the
+     preview was created. It is a registered git worktree and otherwise
+     accumulates under `/tmp` until a manual closure sweep removes it:
 
 ```bash
 land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-dir>
 ```
+
+     `land-work-create-preview.py` already removes its own worktree when the
+     preview itself fails (merge conflict or error), reporting
+     `"preview_cleaned_up": true`. The explicit cleanup above covers the
+     success and abort paths, which the helper cannot clean for you because
+     you still need the preview to verify the landing.
 8a. Run the **`post`** hook scripts in **advisory mode** (the merge has
     already succeeded; abort cannot reverse it):
 
@@ -308,6 +317,9 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 - Do not merge if the leased primary-branch ref moved after verification.
 - Do not land from a dirty feature-branch checkout.
 - Do not delete a merged feature branch before removing its linked worktree.
+- Do not leave a land-work preview/scratch worktree behind. Remove it on every
+  exit path — verified landing, aborted lease, or error after creation — so no
+  `/tmp/land-work-preview-*` worktree stays registered or on disk.
 - Do not change the repository's configured Git transport just because auth
   fails.
 - Do not bypass exact-candidate verification after manual conflict resolution.
@@ -330,6 +342,7 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 | "The issue is functionally done, so I can close it before merging." | Tracker closure advertises landed availability to dependent work. Closing before verified landing can make downstream agents claim work against code that is not on the integration branch. |
 | "The diff is simple; I can skip the preview/exact-candidate checks." | Simplicity does not prove candidate identity. Preview, lease, and landing verification protect against stale bases, helper mismatch, generated artifacts, and accidental local-only state. |
 | "Closure will clean up my just-landed branch." | The landing agent owns direct post-merge cleanup: leave the feature worktree, remove that worktree, then delete the merged branch. Closure is only a fallback for stale or ambiguous leftovers. |
+| "The landing is done; the preview worktree under /tmp is harmless to leave." | Preview worktrees are registered git worktrees, not loose temp files. Left behind, they accumulate across landings and make every later `git worktree` probe slower or crash-prone. Remove the preview on every exit path; closure is not your janitor for worktrees you created this run. |
 
 ## Tracker Handoff
 
