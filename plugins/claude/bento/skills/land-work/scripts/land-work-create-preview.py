@@ -91,6 +91,7 @@ def main() -> int:
     conflicting_paths: list[str] = []
     preview_tree = None
     merge_clean = False
+    preview_cleaned_up = False
 
     if working_tree_dirty(checkout_root):
         errors.append("working tree is dirty")
@@ -103,8 +104,10 @@ def main() -> int:
     feature_sha = rev_parse(feature_ref, checkout_root) if not errors else None
 
     if not errors:
+        worktree_added = False
         try:
             git("worktree", "add", "--detach", str(preview_dir), base_sha, cwd=checkout_root)
+            worktree_added = True
             merge_result = git("merge", "--no-ff", "--no-commit", feature_sha, cwd=preview_dir, check=False)
             merge_clean = merge_result.returncode == 0
             if merge_clean:
@@ -128,6 +131,17 @@ def main() -> int:
         except subprocess.CalledProcessError as exc:
             errors.append(exc.stderr.strip() or str(exc))
 
+        # A preview that did not yield a usable candidate must not leave its
+        # scratch worktree behind. Otherwise every conflicting or interrupted
+        # landing attempt leaks a /tmp/land-work-preview-* worktree that only a
+        # later manual closure sweep removes (bento-gd2). Gate on `errors` (not
+        # `merge_clean`) so this also covers a post-merge failure such as
+        # write-tree raising after a clean merge; cleanup runs on every failure
+        # path while the caller still owns removing a successful preview.
+        if worktree_added and errors:
+            preview_cleaned_up, cleanup_errors = cleanup_preview(preview_dir, checkout_root)
+            errors.extend(cleanup_errors)
+
     payload = {
         "cwd": str(cwd),
         "checkout_root": str(checkout_root),
@@ -141,6 +155,7 @@ def main() -> int:
         "preview_dir": str(preview_dir),
         "preview_tree": preview_tree,
         "merge_clean": merge_clean,
+        "preview_cleaned_up": preview_cleaned_up,
         "conflicting_paths": conflicting_paths,
         "ok": not errors,
         "warnings": warnings,

@@ -448,6 +448,24 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertNotIn("land-work-clean-log.py", text, path)
             self.assertNotIn("$GIT_DIR/launch-work/log.md", text, path)
 
+    def test_land_work_guidance_requires_preview_worktree_cleanup(self) -> None:
+        self.build_repo()
+
+        land_work_paths = [
+            self.root / "catalog" / "skills" / "land-work" / "SKILL.md",
+            self.root / "plugins" / "claude" / "bento" / "skills" / "land-work" / "SKILL.md",
+            self.root / "plugins" / "codex" / "bento" / "skills" / "land-work" / "SKILL.md",
+        ]
+
+        for path in land_work_paths:
+            self.assertTrue(path.exists(), path)
+            normalized = re.sub(r"\s+", " ", path.read_text(encoding="utf-8"))
+            # Mandatory, every-exit-path cleanup of the preview worktree so
+            # /tmp/land-work-preview-* dirs do not accumulate (bento-gd2).
+            self.assertIn("--cleanup --preview-dir", normalized, path)
+            self.assertIn("on every exit path", normalized, path)
+            self.assertIn("/tmp/land-work-preview-*", normalized, path)
+
     def test_workflow_hook_contract_is_documented_without_tool_specific_names(self) -> None:
         self.build_repo()
 
