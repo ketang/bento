@@ -17,6 +17,7 @@ CATALOG_DIR = ROOT_DIR / "catalog" / "skills"
 HOOKS_CATALOG_DIR = ROOT_DIR / "catalog" / "hooks"
 PLUGINS_DIR = ROOT_DIR / "plugins"
 CLAUDE_MARKETPLACE_FILE = ROOT_DIR / ".claude-plugin" / "marketplace.json"
+CODEX_PLUGIN_NAMES_FILE = PLUGINS_DIR / "codex" / "plugin-names.txt"
 OWNER_NAME = "Ketan Gangatirkar"
 OWNER_EMAIL = "ketan@gangatirkar.com"
 OWNER_URL = "https://github.com/ketang"
@@ -763,6 +764,16 @@ def build_plugin(plugin: str, platform: str) -> bool:
     return True
 
 
+def write_codex_plugin_names(plugin_names: list[str]) -> None:
+    """Emit the manifest the Codex installer reads to learn which plugin
+    bundles to install. One plugin name per line, in build order, derived from
+    the codex plugin dirs that were actually materialized."""
+    CODEX_PLUGIN_NAMES_FILE.parent.mkdir(parents=True, exist_ok=True)
+    CODEX_PLUGIN_NAMES_FILE.write_text(
+        "".join(f"{name}\n" for name in plugin_names), encoding="utf-8"
+    )
+
+
 def write_claude_marketplace() -> None:
     local_entries = [
         {
@@ -821,10 +832,14 @@ def run_verify_commands() -> None:
 
 def build_repo(run_verification: bool = True) -> None:
     prune_generated_plugin_dirs()
+    built_codex: list[str] = []
     for plugin in PLUGIN_ORDER:
         for platform in PLATFORMS:
-            build_plugin(plugin, platform)
+            built = build_plugin(plugin, platform)
+            if built and platform == "codex":
+                built_codex.append(plugin)
     write_claude_marketplace()
+    write_codex_plugin_names(built_codex)
     if run_verification:
         run_verify_commands()
 

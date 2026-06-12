@@ -6,7 +6,9 @@ REPO_NAME="${BENTO_REPO_NAME:-bento}"
 REPO_REF="${BENTO_REPO_REF:-main}"
 ARCHIVE_URL="${BENTO_ARCHIVE_URL:-https://codeload.github.com/${REPO_OWNER}/${REPO_NAME}/tar.gz/refs/heads/${REPO_REF}}"
 
-PLUGIN_NAMES=("bento" "trackers" "stacks")
+# Populated after the archive is extracted, from the build-generated
+# plugins/codex/plugin-names.txt manifest. See load_plugin_names below.
+PLUGIN_NAMES=()
 INSTALL_SCOPE="${BENTO_INSTALL_SCOPE:?BENTO_INSTALL_SCOPE must be set to home or project}"
 INSTALL_ROOT="${BENTO_INSTALL_ROOT:?BENTO_INSTALL_ROOT must be set}"
 PLUGIN_ROOT="${BENTO_PLUGIN_ROOT:?BENTO_PLUGIN_ROOT must be set}"
@@ -64,6 +66,17 @@ tar -xzf "$archive_path" -C "$extract_dir"
 repo_root="$(find "$extract_dir" -mindepth 1 -maxdepth 1 -type d | head -n 1)"
 if [[ -z "${repo_root}" ]]; then
   echo "unable to locate extracted repository root" >&2
+  exit 1
+fi
+
+plugin_names_manifest="${repo_root}/plugins/codex/plugin-names.txt"
+if [[ ! -f "${plugin_names_manifest}" ]]; then
+  echo "missing Codex plugin manifest: ${plugin_names_manifest}" >&2
+  exit 1
+fi
+mapfile -t PLUGIN_NAMES < <(grep -v '^[[:space:]]*$' "${plugin_names_manifest}")
+if [[ "${#PLUGIN_NAMES[@]}" -eq 0 ]]; then
+  echo "Codex plugin manifest is empty: ${plugin_names_manifest}" >&2
   exit 1
 fi
 
@@ -163,7 +176,7 @@ if [[ -f "$MARKETPLACE_PATH" ]]; then
   log "backed up existing marketplace to ${backup_path}"
 fi
 
-python3 - "$repo_root" "$MARKETPLACE_PATH" "$PLUGIN_ROOT" <<'PY'
+python3 - "$repo_root" "$MARKETPLACE_PATH" "$PLUGIN_ROOT" "${PLUGIN_NAMES[@]}" <<'PY'
 import json
 import os
 import sys
@@ -173,7 +186,7 @@ repo_root = Path(sys.argv[1])
 target_path = Path(sys.argv[2])
 plugin_root = Path(sys.argv[3])
 
-local_names = ("bento", "trackers", "stacks")
+local_names = tuple(sys.argv[4:])
 bento_names = set(local_names)
 
 def local_source_path(name: str) -> str:

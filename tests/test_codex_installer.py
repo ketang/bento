@@ -39,7 +39,7 @@ class CodexInstallerTest(unittest.TestCase):
         actual_sources = {
             entry["name"]: entry["source"]["path"]
             for entry in marketplace["plugins"]
-            if entry.get("name") in {"bento", "trackers", "stacks", "bugshot"}
+            if entry.get("name") in {"bento", "trackers", "stacks", "intent-stories", "bugshot"}
         }
 
         self.assertEqual(
@@ -48,9 +48,14 @@ class CodexInstallerTest(unittest.TestCase):
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
                 "stacks": "./../../plugins/stacks",
+                "intent-stories": "./../../plugins/intent-stories",
             },
         )
         self.assertEqual((plugin_root / "bento" / "README.txt").read_text(encoding="utf-8"), "bento\n")
+        self.assertEqual(
+            (plugin_root / "intent-stories" / "README.txt").read_text(encoding="utf-8"),
+            "intent-stories\n",
+        )
         self.assertFalse((plugin_root / "bugshot").exists())
         bento_cache_versions = list((codex_cache_root / "bento").iterdir())
         self.assertEqual(len(bento_cache_versions), 1)
@@ -73,7 +78,7 @@ class CodexInstallerTest(unittest.TestCase):
         actual_sources = {
             entry["name"]: entry["source"]["path"]
             for entry in marketplace["plugins"]
-            if entry.get("name") in {"bento", "trackers", "stacks", "bugshot"}
+            if entry.get("name") in {"bento", "trackers", "stacks", "intent-stories", "bugshot"}
         }
 
         self.assertEqual(
@@ -82,11 +87,13 @@ class CodexInstallerTest(unittest.TestCase):
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
                 "stacks": "./../../plugins/stacks",
+                "intent-stories": "./../../plugins/intent-stories",
             },
         )
         self.assertFalse((plugin_root / "bugshot").exists())
         self.assertTrue((plugin_root / "trackers" / ".codex-plugin" / "plugin.json").exists())
         self.assertTrue((plugin_root / "stacks" / ".codex-plugin" / "plugin.json").exists())
+        self.assertTrue((plugin_root / "intent-stories" / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse(codex_cache_root.exists())
         self.assertFalse(codex_config_path.exists())
 
@@ -175,6 +182,32 @@ class CodexInstallerTest(unittest.TestCase):
         self.assertEqual(len(bento_cache_versions), 1)
         self.assertTrue((bento_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
 
+    def test_installer_manifest_matches_built_codex_plugin_dirs(self) -> None:
+        # The installer derives its plugin list from plugins/codex/plugin-names.txt.
+        # That manifest must list exactly the built codex plugin dirs, so a newly
+        # built plugin can never become silently uninstallable.
+        codex_root = REPO_ROOT / "plugins" / "codex"
+        manifest_path = codex_root / "plugin-names.txt"
+        self.assertTrue(
+            manifest_path.exists(),
+            "scripts/build-plugins must emit plugins/codex/plugin-names.txt",
+        )
+        manifest_names = sorted(
+            line.strip()
+            for line in manifest_path.read_text(encoding="utf-8").splitlines()
+            if line.strip()
+        )
+        built_dirs = sorted(
+            entry.name
+            for entry in codex_root.iterdir()
+            if entry.is_dir() and (entry / ".codex-plugin" / "plugin.json").exists()
+        )
+        self.assertEqual(
+            manifest_names,
+            built_dirs,
+            "Codex installer manifest must list exactly the built codex plugin dirs",
+        )
+
     def run_installer(
         self,
         scope: str,
@@ -249,10 +282,14 @@ class CodexInstallerTest(unittest.TestCase):
 
     def _write_main_archive(self) -> None:
         source_root = self.root / "source" / "bento-main"
+        # intent-stories is the 4th bundle: under the old hardcoded 3-plugin
+        # list it was silently uninstallable, so its presence here guards the
+        # manifest-driven fix against regressing to a fixed-length list.
         plugin_defs = {
             "bento": "Coding",
             "trackers": "Productivity",
             "stacks": "Coding",
+            "intent-stories": "Productivity",
         }
         for name, category in plugin_defs.items():
             plugin_dir = source_root / "plugins" / "codex" / name
@@ -273,6 +310,11 @@ class CodexInstallerTest(unittest.TestCase):
                 )
                 handoff_template.parent.mkdir(parents=True, exist_ok=True)
                 handoff_template.write_text("BUNDLED\n", encoding="utf-8")
+
+        manifest_path = source_root / "plugins" / "codex" / "plugin-names.txt"
+        manifest_path.write_text(
+            "".join(f"{name}\n" for name in plugin_defs), encoding="utf-8"
+        )
 
         self._make_archive(source_root, self.main_archive)
 
