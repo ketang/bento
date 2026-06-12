@@ -47,8 +47,12 @@ Parse the JSON output. Use it as the deterministic base layer:
 
 - `scope` — every file you will read, with its tier, bytes, lines, and
   `tokens_char4` count.
-- `dead_references` — missing paths and missing commands, already
-  classified. Every one is a delete candidate.
+- `dead_references` — references that did not resolve, already classified
+  by `kind`. Entries with `kind: path` are delete candidates. Entries with
+  `kind: command` carry `advisory: true`: command resolution is
+  environment-dependent (a tool may exist in CI or another machine but not
+  the current PATH), so verify before deleting — do not treat them as
+  automatic deletions.
 - `duplicate_blocks` — paragraphs appearing in 2+ files. Every one is a
   merge or delete candidate.
 - `orphans` — nested `CLAUDE.md` files not referenced from anywhere
