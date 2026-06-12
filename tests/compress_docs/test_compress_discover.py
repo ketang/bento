@@ -117,6 +117,24 @@ class CompressDiscoverTest(unittest.TestCase):
         tier_2_paths = [entry["path"] for entry in data["scope"] if entry["tier"] == 2]
         self.assertEqual(tier_2_paths, [])
 
+    def test_tier_2_follows_at_includes_within_repo(self) -> None:
+        write(self.repo / "CLAUDE.md", "Project rules.\n@docs/imported.md\n")
+        write(self.repo / "docs/imported.md", "Imported. @deep/extra.md\n")
+        write(self.repo / "docs/deep/extra.md", "Chained from an @-include.\n")
+
+        data = self.run_helper()
+
+        tier_2_paths = sorted(
+            entry["path"] for entry in data["scope"] if entry["tier"] == 2
+        )
+        self.assertEqual(
+            tier_2_paths,
+            sorted(
+                str((self.repo / rel).resolve())
+                for rel in ["docs/imported.md", "docs/deep/extra.md"]
+            ),
+        )
+
     def test_tier_3_uses_user_claude_md_from_home(self) -> None:
         fake_home = Path(self.temp_dir.name) / "home"
         (fake_home / ".claude").mkdir(parents=True)
@@ -125,7 +143,25 @@ class CompressDiscoverTest(unittest.TestCase):
         data = self.run_helper(env_overrides={"HOME": str(fake_home)})
 
         tier_3_paths = [entry["path"] for entry in data["scope"] if entry["tier"] == 3]
-        self.assertEqual(tier_3_paths, [str(fake_home / ".claude/CLAUDE.md")])
+        self.assertEqual(
+            tier_3_paths, [str((fake_home / ".claude/CLAUDE.md").resolve())]
+        )
+
+    def test_tier_3_follows_at_includes_outside_repo(self) -> None:
+        fake_home = Path(self.temp_dir.name) / "home"
+        (fake_home / ".claude").mkdir(parents=True)
+        # The user-global file imports a chained file that lives outside the
+        # repository root (a common dotfiles layout).
+        write(fake_home / ".claude/CLAUDE.md", "# global\n@../codex/AGENTS.md\n")
+        write(fake_home / "codex/AGENTS.md", "# shared agent guidance\n")
+
+        data = self.run_helper(env_overrides={"HOME": str(fake_home)})
+
+        tier_3_paths = sorted(
+            entry["path"] for entry in data["scope"] if entry["tier"] == 3
+        )
+        self.assertIn(str((fake_home / ".claude/CLAUDE.md").resolve()), tier_3_paths)
+        self.assertIn(str((fake_home / "codex/AGENTS.md").resolve()), tier_3_paths)
 
     def test_tier_4_reads_memory_files_under_project_slug(self) -> None:
         fake_home = Path(self.temp_dir.name) / "home"
@@ -155,13 +191,12 @@ class CompressDiscoverTest(unittest.TestCase):
         self.assertNotIn(3, tiers)
         self.assertNotIn(4, tiers)
 
-    def test_dead_references_flags_missing_paths_and_commands(self) -> None:
+    def test_dead_references_flags_missing_paths(self) -> None:
         write(
             self.repo / "CLAUDE.md",
             (
                 "Run `scripts/old-tool.sh` to verify.\n"
                 "Also `scripts/build-plugins` is fine.\n"
-                "Use `definitely-not-a-command` for deploys.\n"
                 "See [missing](docs/missing.md) and [present](docs/present.md).\n"
             ),
         )
@@ -171,20 +206,56 @@ class CompressDiscoverTest(unittest.TestCase):
 
         data = self.run_helper()
 
-        missing_refs = {
+        missing_paths = {
             entry["reference"]
             for entry in data["dead_references"]
-            if entry["resolution"] == "missing"
+            if entry["kind"] == "path" and entry["resolution"] == "missing"
         }
-        self.assertIn("scripts/old-tool.sh", missing_refs)
-        self.assertIn("docs/missing.md", missing_refs)
-        self.assertIn("definitely-not-a-command", missing_refs)
-        self.assertNotIn("scripts/build-plugins", missing_refs)
-        self.assertNotIn("docs/present.md", missing_refs)
+        self.assertIn("scripts/old-tool.sh", missing_paths)
+        self.assertIn("docs/missing.md", missing_paths)
+        self.assertNotIn("scripts/build-plugins", missing_paths)
+        self.assertNotIn("docs/present.md", missing_paths)
         for entry in data["dead_references"]:
             self.assertIn("source", entry)
             self.assertIn("line", entry)
             self.assertIn("kind", entry)
+
+    def test_plain_backticked_words_are_not_dead_references(self) -> None:
+        # Plain prose in backticks — flags, reason codes, single words — must
+        # never be classified as commands and reported as delete candidates.
+        write(
+            self.repo / "CLAUDE.md",
+            (
+                "Set the `verbose` flag and pass `--dry-run`.\n"
+                "Reason codes like `noqa` and `E501` are fine.\n"
+                "The `plan mode default` applies to non-trivial work.\n"
+            ),
+        )
+
+        data = self.run_helper()
+
+        refs = {entry["reference"] for entry in data["dead_references"]}
+        self.assertNotIn("verbose", refs)
+        self.assertNotIn("--dry-run", refs)
+        self.assertNotIn("noqa", refs)
+        self.assertNotIn("E501", refs)
+
+    def test_missing_command_invocation_is_advisory(self) -> None:
+        # A backticked invocation (launcher-led or multi-token) whose command
+        # is not resolvable is reported, but marked advisory — not a hard
+        # delete candidate like a missing path.
+        write(self.repo / "CLAUDE.md", "Run `old-tool deploy` to ship.\n")
+
+        data = self.run_helper()
+
+        command_entries = [
+            entry
+            for entry in data["dead_references"]
+            if entry["reference"].split()[0] == "old-tool"
+        ]
+        self.assertEqual(len(command_entries), 1)
+        self.assertEqual(command_entries[0]["kind"], "command")
+        self.assertTrue(command_entries[0].get("advisory"))
 
     def test_duplicate_blocks_flag_identical_paragraphs_across_files(self) -> None:
         shared = (
@@ -245,7 +316,7 @@ class CompressDiscoverTest(unittest.TestCase):
         (fake_home / ".claude").mkdir(parents=True)
         write(
             fake_home / ".claude/CLAUDE.md",
-            "# global\nRun `missing-binary` before work.\n",
+            "# global\nRun `missing-binary now` before work.\n",
         )
         write(
             self.repo / "CLAUDE.md",
@@ -275,7 +346,12 @@ class CompressDiscoverTest(unittest.TestCase):
         self.assertEqual(tiers, {1, 2, 3})
         dead_refs = {e["reference"] for e in data["dead_references"]}
         self.assertIn("scripts/ghost.sh", dead_refs)
-        self.assertIn("missing-binary", dead_refs)
+        dead_command_first_tokens = {
+            e["reference"].split()[0]
+            for e in data["dead_references"]
+            if e["kind"] == "command"
+        }
+        self.assertIn("missing-binary", dead_command_first_tokens)
         self.assertEqual(len(data["duplicate_blocks"]), 1)
         self.assertGreater(data["token_baseline"]["total"], 0)
         self.assertIn("1", data["token_baseline"]["per_tier"])
