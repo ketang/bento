@@ -76,8 +76,10 @@ The root script `scripts/build-plugins` regenerates:
 - each plugin's Claude and Codex manifests
 - generated Codex-facing plugin assets
 - `.claude-plugin/marketplace.json`
-- `.agents/plugins/marketplace.json`
 - then runs the repository's `unittest` suite as required verification
+
+The Codex marketplace manifest is not regenerated here; it is produced at
+install time by `install/_codex-installer-lib.sh`.
 
 Do not hand-edit generated plugin directories or the generated marketplace
 manifest.
