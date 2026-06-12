@@ -416,6 +416,70 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertEqual(len(stale), 1)
         self.assertEqual(stale[0]["branch"], start["target_branch"])
 
+    def test_close_task_aborts_rebase_and_leaves_worktrees_clean_on_conflict(self) -> None:
+        # Two parallel tasks edit the same file. Closing the first advances the
+        # base; closing the second conflicts when rebasing onto the new base tip.
+        # The failure must abort the rebase so no worktree is left mid-conflict.
+        _, base_worktree = self.bootstrap_expedition()
+        start_a = json.loads(
+            self.run_start(
+                "--expedition", "alpha-expedition", "--slug", "task-a", "--apply",
+                cwd=base_worktree,
+            ).stdout
+        )
+        start_b = json.loads(
+            self.run_start(
+                "--expedition", "alpha-expedition", "--slug", "task-b", "--apply",
+                cwd=base_worktree,
+            ).stdout
+        )
+        a_worktree = Path(start_a["target_worktree"])
+        b_worktree = Path(start_b["target_worktree"])
+
+        write(a_worktree / "shared.txt", "from task A\n")
+        git(a_worktree, "add", "shared.txt")
+        git(a_worktree, "commit", "-m", "task A edits shared")
+
+        write(b_worktree / "shared.txt", "from task B\n")
+        git(b_worktree, "add", "shared.txt")
+        git(b_worktree, "commit", "-m", "task B edits shared")
+
+        self.run_close(
+            "--expedition", "alpha-expedition", "--branch", start_a["target_branch"],
+            "--outcome", "kept", "--summary", "A", "--apply",
+            cwd=base_worktree,
+        )
+
+        result = self.run_close(
+            "--expedition", "alpha-expedition", "--branch", start_b["target_branch"],
+            "--outcome", "kept", "--summary", "B", "--apply",
+            cwd=base_worktree, check=False,
+        )
+
+        # Structured failure payload.
+        self.assertNotEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["updated"])
+        self.assertFalse(payload["merged"])
+        self.assertTrue(payload["errors"])
+
+        # The conflicted task worktree must be clean — no rebase in progress.
+        status_b = run(["git", "status", "--porcelain"], b_worktree).stdout
+        self.assertEqual(status_b, "")
+        no_rebase = run(["git", "rebase", "--abort"], b_worktree, check=False)
+        self.assertNotEqual(no_rebase.returncode, 0, "a rebase was left in progress")
+
+        # The base worktree must be clean so a retry passes its is_clean gate.
+        status_base = run(["git", "status", "--porcelain"], base_worktree).stdout
+        self.assertEqual(status_base, "")
+
+        # The lease is released and task B remains active for a later retry.
+        state = self.read_state(base_worktree)
+        self.assertIsNone(state["landing_lease"])
+        active = [item["branch"] for item in state["active_branches"]]
+        self.assertIn(start_b["target_branch"], active)
+
 
 if __name__ == "__main__":
     unittest.main()
