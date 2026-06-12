@@ -41,12 +41,20 @@ class EnsureWorktreePermissionsHookTest(unittest.TestCase):
             return {}
         return json.loads(path.read_text(encoding="utf-8"))
 
-    def _run(self, *, cwd: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def _run(
+        self,
+        *,
+        cwd: Path | None = None,
+        payload_cwd: Path | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["HOME"] = str(self.fake_home)
+        payload: dict = {"session_id": "abc"}
+        if payload_cwd is not None:
+            payload["cwd"] = str(payload_cwd)
         return subprocess.run(
             [str(HOOK_SCRIPT)],
-            input=json.dumps({"session_id": "abc"}),
+            input=json.dumps(payload),
             env=env,
             capture_output=True,
             text=True,
@@ -114,6 +122,30 @@ class EnsureWorktreePermissionsHookTest(unittest.TestCase):
             env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"},
         )
         result = self._run(cwd=repo)
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        dirs = self._list_dirs()
+        self.assertIn(str(observed_root), dirs)
+        self.assertIn(self.default_root, dirs)
+
+    def test_observes_worktrees_from_payload_cwd_when_process_cwd_is_neutral(self) -> None:
+        # Models the real Claude Code spawn environment: the hook process runs
+        # from a neutral non-git directory (production spawns from $HOME) while
+        # the project directory arrives only via the stdin payload's `cwd` field.
+        repo = self.tmp_path / "repo"
+        repo.mkdir()
+        subprocess.run(["git", "init", "-q", str(repo)], check=True)
+        subprocess.run(["git", "-C", str(repo), "commit", "--allow-empty", "-m", "init", "--no-gpg-sign"], check=True, env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"})
+        observed_root = self.tmp_path / "elsewhere"
+        observed_root.mkdir()
+        worktree_path = observed_root / "feature"
+        subprocess.run(
+            ["git", "-C", str(repo), "worktree", "add", "-b", "feature", str(worktree_path)],
+            check=True,
+            env={**os.environ, "GIT_AUTHOR_NAME": "t", "GIT_AUTHOR_EMAIL": "t@e", "GIT_COMMITTER_NAME": "t", "GIT_COMMITTER_EMAIL": "t@e"},
+        )
+        neutral = self.tmp_path / "neutral"
+        neutral.mkdir()
+        result = self._run(cwd=neutral, payload_cwd=repo)
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         dirs = self._list_dirs()
         self.assertIn(str(observed_root), dirs)

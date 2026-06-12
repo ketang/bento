@@ -117,13 +117,35 @@ def _atomic_write_json(path: Path, data: dict) -> None:
         raise
 
 
+def _payload_cwd() -> Path | None:
+    """Read the project directory from the stdin JSON payload's `cwd` field.
+
+    Claude Code spawns hook processes from $HOME, so the process CWD is never
+    the project root; the project directory arrives only in the payload. Return
+    None when stdin is absent, malformed, or lacks a usable `cwd`."""
+    try:
+        raw = sys.stdin.read()
+    except Exception:
+        return None
+    if not raw or not raw.strip():
+        return None
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict):
+        return None
+    cwd = payload.get("cwd")
+    if not isinstance(cwd, str) or not cwd:
+        return None
+    return Path(cwd)
+
+
 def main() -> int:
     try:
-        # Drain stdin so the hook protocol is satisfied even if we ignore it.
-        try:
-            sys.stdin.read()
-        except Exception:
-            pass
+        # Read the project directory from the payload; this also drains stdin so
+        # the hook protocol is satisfied.
+        payload_cwd = _payload_cwd()
 
         settings_path = _settings_path()
         settings = _load_settings(settings_path)
@@ -134,10 +156,14 @@ def main() -> int:
         default_root = str((home / DEFAULT_WORKTREE_ROOT_REL).resolve())
 
         candidates: list[str] = [default_root]
-        try:
-            cwd = Path.cwd()
-        except OSError:
-            cwd = None
+        # Prefer the payload cwd (the real project dir); fall back to the
+        # process cwd only when the payload lacks one.
+        cwd = payload_cwd
+        if cwd is None:
+            try:
+                cwd = Path.cwd()
+            except OSError:
+                cwd = None
         if cwd is not None:
             for parent in _git_worktree_parents(cwd):
                 if parent not in candidates:
