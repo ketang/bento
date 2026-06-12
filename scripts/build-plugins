@@ -763,6 +763,20 @@ def build_plugin(plugin: str, platform: str) -> bool:
     return True
 
 
+def write_codex_plugin_names(plugin_names: list[str]) -> None:
+    """Emit the manifest the Codex installer reads to learn which plugin
+    bundles to install. One plugin name per line, in build order, derived from
+    the codex plugin dirs that were actually materialized.
+
+    The path is resolved from the live ``PLUGINS_DIR`` (not a module constant)
+    so ``check_repo`` can redirect the whole build into a temp tree."""
+    manifest = PLUGINS_DIR / "codex" / "plugin-names.txt"
+    manifest.parent.mkdir(parents=True, exist_ok=True)
+    manifest.write_text(
+        "".join(f"{name}\n" for name in plugin_names), encoding="utf-8"
+    )
+
+
 def write_claude_marketplace() -> None:
     local_entries = [
         {
@@ -821,10 +835,14 @@ def run_verify_commands() -> None:
 
 def build_repo(run_verification: bool = True) -> None:
     prune_generated_plugin_dirs()
+    built_codex: list[str] = []
     for plugin in PLUGIN_ORDER:
         for platform in PLATFORMS:
-            build_plugin(plugin, platform)
+            built = build_plugin(plugin, platform)
+            if built and platform == "codex":
+                built_codex.append(plugin)
     write_claude_marketplace()
+    write_codex_plugin_names(built_codex)
     if run_verification:
         run_verify_commands()
 
