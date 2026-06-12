@@ -134,10 +134,11 @@ def main() -> int:
         # A preview that did not yield a usable candidate must not leave its
         # scratch worktree behind. Otherwise every conflicting or interrupted
         # landing attempt leaks a /tmp/land-work-preview-* worktree that only a
-        # later manual closure sweep removes (bento-gd2). Cleanup is scoped to
-        # the failure path so the caller still owns removing a successful
-        # preview after verification.
-        if worktree_added and not merge_clean:
+        # later manual closure sweep removes (bento-gd2). Gate on `errors` (not
+        # `merge_clean`) so this also covers a post-merge failure such as
+        # write-tree raising after a clean merge; cleanup runs on every failure
+        # path while the caller still owns removing a successful preview.
+        if worktree_added and errors:
             preview_cleaned_up, cleanup_errors = cleanup_preview(preview_dir, checkout_root)
             errors.extend(cleanup_errors)
 
