@@ -1,6 +1,8 @@
 import importlib.machinery
 import importlib.util
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -65,6 +67,62 @@ class SessionStartTest(unittest.TestCase):
         self.module.run({"session_id": "abc123"}, home=self.home, tmp=self.tmp)
         self.module.run({"session_id": "abc123"}, home=self.home, tmp=self.tmp)
         self.assertTrue((self.tmp / "claude-session-abc123").is_dir())
+
+    def test_rejects_session_id_with_path_separators(self) -> None:
+        self.module.run({"session_id": "../escape"}, home=self.home, tmp=self.tmp)
+        self.assertFalse((self.home / ".claude" / "session_id").exists())
+        # Nothing should be created outside the scratch root.
+        self.assertFalse((self.root / "escape").exists())
+
+    def test_rejects_session_id_with_slash(self) -> None:
+        self.module.run({"session_id": "a/b"}, home=self.home, tmp=self.tmp)
+        self.assertFalse((self.home / ".claude" / "session_id").exists())
+
+    def test_prunes_stale_scratch_dirs(self) -> None:
+        stale = self.tmp / "claude-session-old"
+        stale.mkdir()
+        old_time = time.time() - 8 * 86400
+        os.utime(stale, (old_time, old_time))
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertFalse(stale.exists(), "stale scratch dir was not pruned")
+        self.assertTrue((self.tmp / "claude-session-fresh").is_dir())
+
+    def test_keeps_recent_scratch_dirs(self) -> None:
+        recent = self.tmp / "claude-session-recent"
+        recent.mkdir()
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertTrue(recent.is_dir(), "recent scratch dir should be kept")
+
+    def test_prune_ignores_unrelated_dirs(self) -> None:
+        unrelated = self.tmp / "some-other-dir"
+        unrelated.mkdir()
+        old_time = time.time() - 30 * 86400
+        os.utime(unrelated, (old_time, old_time))
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertTrue(unrelated.is_dir(), "non-scratch dirs must not be pruned")
+
+    def test_default_path_honors_home_and_tmpdir_env(self) -> None:
+        # Exercise run() with no dependency injection: it must resolve HOME via
+        # Path.home() and the scratch root via tempfile.gettempdir() (TMPDIR).
+        env = {"HOME": str(self.home), "TMPDIR": str(self.tmp)}
+        old = {k: os.environ.get(k) for k in env}
+        os.environ.update(env)
+        # tempfile caches the resolved tmpdir; clear it so TMPDIR takes effect.
+        tempfile.tempdir = None
+        try:
+            self.module.run({"session_id": "envcheck"})
+        finally:
+            tempfile.tempdir = None
+            for k, v in old.items():
+                if v is None:
+                    os.environ.pop(k, None)
+                else:
+                    os.environ[k] = v
+        self.assertEqual(
+            (self.home / ".claude" / "session_id").read_text(encoding="utf-8").strip(),
+            "envcheck",
+        )
+        self.assertTrue((self.tmp / "claude-session-envcheck").is_dir())
 
 
 if __name__ == "__main__":
