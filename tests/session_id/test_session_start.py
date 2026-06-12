@@ -1,8 +1,11 @@
 import importlib.machinery
 import importlib.util
+import os
 import tempfile
+import time
 import unittest
 from pathlib import Path
+from unittest import mock
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -65,6 +68,73 @@ class SessionStartTest(unittest.TestCase):
         self.module.run({"session_id": "abc123"}, home=self.home, tmp=self.tmp)
         self.module.run({"session_id": "abc123"}, home=self.home, tmp=self.tmp)
         self.assertTrue((self.tmp / "claude-session-abc123").is_dir())
+
+    def test_rejects_session_id_with_path_separators(self) -> None:
+        self.module.run({"session_id": "../escape"}, home=self.home, tmp=self.tmp)
+        self.assertFalse((self.home / ".claude" / "session_id").exists())
+        # Nothing should be created outside the scratch root.
+        self.assertFalse((self.root / "escape").exists())
+
+    def test_rejects_session_id_with_slash(self) -> None:
+        self.module.run({"session_id": "a/b"}, home=self.home, tmp=self.tmp)
+        self.assertFalse((self.home / ".claude" / "session_id").exists())
+
+    def test_rejects_all_dot_session_ids(self) -> None:
+        for bad in (".", "..", "..."):
+            self.module.run({"session_id": bad}, home=self.home, tmp=self.tmp)
+            self.assertFalse(
+                (self.home / ".claude" / "session_id").exists(),
+                f"all-dot session id {bad!r} must be rejected",
+            )
+            self.assertFalse((self.tmp / f"claude-session-{bad}").exists())
+
+    def test_prune_skips_symlinks(self) -> None:
+        target = self.root / "target"
+        target.mkdir()
+        old_time = time.time() - 30 * 86400
+        os.utime(target, (old_time, old_time))
+        link = self.tmp / "claude-session-link"
+        link.symlink_to(target)
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertTrue(link.is_symlink(), "symlink scratch entry must be skipped")
+        self.assertTrue(target.is_dir(), "symlink target must not be removed")
+
+    def test_prunes_stale_scratch_dirs(self) -> None:
+        stale = self.tmp / "claude-session-old"
+        stale.mkdir()
+        old_time = time.time() - 8 * 86400
+        os.utime(stale, (old_time, old_time))
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertFalse(stale.exists(), "stale scratch dir was not pruned")
+        self.assertTrue((self.tmp / "claude-session-fresh").is_dir())
+
+    def test_keeps_recent_scratch_dirs(self) -> None:
+        recent = self.tmp / "claude-session-recent"
+        recent.mkdir()
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertTrue(recent.is_dir(), "recent scratch dir should be kept")
+
+    def test_prune_ignores_unrelated_dirs(self) -> None:
+        unrelated = self.tmp / "some-other-dir"
+        unrelated.mkdir()
+        old_time = time.time() - 30 * 86400
+        os.utime(unrelated, (old_time, old_time))
+        self.module.run({"session_id": "fresh"}, home=self.home, tmp=self.tmp)
+        self.assertTrue(unrelated.is_dir(), "non-scratch dirs must not be pruned")
+
+    def test_default_path_resolves_home_and_tmpdir(self) -> None:
+        # Exercise run() with no dependency injection: the home arg falls
+        # through to Path.home() and the scratch root to tempfile.gettempdir().
+        # Patch those resolvers (rather than mutating the tempfile.tempdir
+        # global) so the default branches run without touching the real home.
+        with mock.patch.object(self.module.Path, "home", return_value=self.home), \
+                mock.patch.object(self.module.tempfile, "gettempdir", return_value=str(self.tmp)):
+            self.module.run({"session_id": "envcheck"})
+        self.assertEqual(
+            (self.home / ".claude" / "session_id").read_text(encoding="utf-8").strip(),
+            "envcheck",
+        )
+        self.assertTrue((self.tmp / "claude-session-envcheck").is_dir())
 
 
 if __name__ == "__main__":
