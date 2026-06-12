@@ -1,6 +1,7 @@
 import contextlib
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import re
@@ -665,14 +666,24 @@ class BuildPluginsTest(unittest.TestCase):
             target.write_text(
                 target.read_text(encoding="utf-8") + "\nhand edit\n", encoding="utf-8"
             )
-            self.assertEqual(self.module.check_repo(), 1)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = self.module.check_repo()
+        self.assertEqual(rc, 1)
+        self.assertIn("out of date", stderr.getvalue())
+        self.assertIn(target.name, stderr.getvalue())
 
     def test_check_mode_detects_unexpected_committed_file(self) -> None:
         with self.maybe_skip_assets(enabled=False):
             self.module.build_repo(run_verification=False)
             stray = self.root / "plugins" / "claude" / "bento" / "stray.txt"
             stray.write_text("not generated\n", encoding="utf-8")
-            self.assertEqual(self.module.check_repo(), 1)
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = self.module.check_repo()
+        self.assertEqual(rc, 1)
+        self.assertIn("unexpected hand-added", stderr.getvalue())
+        self.assertIn("stray.txt", stderr.getvalue())
 
 
 class BuildPluginsCheckCLITest(unittest.TestCase):
