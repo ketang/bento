@@ -1,18 +1,13 @@
 import json
-import subprocess
 import tempfile
 import unittest
 from pathlib import Path
 
-from tests.script_test_utils import git, write
+from tests.script_test_utils import git, run, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "catalog/skills/swarm/scripts/swarm-post-land.py"
-
-
-def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
 
 
 class SwarmPostLandTest(unittest.TestCase):

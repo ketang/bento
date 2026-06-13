@@ -27,15 +27,13 @@ from __future__ import annotations
 
 import json
 import shutil
-import sys
 import unittest
 from datetime import datetime, timezone
 from pathlib import Path
 
-REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "tests"))
+from tests.e2e_utils import E2ETestCase, _have
 
-from e2e_utils import E2ETestCase, _have  # noqa: E402
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 RECORD_BASH_SCRIPT = (

@@ -7,6 +7,8 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.script_test_utils import git, load_module, write
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "catalog/skills/generate-audit/scripts/audit-discover.py"
@@ -14,15 +16,6 @@ SCRIPT = REPO_ROOT / "catalog/skills/generate-audit/scripts/audit-discover.py"
 
 def run(cmd: list[str], cwd: Path, check: bool = True, env: dict | None = None) -> subprocess.CompletedProcess[str]:
     return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True, env=env)
-
-
-def git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return run(["git", *args], cwd, check=check)
-
-
-def write(path: Path, content: str) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(content, encoding="utf-8")
 
 
 class AuditDiscoverTest(unittest.TestCase):
@@ -457,6 +450,68 @@ class AuditDiscoverTest(unittest.TestCase):
 
         signals = payload["static_analysis"]["language_signals"]["Go"]["concurrency_signals"]
         self.assertEqual(signals, [])
+
+
+class DemoWalkthroughSignalsTest(unittest.TestCase):
+    def test_demo_walkthrough_signals_detect_demo_surfaces(self) -> None:
+        module = load_module(SCRIPT)
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            package_json = {
+                "packageManager": "pnpm@10.0.0",
+                "scripts": {
+                    "demo": "playwright test demo.spec.ts",
+                    "demo:headed": "playwright test --headed demo.spec.ts",
+                },
+            }
+            rel_files = [
+                "package.json",
+                "Makefile",
+                "scripts/demo.sh",
+                "tests/demo.spec.ts",
+                ".demo-warnings.jsonl",
+                ".bugshot/baseline/manifest.json",
+                "tmp/demo/screenshots/01-home.png",
+                "docs/demo-walkthrough.md",
+            ]
+            (root / "package.json").write_text(json.dumps(package_json), encoding="utf-8")
+
+            signals = module.demo_walkthrough_signals(
+                root,
+                rel_files,
+                package_json,
+                {"demo": ["make demo"]},
+            )
+
+        self.assertEqual(
+            signals["commands"],
+            ["make demo", "pnpm run demo", "pnpm run demo:headed"],
+        )
+        self.assertEqual(signals["scripts"], ["scripts/demo.sh"])
+        self.assertEqual(signals["playwright_files"], ["tests/demo.spec.ts"])
+        self.assertEqual(signals["warning_queues"], [".demo-warnings.jsonl"])
+        self.assertEqual(signals["bugshot_paths"], [".bugshot/baseline/manifest.json"])
+        self.assertEqual(signals["docs"], ["docs/demo-walkthrough.md"])
+
+    def test_demo_walkthrough_signals_avoid_skill_and_packaging_false_positives(self) -> None:
+        module = load_module(SCRIPT)
+        signals = module.demo_walkthrough_signals(
+            Path("/repo"),
+            [
+                "catalog/skills/generate-web-demo/SKILL.md",
+                "catalog/skills/generate-web-demo/assets/playwright-controller/controller.js",
+                "plugins/claude/bento/assets/screenshot-1.png",
+                "docs/specs/2026-04-26-bugshot-standalone-plugin-design.md",
+            ],
+            None,
+            {"demo": []},
+        )
+
+        self.assertEqual(signals["commands"], [])
+        self.assertEqual(signals["playwright_files"], [])
+        self.assertEqual(signals["screenshot_paths"], [])
+        self.assertEqual(signals["bugshot_paths"], [])
+        self.assertEqual(signals["docs"], [])
 
 
 if __name__ == "__main__":

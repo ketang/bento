@@ -1,23 +1,15 @@
-import importlib.machinery
-import importlib.util
 import os
 import tempfile
 import unittest
 from pathlib import Path
+
+from tests.script_test_utils import load_module
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "catalog" / "hooks" / "bento" / "claude" / "scripts" / "auto-allow.py"
 
 PLUGIN_NAME = "bento"
-
-
-def load_module():
-    loader = importlib.machinery.SourceFileLoader("auto_allow", str(SCRIPT))
-    spec = importlib.util.spec_from_loader("auto_allow", loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
 
 
 class DecideTest(unittest.TestCase):
@@ -28,7 +20,7 @@ class DecideTest(unittest.TestCase):
         self.script = self.root / "skills" / "foo" / "scripts" / "foo.py"
         self.script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
         self.script.chmod(0o755)
-        self.module = load_module()
+        self.module = load_module(SCRIPT)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -261,7 +253,7 @@ class SourceRepoContainmentTest(unittest.TestCase):
         self.script = scripts_dir / "foo.py"
         self.script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
         self.script.chmod(0o755)
-        self.module = load_module()
+        self.module = load_module(SCRIPT)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -304,7 +296,7 @@ class RunMainTest(unittest.TestCase):
         self.script = self.root / "scripts" / "tool.py"
         self.script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
         self.script.chmod(0o755)
-        self.module = load_module()
+        self.module = load_module(SCRIPT)
 
     def tearDown(self) -> None:
         self.temp.cleanup()

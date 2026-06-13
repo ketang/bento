@@ -4,18 +4,12 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.script_test_utils import git, run
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 TRIAGE_SCRIPT = REPO_ROOT / "catalog/skills/swarm/scripts/swarm-triage.py"
 VERIFY_SCRIPT = REPO_ROOT / "catalog/skills/swarm/scripts/swarm-worktree-verify.py"
-
-
-def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
-
-
-def git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return run(["git", *args], cwd, check=check)
 
 
 class SwarmTriageTest(unittest.TestCase):

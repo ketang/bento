@@ -15,12 +15,9 @@ import unittest
 from datetime import date, datetime, timezone
 from pathlib import Path
 
-import sys
+from tests.e2e_utils import E2ETestCase, _have
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-sys.path.insert(0, str(REPO_ROOT / "tests"))
-
-from e2e_utils import E2ETestCase, _have  # noqa: E402
 
 
 @unittest.skipUnless(
