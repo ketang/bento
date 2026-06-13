@@ -133,6 +133,6 @@ This skill does not:
 - persist state across runs.
 
 Filing findings as tracker issues is a separate workflow: feed the
-report through `bento:issue-completeness-precheck` and then the
+report through `bento:issue-readiness-check` and then the
 appropriate tracker flow skill (`bento:beads-issue-flow` or
 `bento:github-issue-flow`).

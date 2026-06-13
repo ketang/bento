@@ -25,4 +25,5 @@ selection for repositories that deliberately land into the true integration
 branch instead of maintaining a separate local primary branch.
 
 Do not use this overlay for cleanup or sync-only repos; those cases belong to
-the primary-branch sync guidance in `references/primary-branch-sync.md`.
+the primary-branch sync guidance in
+`../../closure/references/primary-branch-sync.md`.
