@@ -343,6 +343,7 @@ def cmd_close_task(args: argparse.Namespace) -> int:
         return _emit({**result, "updated": False, "merged": False}, 1)
 
     merged = False
+    rebased = False
     updated = False
     if args.apply:
         active_list = list(state.get("active_branches") or [])
@@ -365,24 +366,31 @@ def cmd_close_task(args: argparse.Namespace) -> int:
                 cwd=target_worktree_path, check=False,
             )
             if rebase_task.returncode != 0:
+                # Abort so the task worktree is not left mid-rebase; otherwise
+                # the next close-task fails its is_clean gate on that worktree.
+                git("rebase", "--abort", cwd=target_worktree_path, check=False)
                 state["landing_lease"] = None
                 write_state(state_file, state)
                 commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed rebase for {target['branch']}")
                 payload = {
-                    **result, "updated": False, "merged": False,
+                    **result, "ok": False, "updated": False, "merged": False, "rebased": False,
                     "errors": [f"failed to rebase {target['branch']} onto {state['base_branch']}: {rebase_task.stderr.strip()}"],
                 }
                 return _emit(payload, rebase_task.returncode)
+            rebased = True
 
             merge_result = git(
                 "merge", "--no-ff", task_branch, "-m", f"Merge branch '{task_branch}'",
                 cwd=cwd, check=False,
             )
             if merge_result.returncode != 0:
+                # Abort so the base worktree is not left with conflict markers /
+                # MERGE_HEAD; the next close-task's is_clean gate depends on it.
+                git("merge", "--abort", cwd=cwd, check=False)
                 state["landing_lease"] = None
                 write_state(state_file, state)
                 commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed merge for {target['branch']}")
-                payload = {**result, "updated": False, "merged": False, "errors": [merge_result.stderr.strip()]}
+                payload = {**result, "ok": False, "updated": False, "merged": False, "rebased": rebased, "errors": [merge_result.stderr.strip()]}
                 return _emit(payload, merge_result.returncode)
             merged = True
 
@@ -422,7 +430,7 @@ def cmd_close_task(args: argparse.Namespace) -> int:
         commit_expedition_docs(cwd, str(state["expedition"]), f"log(expedition): close {target['branch']} ({args.outcome})")
         updated = True
 
-    return _emit({**result, "updated": updated, "merged": merged})
+    return _emit({**result, "updated": updated, "merged": merged, "rebased": rebased})
 
 
 def cmd_finish(args: argparse.Namespace) -> int:

@@ -88,7 +88,7 @@ the following subcommands:
 - `expedition/scripts/expedition.py verify --expedition <name>`
   - verify that the current checkout matches the expedition base worktree or
     the currently active task worktree
-- `expedition/scripts/expedition.py close-task --expedition <name> [--branch <name>] --outcome kept|failed-experiment`
+- `expedition/scripts/expedition.py close-task --expedition <name> [--branch <name>] --outcome kept|failed-experiment --summary <text>`
   - for kept branches: acquire the landing lease, rebase the branch onto the current base tip, merge into the base, release the lease; for failed experiments: preserve the branch and release the lease
 - `expedition/scripts/expedition.py finish --expedition <name>`
   - verify that the expedition is ready for final landing and remove the
