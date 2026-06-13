@@ -4,20 +4,14 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from tests.script_test_utils import git, run
+
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 PREPARE_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-prepare.py"
 PREVIEW_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-create-preview.py"
 LEASE_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-verify-lease.py"
 VERIFY_LANDING_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-verify-landing.py"
-
-
-def run(cmd: list[str], cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return subprocess.run(cmd, cwd=cwd, check=check, capture_output=True, text=True)
-
-
-def git(cwd: Path, *args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
-    return run(["git", *args], cwd, check=check)
 
 
 class LandWorkScriptsTest(unittest.TestCase):

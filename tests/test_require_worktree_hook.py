@@ -323,8 +323,17 @@ class RequireWorktreeHookAuditTest(unittest.TestCase):
         )
 
     def _today_log(self) -> Path:
+        # Glob for the rejection log instead of recomputing today's date after
+        # the hook already ran: a midnight rollover between the hook's write
+        # and this call would otherwise resolve to the wrong filename.
+        hooks_dir = self.fake_home / ".claude" / "hooks"
+        matches = sorted(hooks_dir.glob("require-worktree-rejections.*.jsonl"))
+        if matches:
+            return matches[0]
+        # No log was written; return today's path so `.exists()` is False and
+        # failure messages still name a plausible file.
         date_str = datetime.date.today().isoformat()
-        return self.fake_home / ".claude" / "hooks" / f"require-worktree-rejections.{date_str}.jsonl"
+        return hooks_dir / f"require-worktree-rejections.{date_str}.jsonl"
 
     def test_audit_log_written_on_rejection(self) -> None:
         repo = self._init_repo()

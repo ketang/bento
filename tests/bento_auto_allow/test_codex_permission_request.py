@@ -1,10 +1,10 @@
-import importlib.machinery
-import importlib.util
 import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+
+from tests.script_test_utils import load_module
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,14 +21,6 @@ SCRIPT = (
 PLUGIN_NAME = "bento"
 
 
-def load_module():
-    loader = importlib.machinery.SourceFileLoader("codex_permission_request", str(SCRIPT))
-    spec = importlib.util.spec_from_loader("codex_permission_request", loader)
-    module = importlib.util.module_from_spec(spec)
-    loader.exec_module(module)
-    return module
-
-
 class CodexPermissionRequestTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -37,7 +29,7 @@ class CodexPermissionRequestTest(unittest.TestCase):
         self.script = self.root / "skills" / "foo" / "scripts" / "foo.py"
         self.script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
         self.script.chmod(0o755)
-        self.module = load_module()
+        self.module = load_module(SCRIPT)
 
     def tearDown(self) -> None:
         self.temp.cleanup()
@@ -94,7 +86,7 @@ class CodexSourceRepoContainmentTest(unittest.TestCase):
         self.script = scripts_dir / "foo.py"
         self.script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
         self.script.chmod(0o755)
-        self.module = load_module()
+        self.module = load_module(SCRIPT)
 
     def tearDown(self) -> None:
         self.temp.cleanup()

@@ -110,10 +110,11 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertGreater(asset.stat().st_size, 0)
 
         claude_marketplace = json.loads((self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
-        self.assertEqual(claude_marketplace["plugins"][1]["name"], "trackers")
-        self.assertEqual(claude_marketplace["plugins"][1]["version"], versions["trackers"])
-        self.assertEqual(claude_marketplace["plugins"][2]["source"], "./plugins/claude/stacks")
-        self.assertEqual(claude_marketplace["plugins"][3]["name"], "session-id")
+        plugins_by_name = {p["name"]: p for p in claude_marketplace["plugins"]}
+        self.assertIn("trackers", plugins_by_name)
+        self.assertEqual(plugins_by_name["trackers"]["version"], versions["trackers"])
+        self.assertEqual(plugins_by_name["stacks"]["source"], "./plugins/claude/stacks")
+        self.assertIn("session-id", plugins_by_name)
 
     def test_session_id_plugin_is_claude_only(self) -> None:
         self.build_repo()
