@@ -1,3 +1,5 @@
 __pycache__/
 *.pyc
 .beads/embeddeddolt/
+.launch-work/
+.worktrees/
