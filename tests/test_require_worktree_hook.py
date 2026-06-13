@@ -40,8 +40,8 @@ class RequireWorktreeHookTest(unittest.TestCase):
     def _git(self, cwd: Path, *args: str) -> None:
         subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
-    def _init_repo(self, branch: str = "main") -> Path:
-        repo = self.root / "repo"
+    def _init_repo(self, branch: str = "main", name: str = "repo") -> Path:
+        repo = self.root / name
         repo.mkdir()
         self._git(repo, "init", "-q", "-b", branch)
         self._git(repo, "config", "user.name", "Require Worktree Test")
@@ -56,6 +56,7 @@ class RequireWorktreeHookTest(unittest.TestCase):
         cwd: Path | None = None,
         *,
         payload_cwd: Path | None = None,
+        file_path: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         """Run the hook with a neutral non-git process CWD by default.
 
@@ -68,14 +69,19 @@ class RequireWorktreeHookTest(unittest.TestCase):
         payload_cwd: if given, embed it as the ``cwd`` field in the stdin JSON
         payload, simulating how Claude Code sends the project directory to hooks
         even when the hook process itself starts from $HOME.
+        file_path: if given, embed it as ``tool_input.file_path`` so the hook
+        can evaluate the target path's repo rather than only the session cwd.
         """
         if cwd is None:
             cwd = self.hook_cwd
+        import json as _json
+        payload: dict = {}
         if payload_cwd is not None:
-            import json as _json
-            stdin = _json.dumps({"cwd": str(payload_cwd)}) + "\n"
-        else:
-            stdin = "{}\n"
+            payload["cwd"] = str(payload_cwd)
+        if file_path is not None:
+            payload["tool_name"] = "Write"
+            payload["tool_input"] = {"file_path": file_path}
+        stdin = _json.dumps(payload) + "\n"
         return subprocess.run(
             [str(HOOK_SCRIPT)],
             input=stdin,
@@ -191,6 +197,71 @@ class RequireWorktreeHookTest(unittest.TestCase):
         plain.mkdir()
 
         result = self._run(payload_cwd=plain)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    # --- Tests for target-path containment (bento-s5h) ---
+    # The hook must evaluate the repo that contains the *target* file, not just
+    # the session cwd. Writes to paths outside any protected repo (e.g. /tmp,
+    # another repo on a feature branch) must be allowed even while the session
+    # cwd sits on main.
+
+    def test_allows_write_to_path_outside_repo_on_main(self) -> None:
+        repo = self._init_repo()
+        # Absolute target outside any git repo, while the session cwd is on main.
+        outside = self.root / "scratch.md"
+
+        result = self._run(payload_cwd=repo, file_path=str(outside))
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_allows_write_to_nonexistent_dir_outside_repo_on_main(self) -> None:
+        repo = self._init_repo()
+        # Neither the file nor its parent dir exists yet, and both are outside
+        # any repo. The hook must walk up to the nearest existing ancestor.
+        outside = self.root / "tmpdir" / "nested" / "draft.md"
+
+        result = self._run(payload_cwd=repo, file_path=str(outside))
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_blocks_write_to_in_repo_path_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "catalog" / "newfile.py"
+
+        result = self._run(payload_cwd=repo, file_path=str(target))
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
+    def test_blocks_relative_in_repo_path_on_main(self) -> None:
+        repo = self._init_repo()
+        # Relative target resolves against the payload cwd (the repo on main).
+        result = self._run(payload_cwd=repo, file_path="catalog/foo.py")
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
+    def test_target_in_other_repo_on_main_is_blocked(self) -> None:
+        # Session cwd is on a feature branch; target lives in a different repo
+        # that is on main. The hook evaluates the *target* repo's branch.
+        session = self._init_repo(branch="feature-x", name="session")
+        other = self._init_repo(branch="main", name="other")
+        target = other / "file.txt"
+
+        result = self._run(payload_cwd=session, file_path=str(target))
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
+    def test_target_in_other_repo_on_feature_is_allowed(self) -> None:
+        # Session cwd is on main; target lives in a different repo on a feature
+        # branch. The target repo's branch governs, so the write is allowed.
+        session = self._init_repo(branch="main", name="session")
+        other = self._init_repo(branch="feature-y", name="other")
+        target = other / "file.txt"
+
+        result = self._run(payload_cwd=session, file_path=str(target))
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 

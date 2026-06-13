@@ -26,18 +26,51 @@ fi
 # so stdin is not consumed twice.
 payload_raw="$(cat 2>/dev/null || true)"
 
-payload_cwd="$(echo "$payload_raw" | python3 -c "
-import json, sys
+# Determine which directory's repo/branch governs this edit. Prefer the
+# directory that contains the *target* file (tool_input.file_path) so writes
+# to paths outside any protected repo (e.g. /tmp, another repo on a feature
+# branch) are not blocked just because the session cwd sits on main. Relative
+# target paths resolve against the payload cwd. When no target path is present
+# (non-file tools, malformed payload), fall back to the payload cwd so the
+# protective default is preserved.
+check_dir="$(echo "$payload_raw" | python3 -c "
+import json, os, sys
 try:
     d = json.load(sys.stdin)
-    v = d.get('cwd', '')
-    if v:
-        print(v)
 except Exception:
-    pass
+    d = {}
+
+cwd = d.get('cwd') or ''
+target = ''
+ti = d.get('tool_input')
+if isinstance(ti, dict):
+    target = ti.get('file_path') or ''
+
+
+def nearest_existing_dir(path):
+    # The target file or its parent directories may not exist yet (Write), so
+    # walk up to the closest existing ancestor before asking git about it.
+    path = path if os.path.isdir(path) else os.path.dirname(path)
+    while path and not os.path.isdir(path):
+        parent = os.path.dirname(path)
+        if parent == path:
+            break
+        path = parent
+    return path
+
+
+if target:
+    if not os.path.isabs(target):
+        target = os.path.join(cwd or os.getcwd(), target)
+    out = nearest_existing_dir(target)
+else:
+    out = cwd
+
+if out:
+    print(out)
 " 2>/dev/null || true)"
 
-check_dir="${payload_cwd:-$PWD}"
+check_dir="${check_dir:-$PWD}"
 
 if ! repo_root="$(git -C "$check_dir" rev-parse --show-toplevel 2>/dev/null)"; then
   exit 0
