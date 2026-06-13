@@ -147,7 +147,8 @@ generated skill payload.
 
 For each launched task: exactly one branch, exactly one worktree, and the
 prompt must include task details, expected scope, overlap risks, required
-quality gates, and the row number from the triage table. Include the landing
+quality gates, the row number from the triage table, and the working-hygiene
+clause below. Include the landing
 target branch in the teammate prompt so the teammate knows which branch their
 work merges into. Require the teammate to stop and report back if the task is
 broader or more coupled than expected.
@@ -174,6 +175,16 @@ or close to it:
 > `swarm-worktree-verify.py --require-linked-worktree` exits 0. If it exits
 > non-zero, create or fix the worktree first, then re-run the script. Any
 > edit before a passing verify is a protocol violation.**
+
+Every teammate prompt MUST also carry these working-hygiene rules, verbatim or
+close to it:
+
+> - Search and read with the `Grep`, `Glob`, and `Read` tools, not shell
+>   `grep`/`cat`/`sed`/`find` pipelines.
+> - Before any rebase or merge, run `git status --short` and commit or stash
+>   deliberately; never retry `git stash pop` into a dirty tree.
+> - If a long gate or background job is in flight, message the team lead before
+>   going idle.
 
 For landing, the teammate prompt must direct the teammate to invoke
 `bento:land-work`. Do not include inline `git merge` commands or any other
