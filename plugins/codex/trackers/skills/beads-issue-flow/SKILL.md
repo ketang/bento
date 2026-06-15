@@ -143,12 +143,14 @@ Required before `bd close <id>`:
 
    ```bash
    git rev-parse <integration-branch>
-   git ls-remote origin <integration-branch>
+   git ls-remote origin <integration-branch> | cut -f1
    ```
 
-   The two SHAs must match. If the remote is behind (or `git ls-remote`
-   returns nothing for the branch), the landing is not yet published — refuse
-   to close until the integration branch is pushed.
+   `git ls-remote` prints `<sha>\t<refname>`, so take its first field (e.g.
+   `cut -f1`) before comparing — a literal compare against the full line never
+   matches. The two SHAs must be equal. If the remote SHA is behind or absent
+   (`git ls-remote` returns nothing for the branch), the landing is not yet
+   published — refuse to close until the integration branch is pushed.
 4. Only then run:
 
    ```bash
