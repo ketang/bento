@@ -135,7 +135,21 @@ Required before `bd close <id>`:
    ```
 
    Exit code `0` means landed. Any non-zero exit means refuse to close.
-3. Only then run:
+3. Verify the integration branch is pushed, not just landed locally. A local
+   merge that never reaches the remote leaves dependents broken for everyone
+   else: they pull an integration branch that lacks the landed code. Compare
+   the local tip against the remote tip directly rather than trusting tracking
+   refs, which can be stale:
+
+   ```bash
+   git rev-parse <integration-branch>
+   git ls-remote origin <integration-branch>
+   ```
+
+   The two SHAs must match. If the remote is behind (or `git ls-remote`
+   returns nothing for the branch), the landing is not yet published — refuse
+   to close until the integration branch is pushed.
+4. Only then run:
 
    ```bash
    bd close <id> --reason "<merge-sha> landed on <integration-branch>"
@@ -144,7 +158,12 @@ Required before `bd close <id>`:
 If the ancestry check fails, do not close. Direct the user to land the branch
 first. Do not bypass with `bd update <id> --status closed`, and do not close
 on cleanup evidence alone. The rule applies even when the closing agent just
-ran `land-work` itself — capture the SHA and run the check anyway.
+ran `land-work` itself — capture the SHA and run both the ancestry and the
+push checks anyway.
+
+Pushing the integration branch is `land-work`'s responsibility; this rule does
+not push on its behalf. It only refuses to close until that push is confirmed,
+so a landed-but-unpushed branch cannot be marked done.
 
 ## Policy Notes
 
@@ -160,6 +179,29 @@ ran `land-work` itself — capture the SHA and run the check anyway.
   document.
 - Do not close from cleanup evidence alone unless the landed-work correlation
   is strong enough to explain and defend.
+
+## Precedence Over Session-Completion Blocks
+
+Some repos carry a bd-generated session-completion block in their agent docs
+("Work is NOT complete until `git push` succeeds", with a MANDATORY push step).
+That block is about not stranding committed work on a local machine; it is not
+a landing policy. Where the two overlap, this skill's landing-lifecycle rules
+take precedence:
+
+- "Push" in that block applies to tracker-sync commits (e.g. the Beads export
+  and `refs/dolt/data`) and to integration branches that have already been
+  landed through the repo's documented merge flow.
+- It is never license to commit code directly to the primary branch, or to
+  push a feature branch as a substitute for landing it. Code reaches the
+  primary branch only through `land-work` (or the repo's documented landing
+  path), and the issue closes only after the Closure Evidence Rule above —
+  ancestry plus the published-push check — passes.
+- A push that has not gone through the landing flow does not satisfy the
+  Closure Evidence Rule and does not authorize `bd close`.
+
+When the session-completion block says "push" and this skill says "do not
+close until landed and pushed," follow this skill: push the tracker state and
+any already-landed branch, and withhold closure until landing is verified.
 
 ## Worktree Caveat
 
