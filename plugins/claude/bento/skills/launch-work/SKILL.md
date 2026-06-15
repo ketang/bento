@@ -1,6 +1,6 @@
 ---
 name: launch-work
-description: Hard trigger — always invoke before any code or file edits, even small ones. Creates branch+worktree. Never skip for small changes. Not for tracker-only mutations (create/claim/update/close issues).
+description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Creates branch+worktree. Never skip for small changes.
 recommended_model: mid
 ---
 
@@ -17,6 +17,16 @@ Use this skill when a task has been approved for implementation and the repo's
 branch, worktree, and claim rules are documented clearly enough to start work
 safely. Do not invoke it for tracker-only administration with no planned code
 or repo-artifact edits.
+
+## Trigger Scope
+
+The trigger fires before any edit to files inside a repository working tree.
+These are exempt and do not require a branch or linked worktree:
+
+- writes under `/tmp` or other scratch paths outside the repo
+- agent memory directories
+- review reports and handoff files written outside the working tree
+- tracker-only mutations (create, claim, update, close issues)
 
 ## Inputs
 
