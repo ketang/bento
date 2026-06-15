@@ -347,7 +347,9 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 ## Tracker Handoff
 
 - If the project uses Beads, use the `beads-issue-flow` skill to close or update
-  the issue after merge.
+  the issue after merge. Beads' `.beads/issues.jsonl` is a passive Dolt export
+  and may be intentionally untracked (gitignored) to avoid concurrent-landing
+  conflicts; do not re-add or commit it during landing.
 - If the project uses GitHub Issues, use the `github-issue-flow` skill.
 
 ## Direct Integration Branch Overlay
