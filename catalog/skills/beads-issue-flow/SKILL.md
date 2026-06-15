@@ -142,15 +142,15 @@ Required before `bd close <id>`:
    refs, which can be stale:
 
    ```bash
-   git rev-parse <integration-branch>
-   git ls-remote origin <integration-branch> | cut -f1
+   LOCAL=$(git rev-parse <integration-branch>)
+   REMOTE=$(git ls-remote origin <integration-branch> | cut -f1)
+   [ "$LOCAL" = "$REMOTE" ] && echo OK || echo BEHIND
    ```
 
-   `git ls-remote` prints `<sha>\t<refname>`, so take its first field (e.g.
-   `cut -f1`) before comparing — a literal compare against the full line never
-   matches. The two SHAs must be equal. If the remote SHA is behind or absent
-   (`git ls-remote` returns nothing for the branch), the landing is not yet
-   published — refuse to close until the integration branch is pushed.
+   `git ls-remote` prints `<sha>\t<refname>`; `cut -f1` takes the SHA field.
+   The push is confirmed only when the two values match exactly. If the remote
+   SHA differs or `git ls-remote` returns nothing for the branch, the landing
+   is not yet published — refuse to close until the integration branch is pushed.
 4. Only then run:
 
    ```bash
@@ -191,8 +191,8 @@ a landing policy. Where the two overlap, this skill's landing-lifecycle rules
 take precedence:
 
 - "Push" in that block applies to tracker-sync commits (e.g. the Beads export
-  and `refs/dolt/data`) and to integration branches that have already been
-  landed through the repo's documented merge flow.
+  snapshot and the tracker's internal sync refs) and to integration branches
+  that have already been landed through the repo's documented merge flow.
 - It is never license to commit code directly to the primary branch, or to
   push a feature branch as a substitute for landing it. Code reaches the
   primary branch only through `land-work` (or the repo's documented landing
