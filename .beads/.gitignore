@@ -16,6 +16,10 @@ daemon.*
 # Interactions log (runtime, not versioned)
 interactions.jsonl
 
+# Passive Dolt export (Dolt is source of truth; concurrent swarm landings
+# conflict on this file when tracked, so it is intentionally untracked)
+issues.jsonl
+
 # Push state (runtime, per-machine)
 push-state.json
 
