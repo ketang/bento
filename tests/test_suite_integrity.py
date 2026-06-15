@@ -49,7 +49,7 @@ class TestSuiteIntegrity(unittest.TestCase):
 
     def test_discover_covers_every_test_module_on_disk(self) -> None:
         """unittest discover must load every test_*.py file present on disk."""
-        loader = unittest.defaultTestLoader
+        loader = unittest.TestLoader()
         suite = loader.discover(str(TESTS_DIR), top_level_dir=str(REPO_ROOT))
 
         discovered = set()
