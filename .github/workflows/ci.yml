@@ -1,0 +1,109 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build generated plugins
+        shell: bash
+        run: |
+          if command -v claude >/dev/null 2>&1; then
+            BENTO_SKIP_VERIFY=1 scripts/build-plugins
+          else
+            BENTO_SKIP_VERIFY=1 BENTO_SKIP_CLAUDE_VALIDATE=1 scripts/build-plugins
+          fi
+
+      - name: Check generated artifact drift
+        run: scripts/build-plugins --check
+
+      - name: Run tests with explicit skip policy
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import sys
+          import unittest
+
+
+          EXPECTED_SKIPS = {
+              (
+                  "tests.bento_auto_allow.test_auto_allow_e2e."
+                  "AutoAllowHookE2ETest.test_allows_plugin_script"
+              ): "zolem and claude must both be on PATH",
+              (
+                  "tests.bento_auto_allow.test_auto_allow_e2e."
+                  "AutoAllowHookE2ETest.test_blocks_outside_plugin"
+              ): "zolem and claude must both be on PATH",
+              (
+                  "tests.bento_codex.test_codex_ws_e2e."
+                  "CodexBashTelemetryHookE2ETest.test_hook_records_bash_event"
+              ): "zolem and codex must both be on PATH for the e2e hook test",
+              (
+                  "tests.session_id.test_session_start_e2e."
+                  "SessionStartHookE2ETest.test_hook_creates_scratch_directory"
+              ): "zolem and claude must both be on PATH",
+              (
+                  "tests.session_id.test_session_start_e2e."
+                  "SessionStartHookE2ETest.test_hook_writes_session_id"
+              ): "zolem and claude must both be on PATH",
+              (
+                  "tests.session_id.test_session_start_integration."
+                  "SessionStartIntegrationTest.test_hook_creates_scratch_directory"
+              ): "set BENTO_INTEGRATION_TESTS=1 to run",
+              (
+                  "tests.session_id.test_session_start_integration."
+                  "SessionStartIntegrationTest.test_hook_writes_session_id_matching_claude_output"
+              ): "set BENTO_INTEGRATION_TESTS=1 to run",
+              (
+                  "tests.session_id.test_session_start_integration."
+                  "SessionStartIntegrationTest.test_session_id_stable_across_context_reset"
+              ): "set BENTO_INTEGRATION_TESTS=1 to run",
+              (
+                  "tests.session_id.test_session_start_integration."
+                  "SessionStartIntegrationTest.test_session_id_stable_across_resume"
+              ): "set BENTO_INTEGRATION_TESTS=1 to run",
+              (
+                  "tests.swarm.test_swarm_codex_integration."
+                  "SwarmCodexIntegrationTest.test_codex_exec_resume_preserves_thread_id_and_state_root"
+              ): "set RUN_CODEX_INTEGRATION=1 to run Codex CLI integration tests",
+              (
+                  "tests.telemetry.test_bash_telemetry_hook_e2e."
+                  "BashTelemetryHookE2ETest.test_hook_records_bash_event"
+              ): "zolem and claude must both be on PATH",
+              (
+                  "tests.test_require_worktree_hook_e2e."
+                  "RequireWorktreeHookE2ETest.test_allowed_on_feature_branch"
+              ): "zolem and claude must both be on PATH for the e2e hook test",
+              (
+                  "tests.test_require_worktree_hook_e2e."
+                  "RequireWorktreeHookE2ETest.test_allowed_with_opt_out"
+              ): "zolem and claude must both be on PATH for the e2e hook test",
+              (
+                  "tests.test_require_worktree_hook_e2e."
+                  "RequireWorktreeHookE2ETest.test_blocked_on_main"
+              ): "zolem and claude must both be on PATH for the e2e hook test",
+          }
+
+          suite = unittest.defaultTestLoader.discover("tests", top_level_dir=".")
+          result = unittest.TextTestRunner(verbosity=2).run(suite)
+          actual_skips = {test.id(): reason for test, reason in result.skipped}
+
+          if actual_skips != EXPECTED_SKIPS:
+              print("Unexpected unittest skip set.", file=sys.stderr)
+              print(f"Expected: {EXPECTED_SKIPS!r}", file=sys.stderr)
+              print(f"Actual:   {actual_skips!r}", file=sys.stderr)
+              sys.exit(1)
+          if not result.wasSuccessful():
+              sys.exit(1)
+          PY
