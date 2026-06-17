@@ -1,22 +1,5 @@
 #!/usr/bin/env python3
-"""Stop hook: warns when untracked files appeared during the session that were
-not present at session start (see the companion SessionStart hook
-hygiene-baseline.py).
-
-Compares the current untracked set against the per-session baseline and, if new
-non-gitignored untracked paths exist, emits a blocking Stop decision listing
-them with a clean-or-ignore instruction. The decision is advisory-but-loud: it
-surfaces the strays to the model but never deletes anything.
-
-Suppression: add `hygiene_check=false` to `.agent-mode.local` in the repo root
-(same mechanism require-worktree.sh uses for `require_worktree=false`).
-
-Stays silent when:
-- the working tree is unchanged (no new untracked files),
-- gitignored files appear (they never show in porcelain output),
-- no baseline exists (e.g. a resumed session that started before this hook),
-- the check is suppressed, or
-- the Stop hook is already active (avoids re-blocking loops)."""
+"""Stop hook: warns about new untracked files that appeared since session start."""
 
 import json
 import os

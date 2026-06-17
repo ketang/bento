@@ -1,18 +1,5 @@
 #!/usr/bin/env python3
-"""SessionStart hook: snapshots the working tree's untracked files so the
-companion Stop hook (hygiene-check.py) can warn about strays that appeared
-during the session.
-
-Resolves the git repository that contains the session cwd and writes the set
-of untracked paths reported by
-`git status --porcelain=v1 --untracked-files=all` to
-<cache>/bento/hygiene-baseline-<session_id>.txt, one repo-root-relative path
-per line.
-
-gitignored files never appear in that output, so build outputs and other
-ignored artifacts are excluded from the baseline and from later warnings.
-
-Never blocks session start."""
+"""SessionStart hook: snapshots untracked files so the Stop hook can warn about new strays."""
 
 import json
 import os
