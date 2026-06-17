@@ -33,6 +33,7 @@ PLUGIN_ORDER = [
     "trackers",
     "stacks",
     "session-id",
+    "hygiene",
 ]
 
 EXTERNAL_PLUGINS: list[dict] = [
@@ -189,6 +190,36 @@ PLUGIN_DEFS = {
         },
         "skills": [],
         "hooks": "session-id",
+    },
+    "hygiene": {
+        "description": "SessionStart + Stop hooks that warn about untracked files left in the working tree at session end",
+        "display_name": "Bento Hygiene",
+        "short_description": "Catch stray untracked files before they accumulate",
+        "long_description": (
+            "Bento Hygiene installs a SessionStart hook that snapshots the working tree's "
+            "untracked files and a Stop hook that diffs the current tree against that baseline. "
+            "When new untracked files appear during a session that are not covered by .gitignore, "
+            "it emits a loud, advisory reminder listing them so they can be cleaned up or ignored "
+            "instead of silently accumulating across sessions. It never deletes anything, stays "
+            "silent when the tree is unchanged, and can be suppressed per repo with "
+            "'hygiene_check=false' in .agent-mode.local."
+        ),
+        "category": "Productivity",
+        "capabilities": [],
+        "keywords": ["hygiene", "hooks", "automation", "git", "cleanup"],
+        "default_prompts": [
+            "Clean up the untracked files flagged at session end.",
+        ],
+        "brand_color": "#0F766E",
+        "palette": {
+            "primary": (15, 118, 110),
+            "secondary": (45, 212, 191),
+            "accent": (94, 234, 212),
+            "background": (8, 23, 22),
+            "surface": (17, 46, 43),
+        },
+        "skills": [],
+        "hooks": "hygiene",
     },
 }
 

@@ -2,5 +2,6 @@
   "bento": "1.0.76",
   "trackers": "1.0.28",
   "stacks": "1.0.20",
-  "session-id": "1.0.17"
+  "session-id": "1.0.17",
+  "hygiene": "1.0.1"
 }
