@@ -139,9 +139,6 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue(os.access(hook_script, os.X_OK))
 
     def test_intent_stories_trio_removed_from_build(self) -> None:
-        # The intent-stories trio was removed in favor of the storystore plugin,
-        # which is now the sole owner of docs/stories/. The build must not
-        # reference the plugin, its skills, or emit any built artifacts for it.
         self.module.build_repo(run_verification=False)
 
         self.assertNotIn("intent-stories", self.module.PLUGIN_ORDER)
@@ -157,7 +154,7 @@ class BuildPluginsTest(unittest.TestCase):
                 f"canonical skill {skill} must be removed",
             )
 
-        for platform, manifest_dir in (("claude", ".claude-plugin"), ("codex", ".codex-plugin")):
+        for platform in ("claude", "codex"):
             plugin = self.root / "plugins" / platform / "intent-stories"
             self.assertFalse(plugin.exists(), f"{platform}: intent-stories plugin must not be built")
             for skill in (
