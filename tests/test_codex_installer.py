@@ -39,7 +39,7 @@ class CodexInstallerTest(unittest.TestCase):
         actual_sources = {
             entry["name"]: entry["source"]["path"]
             for entry in marketplace["plugins"]
-            if entry.get("name") in {"bento", "trackers", "stacks", "intent-stories", "bugshot"}
+            if entry.get("name") in {"bento", "trackers", "stacks", "session-id", "bugshot"}
         }
 
         self.assertEqual(
@@ -48,13 +48,13 @@ class CodexInstallerTest(unittest.TestCase):
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
                 "stacks": "./../../plugins/stacks",
-                "intent-stories": "./../../plugins/intent-stories",
+                "session-id": "./../../plugins/session-id",
             },
         )
         self.assertEqual((plugin_root / "bento" / "README.txt").read_text(encoding="utf-8"), "bento\n")
         self.assertEqual(
-            (plugin_root / "intent-stories" / "README.txt").read_text(encoding="utf-8"),
-            "intent-stories\n",
+            (plugin_root / "session-id" / "README.txt").read_text(encoding="utf-8"),
+            "session-id\n",
         )
         self.assertFalse((plugin_root / "bugshot").exists())
         bento_cache_versions = list((codex_cache_root / "bento").iterdir())
@@ -78,7 +78,7 @@ class CodexInstallerTest(unittest.TestCase):
         actual_sources = {
             entry["name"]: entry["source"]["path"]
             for entry in marketplace["plugins"]
-            if entry.get("name") in {"bento", "trackers", "stacks", "intent-stories", "bugshot"}
+            if entry.get("name") in {"bento", "trackers", "stacks", "session-id", "bugshot"}
         }
 
         self.assertEqual(
@@ -87,13 +87,13 @@ class CodexInstallerTest(unittest.TestCase):
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
                 "stacks": "./../../plugins/stacks",
-                "intent-stories": "./../../plugins/intent-stories",
+                "session-id": "./../../plugins/session-id",
             },
         )
         self.assertFalse((plugin_root / "bugshot").exists())
         self.assertTrue((plugin_root / "trackers" / ".codex-plugin" / "plugin.json").exists())
         self.assertTrue((plugin_root / "stacks" / ".codex-plugin" / "plugin.json").exists())
-        self.assertTrue((plugin_root / "intent-stories" / ".codex-plugin" / "plugin.json").exists())
+        self.assertTrue((plugin_root / "session-id" / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse(codex_cache_root.exists())
         self.assertFalse(codex_config_path.exists())
 
@@ -282,14 +282,14 @@ class CodexInstallerTest(unittest.TestCase):
 
     def _write_main_archive(self) -> None:
         source_root = self.root / "source" / "bento-main"
-        # intent-stories is the 4th bundle: under the old hardcoded 3-plugin
+        # session-id is the 4th bundle: under the old hardcoded 3-plugin
         # list it was silently uninstallable, so its presence here guards the
         # manifest-driven fix against regressing to a fixed-length list.
         plugin_defs = {
             "bento": "Coding",
             "trackers": "Productivity",
             "stacks": "Coding",
-            "intent-stories": "Productivity",
+            "session-id": "Productivity",
         }
         for name, category in plugin_defs.items():
             plugin_dir = source_root / "plugins" / "codex" / name

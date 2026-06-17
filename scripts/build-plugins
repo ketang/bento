@@ -33,7 +33,6 @@ PLUGIN_ORDER = [
     "trackers",
     "stacks",
     "session-id",
-    "intent-stories",
 ]
 
 EXTERNAL_PLUGINS: list[dict] = [
@@ -190,38 +189,6 @@ PLUGIN_DEFS = {
         },
         "skills": [],
         "hooks": "session-id",
-    },
-    "intent-stories": {
-        "description": "Durable intent story documentation and fidelity auditing skills for coding agents",
-        "display_name": "Intent Stories",
-        "short_description": "Maintain user-perspective software intent",
-        "long_description": (
-            "Intent Stories helps coding agents create, audit, and safely maintain long-lived "
-            "repository documentation that describes what software is for from a user perspective. "
-            "It separates accepted intent from observed behavior so implementation drift can be "
-            "reported instead of silently rewritten into the docs."
-        ),
-        "category": "Productivity",
-        "capabilities": ["Interactive", "Write"],
-        "keywords": ["documentation", "intent", "stories", "audit", "tests"],
-        "default_prompts": [
-            "Generate draft intent stories for this repository from docs, tests, and public workflows.",
-            "Audit the existing intent stories against current tests, commands, and user-facing behavior.",
-            "Update intent stories after this change while preserving accepted intent and reporting drift.",
-        ],
-        "brand_color": "#14917E",
-        "palette": {
-            "primary": (20, 145, 126),
-            "secondary": (236, 144, 44),
-            "accent": (204, 62, 97),
-            "background": (17, 24, 39),
-            "surface": (48, 64, 80),
-        },
-        "skills": [
-            "generate-intent-stories",
-            "audit-intent-stories",
-            "update-intent-stories",
-        ],
     },
 }
 
