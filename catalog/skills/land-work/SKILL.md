@@ -43,6 +43,8 @@ state checks that should not rely on ad hoc prose reconstruction:
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
   verify the landed primary-branch ref still matches the verified candidate
+- `land-work/scripts/land-work-root-hygiene.py` to audit the primary checkout
+  root after landing for untracked files not covered by `.gitignore` (step 9a)
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script. Resolve each helper path relative to this `SKILL.md`
@@ -279,6 +281,21 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the
    detected primary branch.
+9a. Audit the primary checkout root for stray untracked files. The prepare
+    helper only checks the feature worktree, so junk in the primary root
+    (stray scratch files, accidental writes) survives every landing. Run the
+    hygiene helper, pointing at the primary checkout root:
+
+    ```bash
+    land-work/scripts/land-work-root-hygiene.py
+    ```
+
+    It runs `git status --porcelain=v1 --untracked-files=all` in the primary
+    checkout and reports `untracked_paths`: untracked files not covered by
+    `.gitignore` (ignored files are omitted, so a clean root adds no noise).
+    The check is advisory — the merge is already done. If `clean` is false,
+    surface each path to the user and ask them to delete it or add it to
+    `.gitignore`. Never auto-delete.
 10. Clean up the merged feature branch and its linked worktree directly. This
     is the routine post-landing path for the agent that just landed its own
     work. Return to the repo root on the primary branch first (you cannot
