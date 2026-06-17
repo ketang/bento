@@ -186,10 +186,21 @@ close to it:
 > - If a long gate or background job is in flight, message the team lead before
 >   going idle.
 
-For landing, the teammate prompt must direct the teammate to invoke
-`bento:land-work`. Do not include inline `git merge` commands or any other
-escape-hatch landing instructions alongside it — `bento:land-work` is the
-single landing path.
+Teammates do not land their own work. The lead runs `bento:land-work` for
+every completed branch. The teammate prompt must instruct the teammate to stop
+after gates pass and signal the lead:
+
+> **Do not invoke `land-work` or run any `git merge` or `git push` to the
+> primary branch. When all quality gates pass and the branch is committed and
+> pushed to the remote, SendMessage the lead with:**
+> - **Branch name** (exact ref)
+> - **Worktree path** (absolute)
+> - **Tracker ID**
+> - **Gate summary** — which gates ran and passed
+> - **Any warnings or reviewer follow-up items**
+>
+> **Then idle. Do not close the tracker issue, delete the worktree, or take
+> any further action until the lead confirms the branch has landed.**
 
 ## Phase 3: Plan Review
 
@@ -205,6 +216,10 @@ worktree-verify gate) before any file edit. A plan that jumps straight to
 edits without a passing verify is not acceptable, even if the teammate
 claims to already be in the right worktree.
 
+Reject any teammate plan that includes `land-work`, `git merge` to the primary
+branch, or any other landing step. Landing is the lead's responsibility; a
+teammate plan that attempts to land is a protocol violation.
+
 ## Anti-Rationalization
 
 | Excuse | Counter-argument |
@@ -215,22 +230,34 @@ claims to already be in the right worktree.
 | "Several teammates are done, so I can land them as a batch." | Landing changes the base for every remaining branch. Land one branch at a time, run required post-land hooks, then re-triage conflicts and readiness before continuing. |
 | "The user is silent, so the human-gated step is approved." | Silence is not approval. Teammates park and idle, the lead serializes user attention, and work resumes only after the lead routes an explicit decision back. |
 | "A stalled teammate is probably done enough to clean up." | Runtime resources close only after the work is safely landed or explicitly deferred. Never discard a teammate's branch or worktree while its status is unresolved. |
+| "The teammate's gates all passed, so it can just run land-work itself." | Landing is the lead's job regardless of how clean the branch is. The auto mode classifier can block landing operations in teammate agents. The lead owns the single serialized landing path. |
 
 ## Phase 4: Monitor and Land
 
-Land one completed branch at a time onto the landing target (default: the detected primary branch). Use the project's documented landing workflow (see `land-work` unless project docs define a stricter flow):
+The lead lands one completed branch at a time. Teammates do not invoke
+`land-work`; the lead does, after receiving each teammate's ready-to-land
+signal.
 
-1. Verify the promised quality gates actually ran and passed, plus any
-   required pre-completion step.
-2. Land the branch; resolve conflicts carefully or send back for rebase.
-3. Run any documented post-land hooks.
-4. Close or update the tracker item only after the verified landing.
-5. If a post-land hook is configured for this swarm, run it:
-    `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
-    If the hook fails, stop and report — do not continue landing more branches until the hook succeeds.
-6. Close the teammate and clean up branch + worktree only after the work is
-   safely landed or explicitly deferred. Never discard a teammate's work
-   before then.
+For each ready-to-land signal received:
+
+1. Confirm the gate summary in the teammate's signal covers all required gates
+   for that task. If any gate is missing or failed, SendMessage the teammate
+   to fix and re-signal; do not proceed.
+2. Invoke `bento:land-work` from within the teammate's worktree path. The
+   land-work skill handles code review, rebase, preview, lease check, merge,
+   push, tracker close, and worktree cleanup.
+3. If a post-land hook is configured for this swarm, run it after `land-work`
+   completes:
+   `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
+   If the hook fails, stop and report — do not continue landing more branches
+   until the hook succeeds.
+4. After a verified landing, SendMessage the teammate confirming the branch
+   has landed. The teammate may then exit.
+5. Re-triage remaining branches against the new primary-branch base before
+   landing the next one.
+
+Never land more than one branch at a time. Each landing changes the base for
+all remaining branches.
 
 When teammates are safely landed or explicitly deferred, close the runtime
 resources that were created for them.
