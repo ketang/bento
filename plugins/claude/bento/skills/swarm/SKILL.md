@@ -199,8 +199,8 @@ after gates pass and signal the lead:
 > - **Gate summary** — which gates ran and passed
 > - **Any warnings or reviewer follow-up items**
 >
-> **Then idle. Do not close the tracker issue, delete the worktree, or take
-> any further action until the lead confirms the branch has landed.**
+> **Then exit. Do not close the tracker issue or delete the worktree — the
+> lead handles both as part of landing. Do not wait for a reply.**
 
 ## Phase 3: Plan Review
 
@@ -244,18 +244,14 @@ For each ready-to-land signal received:
    for that task. If any gate is missing or failed, SendMessage the teammate
    to fix and re-signal; do not proceed.
 2. Navigate to the teammate's worktree path, then invoke `bento:land-work`
-   from within it. The land-work skill handles code review, rebase, preview,
-   lease check, merge, push, tracker close, and worktree cleanup.
+   from within it. The teammate has already exited, so the worktree is
+   unoccupied and land-work's cleanup step can remove it safely.
 3. If a post-land hook is configured for this swarm, run it after `land-work`
    completes:
    `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
    If the hook fails, stop and report — do not continue landing more branches
    until the hook succeeds.
-4. After a verified landing, SendMessage the teammate confirming the branch
-   has landed. The teammate may then exit. If land-work fails, SendMessage
-   the teammate with the failure reason and whether to rebase and re-signal
-   or defer; do not leave the teammate idling without a decision.
-5. Re-triage remaining branches against the new primary-branch base before
+4. Re-triage remaining branches against the new primary-branch base before
    landing the next one.
 
 Never land more than one branch at a time. Each landing changes the base for
