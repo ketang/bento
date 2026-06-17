@@ -243,16 +243,18 @@ For each ready-to-land signal received:
 1. Confirm the gate summary in the teammate's signal covers all required gates
    for that task. If any gate is missing or failed, SendMessage the teammate
    to fix and re-signal; do not proceed.
-2. Invoke `bento:land-work` from within the teammate's worktree path. The
-   land-work skill handles code review, rebase, preview, lease check, merge,
-   push, tracker close, and worktree cleanup.
+2. Navigate to the teammate's worktree path, then invoke `bento:land-work`
+   from within it. The land-work skill handles code review, rebase, preview,
+   lease check, merge, push, tracker close, and worktree cleanup.
 3. If a post-land hook is configured for this swarm, run it after `land-work`
    completes:
    `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
    If the hook fails, stop and report — do not continue landing more branches
    until the hook succeeds.
 4. After a verified landing, SendMessage the teammate confirming the branch
-   has landed. The teammate may then exit.
+   has landed. The teammate may then exit. If land-work fails, SendMessage
+   the teammate with the failure reason and whether to rebase and re-signal
+   or defer; do not leave the teammate idling without a decision.
 5. Re-triage remaining branches against the new primary-branch base before
    landing the next one.
 
