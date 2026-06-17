@@ -116,6 +116,57 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(plugins_by_name["stacks"]["source"], "./plugins/claude/stacks")
         self.assertIn("session-id", plugins_by_name)
 
+    @staticmethod
+    def _skill_frontmatter_name(skill_md: Path) -> str | None:
+        text = skill_md.read_text(encoding="utf-8")
+        if not text.startswith("---"):
+            return None
+        end = text.find("\n---", 3)
+        if end == -1:
+            return None
+        front = text[3:end]
+        for line in front.splitlines():
+            match = re.match(r"\s*name\s*:\s*(\S+)", line)
+            if match:
+                return match.group(1)
+        return None
+
+    def test_codex_bento_exposes_every_declared_skill_including_handoff(self) -> None:
+        # bento-7lf: Codex discovers a plugin's skills by enumerating the
+        # directory named in the manifest's "skills" field and reading each
+        # SKILL.md's frontmatter name. A skill declared for the bento plugin
+        # but missing from that surface — as handoff was reported to be — is
+        # not invocable as bento:<skill>. Lock the invariant for all declared
+        # codex-targeted skills so dropping any (handoff included) fails here.
+        self.build_repo()
+
+        codex_bento = self.root / "plugins" / "codex" / "bento"
+        manifest = json.loads(
+            (codex_bento / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(manifest["skills"], "./skills/")
+        skills_dir = codex_bento / manifest["skills"].lstrip("./")
+
+        declared = self.module.skills_for("bento", "codex")
+        self.assertIn("handoff", declared)
+
+        for skill in declared:
+            skill_md = skills_dir / skill / "SKILL.md"
+            self.assertTrue(
+                skill_md.exists(),
+                msg=f"codex bento skill {skill!r} missing from discovery surface {skills_dir}",
+            )
+            self.assertEqual(
+                self._skill_frontmatter_name(skill_md),
+                skill,
+                msg=f"codex bento skill {skill!r} has mismatched frontmatter name",
+            )
+
+        # The specific regression: handoff must be present and named correctly.
+        handoff_md = skills_dir / "handoff" / "SKILL.md"
+        self.assertTrue(handoff_md.exists())
+        self.assertEqual(self._skill_frontmatter_name(handoff_md), "handoff")
+
     def test_session_id_plugin_is_claude_only(self) -> None:
         self.build_repo()
 
