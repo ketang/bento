@@ -11,13 +11,7 @@ from git_state import detect_checkout_root, git, primary_checkout_root
 
 
 def untracked_paths(root: Path) -> list[str]:
-    # `git status --porcelain=v1` without `--ignored` already omits paths
-    # covered by any ignore source (.gitignore, .git/info/exclude, the global
-    # excludesFile), so every `??` entry is untracked AND not ignored — exactly
-    # "untracked files not covered by .gitignore". `--untracked-files=all`
-    # expands untracked directories to their individual files; `-z` emits
-    # NUL-separated, unquoted paths so names with spaces or unicode parse
-    # cleanly.
+    # porcelain without --ignored already omits gitignored paths; -z gives NUL-separated unquoted names
     result = git(
         "status",
         "--porcelain=v1",

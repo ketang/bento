@@ -77,10 +77,7 @@ class LandWorkRootHygieneTest(unittest.TestCase):
         self.assertIn("scratch/b.txt", payload["untracked_paths"])
 
     def test_audits_primary_root_from_linked_worktree(self) -> None:
-        # Junk lives in the primary checkout, not the feature worktree. Running
-        # from the worktree must still surface the primary-root junk (this is
-        # the gap step 9a closes: the feature worktree is clean but the primary
-        # root is not).
+        # junk in primary root must surface even when script runs from the feature worktree
         (self.repo / "primary-junk.txt").write_text("junk\n", encoding="utf-8")
 
         result = self.run_hygiene(cwd=self.worktree)
