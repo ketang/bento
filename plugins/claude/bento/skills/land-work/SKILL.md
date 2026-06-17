@@ -296,6 +296,28 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
     The check is advisory — the merge is already done. If `clean` is false,
     surface each path to the user and ask them to delete it or add it to
     `.gitignore`. Never auto-delete.
+9b. Before removing the feature worktree, account for every untracked file
+    created or touched during this task. Run, in the feature worktree:
+
+    ```bash
+    git status --porcelain=v1 --untracked-files=all
+    ```
+
+    This is a checklist gate, not a silent auto-delete: resolve each listed
+    untracked path to exactly one of three outcomes before proceeding to
+    cleanup —
+    - **committed** — it belongs in the landed change (and was already part of
+      the verified candidate), or
+    - **gitignored** — it is expected local-only state covered by `.gitignore`,
+      or
+    - **deleted** — it is scratch residue with no lasting value.
+
+    Plan, log, and handoff files for the landed work (for example
+    `.launch-work/log.md`, plan scratch, or handoff notes) must **not** remain
+    untracked into cleanup — commit them if they are part of the record, or
+    delete them. A leftover untracked file is not an acceptable end state; if
+    you cannot decide an outcome for a path, stop and ask the user rather than
+    removing the worktree over unaccounted residue.
 10. Clean up the merged feature branch and its linked worktree directly. This
     is the routine post-landing path for the agent that just landed its own
     work. Return to the repo root on the primary branch first (you cannot
@@ -333,6 +355,9 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
   for a changed landing candidate.
 - Do not merge if the leased primary-branch ref moved after verification.
 - Do not land from a dirty feature-branch checkout.
+- Do not remove the feature worktree while untracked files created during the
+  task remain unaccounted for. Each must be committed, gitignored, or deleted;
+  plan/log/handoff files must not remain untracked.
 - Do not delete a merged feature branch before removing its linked worktree.
 - Do not leave a land-work preview/scratch worktree behind. Remove it on every
   exit path — verified landing, aborted lease, or error after creation — so no
