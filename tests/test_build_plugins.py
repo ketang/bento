@@ -138,24 +138,38 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertTrue(hook_script.exists())
         self.assertTrue(os.access(hook_script, os.X_OK))
 
-    def test_intent_stories_plugin_is_standalone_on_claude_and_codex(self) -> None:
+    def test_intent_stories_trio_removed_from_build(self) -> None:
         self.module.build_repo(run_verification=False)
 
-        for platform, manifest_dir in (("claude", ".claude-plugin"), ("codex", ".codex-plugin")):
+        self.assertNotIn("intent-stories", self.module.PLUGIN_ORDER)
+        self.assertNotIn("intent-stories", self.module.PLUGIN_DEFS)
+
+        for skill in (
+            "generate-intent-stories",
+            "audit-intent-stories",
+            "update-intent-stories",
+        ):
+            self.assertFalse(
+                (self.root / "catalog" / "skills" / skill).exists(),
+                f"canonical skill {skill} must be removed",
+            )
+
+        for platform in ("claude", "codex"):
             plugin = self.root / "plugins" / platform / "intent-stories"
-            self.assertTrue((plugin / manifest_dir / "plugin.json").exists(), platform)
+            self.assertFalse(plugin.exists(), f"{platform}: intent-stories plugin must not be built")
             for skill in (
                 "generate-intent-stories",
                 "audit-intent-stories",
                 "update-intent-stories",
             ):
-                self.assertTrue((plugin / "skills" / skill / "SKILL.md").exists(), f"{platform}:{skill}")
+                bundled = self.root / "plugins" / platform / "bento" / "skills" / skill
+                self.assertFalse(bundled.exists(), f"{platform}:{skill} must not be bundled in bento")
 
         claude_marketplace = json.loads(
             (self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8")
         )
-        plugin_names = [p["name"] for p in claude_marketplace["plugins"] if "version" in p]
-        self.assertIn("intent-stories", plugin_names)
+        plugin_names = [p["name"] for p in claude_marketplace["plugins"]]
+        self.assertNotIn("intent-stories", plugin_names)
 
     def test_bento_hook_peers_materialize_for_claude_and_codex(self) -> None:
         self.build_repo()
