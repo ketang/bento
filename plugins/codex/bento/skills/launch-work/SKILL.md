@@ -174,6 +174,23 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     or expansions made to the automated test suite. If test coverage did not
     change, say so explicitly.
 
+## Concurrent-Safe Solo Work
+
+Even outside an explicit swarm, other agents may be active in the same repos.
+The `swarm` skill covers the coordinated case; these hazards also hit a single
+agent working a focused task while others happen to share the tree. Apply this
+hygiene whenever concurrent activity is possible:
+
+- Pin your own linked worktree **and** your own build/target dir. Never reason
+  about a binary or artifact you did not just build in your own tree.
+- Verify git and process state before attributing observed behavior to code:
+  whose worktree is this, whose uncommitted changes are present, is another
+  build running? Confirm the source-to-binary chain before drawing conclusions.
+- Expect shared-machine load. Cap parallelism and do not interpret slow or
+  flaky builds as logic failures — re-run before debugging.
+- Treat the tracker as contended. Commits to `.beads` can race; re-check issue
+  state before concluding it is stale or wrong.
+
 ## Non-Negotiable Rules
 
 - One approved task gets one branch and one linked worktree.
