@@ -1,0 +1,8 @@
+{
+  "name": "hygiene",
+  "description": "SessionStart + Stop hooks that warn about untracked files left in the working tree at session end",
+  "version": "1.0.1",
+  "author": {
+    "name": "Ketan Gangatirkar"
+  }
+}
