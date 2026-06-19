@@ -1,0 +1,40 @@
+#!/usr/bin/env bash
+# Run a heavy build/compile/test command at reduced priority, waiting if load is extreme.
+#
+# Usage: scripts/run-heavy <cmd> [args...]
+#
+# Environment overrides:
+#   HEAVY_LOAD_FACTOR  multiplier on nproc for the load threshold (default: 1.5)
+#   HEAVY_MAX_WAIT     max seconds to wait before proceeding anyway (default: 600)
+
+set -euo pipefail
+
+if [[ $# -eq 0 ]]; then
+  echo "usage: scripts/run-heavy <cmd> [args...]" >&2
+  exit 1
+fi
+
+LOAD_FACTOR="${HEAVY_LOAD_FACTOR:-1.5}"
+MAX_WAIT="${HEAVY_MAX_WAIT:-600}"
+SLEEP_INTERVAL=30
+
+nproc_count=$(nproc)
+threshold=$(awk "BEGIN { printf \"%.2f\", ${nproc_count} * ${LOAD_FACTOR} }")
+
+waited=0
+while true; do
+  load1=$(awk '{print $1}' /proc/loadavg)
+  if awk "BEGIN { exit !(${load1} > ${threshold}) }"; then
+    if [[ $waited -ge $MAX_WAIT ]]; then
+      echo "run-heavy: load ${load1} still above ${threshold} after ${MAX_WAIT}s; proceeding anyway" >&2
+      break
+    fi
+    echo "run-heavy: load ${load1} > ${threshold} (nproc=${nproc_count} × ${LOAD_FACTOR}); waiting ${SLEEP_INTERVAL}s" >&2
+    sleep "$SLEEP_INTERVAL"
+    waited=$((waited + SLEEP_INTERVAL))
+  else
+    break
+  fi
+done
+
+exec nice -n 10 ionice -c 3 "$@"

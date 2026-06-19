@@ -191,6 +191,29 @@ hygiene whenever concurrent activity is possible:
 - Treat the tracker as contended. Commits to `.beads` can race; re-check issue
   state before concluding it is stale or wrong.
 
+### Heavy Job Protocol
+
+When running a heavy job — a compiler, linker, full test suite, or bundler on
+a non-trivial codebase — prefix the command with `scripts/run-heavy`:
+
+```bash
+scripts/run-heavy cargo build --release
+scripts/run-heavy scripts/build-plugins
+scripts/run-heavy pnpm build
+```
+
+`run-heavy` waits until the 1-minute load average drops below
+`nproc × HEAVY_LOAD_FACTOR` (default 1.5×), then execs the command under
+`nice -n 10 ionice -c 3`. It gives up waiting after `HEAVY_MAX_WAIT` seconds
+(default 600) and proceeds at low priority regardless.
+
+Heavy jobs: `cargo build/test/clippy`, `rustc`, `scripts/build-plugins`,
+`npm/pnpm/yarn build`, `webpack`, `vite build`, `tsc --build` (large projects),
+`go build ./...`, non-trivial `make` targets.
+
+Not heavy: `git`, `bd`, file reads/writes, linting a handful of files, fast
+unit tests.
+
 ## Non-Negotiable Rules
 
 - One approved task gets one branch and one linked worktree.

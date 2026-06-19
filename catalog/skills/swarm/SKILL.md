@@ -186,6 +186,14 @@ close to it:
 > - If a long gate or background job is in flight, message the team lead before
 >   going idle.
 
+Teammates must use `scripts/run-heavy` when invoking build commands in their
+worktrees (see the Heavy Job Protocol in `launch-work` SKILL.md). Include this
+in every teammate prompt:
+
+> **For heavy build commands (`cargo build/test`, `scripts/build-plugins`,
+> bundlers, etc.) use `scripts/run-heavy <cmd>` so concurrent workers don't
+> pile CPU and memory pressure on the shared machine.**
+
 Teammates do not land their own work. The lead runs `bento:land-work` for
 every completed branch. The teammate prompt must instruct the teammate to stop
 after gates pass and signal the lead:
