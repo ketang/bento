@@ -83,6 +83,7 @@ PLUGIN_DEFS = {
             "launch-work",
             "land-work",
             "handoff",
+            "cross-check",
             "swarm",
             "expedition",
             "build-vs-buy",

@@ -1,7 +1,7 @@
 {
-  "bento": "1.0.77",
-  "trackers": "1.0.28",
-  "stacks": "1.0.20",
-  "session-id": "1.0.17",
-  "hygiene": "1.0.2"
+  "bento": "1.1.0",
+  "trackers": "1.1.0",
+  "stacks": "1.1.0",
+  "session-id": "1.1.0",
+  "hygiene": "1.1.0"
 }
