@@ -15,6 +15,11 @@ this skill is being combined with higher-risk landing work.
 
 Use this skill only when the project documents Beads as the issue tracker.
 
+## Interface Rule
+
+Always use `bd` commands. Never read `.beads/`, `issues.jsonl`, or the Dolt
+database directly — except to debug a confirmed `bd` failure.
+
 ## Core Workflow
 
 1. Use `bd` commands to inspect and select work.
