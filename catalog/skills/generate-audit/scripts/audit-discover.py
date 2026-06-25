@@ -84,6 +84,7 @@ TEXT_FILE_SUFFIXES = {
     ".kt",
     ".swift",
 }
+MAX_TEXT_SCAN_BYTES = 256 * 1024
 
 DOC_COMMAND_LANGUAGES = {"bash", "sh", "shell", "zsh", "console", "shellscript"}
 
@@ -273,6 +274,8 @@ def is_text_like(path: str) -> bool:
 
 def read_text_if_reasonable(path: Path) -> str | None:
     try:
+        if path.stat().st_size > MAX_TEXT_SCAN_BYTES:
+            return None
         data = path.read_bytes()
     except OSError:
         return None
@@ -282,6 +285,19 @@ def read_text_if_reasonable(path: Path) -> str | None:
         return data.decode("utf-8")
     except UnicodeDecodeError:
         return data.decode("utf-8", errors="ignore")
+
+
+def large_text_file_warnings(repo_root: Path, rel_files: list[str]) -> list[str]:
+    warnings: list[str] = []
+    for path in rel_files:
+        if not is_text_like(path):
+            continue
+        try:
+            if (repo_root / path).stat().st_size > MAX_TEXT_SCAN_BYTES:
+                warnings.append(f"skipped large text file: {path}")
+        except OSError:
+            continue
+    return warnings
 
 
 def git_stdout(*args: str, cwd: Path) -> str | None:
@@ -748,10 +764,11 @@ def disabled_test_signals(repo_root: Path, rel_files: list[str]) -> list[dict[st
         content = read_text_if_reasonable(repo_root / path)
         if content is None:
             continue
+        lines = content.splitlines()
         for signal_type, pattern in DISABLED_TEST_PATTERNS:
             for match in pattern.finditer(content):
                 line_number = content.count("\n", 0, match.start()) + 1
-                line = content.splitlines()[line_number - 1].strip() if content.splitlines() else ""
+                line = lines[line_number - 1].strip() if lines else ""
                 signals.append(
                     {
                         "path": path,
@@ -1174,6 +1191,7 @@ def main() -> int:
     repo_root = detect_repo_root(cwd)
     primary_branch, warnings = detect_primary_branch(repo_root)
     rel_files = [str(path) for path in walk_repo(repo_root)]
+    warnings.extend(large_text_file_warnings(repo_root, rel_files))
     file_set = set(rel_files)
 
     package_json = read_json_if_present(repo_root / "package.json")
