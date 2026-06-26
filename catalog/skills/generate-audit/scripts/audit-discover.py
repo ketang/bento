@@ -810,7 +810,9 @@ def interface_surfaces(files: list[str]) -> dict[str, list[str]]:
 def tracker_hints(repo_root: Path, docs: list[str]) -> list[str]:
     hints = []
     for path in docs:
-        content = (repo_root / path).read_text(encoding="utf-8", errors="ignore")
+        content = read_text_if_reasonable(repo_root / path)
+        if content is None:
+            continue
         for needle, label in TRACKER_HINTS.items():
             if needle in content:
                 hints.append(label)
