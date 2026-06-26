@@ -96,7 +96,7 @@ whether a version bump is warranted before ending the session.**  This includes
 any feature branch that touches those paths, even if the change seems small.
 
 Read and follow `.claude/skills/version-bump.md` for the full evaluation
-workflow.  In brief:
+workflow, including whether to bump and which semver part to use.  In brief:
 
 - **Behavioral changes** → bump required.  Behavioral means: new or changed
   Python logic, new functions, changed control flow, new output fields, new or

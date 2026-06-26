@@ -40,7 +40,8 @@ them as-is.
 3. **Judge behavioral vs cosmetic** — apply the judgment criteria below to the
    diff. Classify the accumulated changes as behavioral, cosmetic, or mixed.
 
-4. **If behavioral or mixed** — run `scripts/bump-plugin-versions`, then
+4. **If behavioral or mixed** — choose the semver part, run
+   `scripts/bump-plugin-versions --part <patch|minor|major>`, then
    `scripts/build-plugins`, then commit the version bump and regenerated files.
 
 5. **If cosmetic only** — skip. Work continues to accumulate until the next
@@ -102,5 +103,5 @@ Pushes are independent of version bumps. Push eagerly and frequently for safety.
 - The `bump-plugin-versions` script itself — reused as-is
 - The `build-plugins` script — reused as-is
 - The `land-work` skill — remains general-purpose, unmodified
-- Version bump semantics (patch/minor/major) — defaults to patch; the skill
-  does not attempt to infer semver level from the diff
+- Version bump semantics enforcement — the skill documents patch/minor/major
+  selection rules; mechanical enforcement remains out of scope
