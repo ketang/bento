@@ -221,8 +221,12 @@ scripts/run-heavy pnpm build
 
 `run-heavy` waits until the 1-minute load average drops below
 `nproc × HEAVY_LOAD_FACTOR` (default 1.5×), then execs the command under
-`nice -n 10 ionice -c 3`. It gives up waiting after `HEAVY_MAX_WAIT` seconds
-(default 600) and proceeds at low priority regardless.
+`nice -n 10 ionice -c 2 -n 7`. It gives up waiting after `HEAVY_MAX_WAIT`
+seconds (default 600) and proceeds at low priority regardless.
+
+`scripts/run-heavy` lives in the bento repo root. Run it from the repo root or
+a linked worktree; if it is not on `PATH`, use the path relative to the repo
+root (`scripts/run-heavy <cmd>`).
 
 Heavy jobs: `cargo build/test/clippy`, `rustc`, `scripts/build-plugins`,
 `npm/pnpm/yarn build`, `webpack`, `vite build`, `tsc --build` (large projects),
