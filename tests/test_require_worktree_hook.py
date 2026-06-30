@@ -57,6 +57,7 @@ class RequireWorktreeHookTest(unittest.TestCase):
         *,
         payload_cwd: Path | None = None,
         file_path: str | None = None,
+        tool_name: str = "Write",
     ) -> subprocess.CompletedProcess[str]:
         """Run the hook with a neutral non-git process CWD by default.
 
@@ -79,7 +80,7 @@ class RequireWorktreeHookTest(unittest.TestCase):
         if payload_cwd is not None:
             payload["cwd"] = str(payload_cwd)
         if file_path is not None:
-            payload["tool_name"] = "Write"
+            payload["tool_name"] = tool_name
             payload["tool_input"] = {"file_path": file_path}
         stdin = _json.dumps(payload) + "\n"
         return subprocess.run(
@@ -264,6 +265,70 @@ class RequireWorktreeHookTest(unittest.TestCase):
         result = self._run(payload_cwd=session, file_path=str(target))
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    # --- Tests for markdown exemption (bento-6cc) ---
+    # Plan files, specs, and notes (.md / .markdown) are low-risk and should be
+    # writable on main without a feature branch. Other file types stay blocked.
+
+    def test_allows_md_write_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "docs" / "plan.md"
+
+        result = self._run(payload_cwd=repo, file_path=str(target), tool_name="Write")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_allows_md_edit_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "README.md"
+
+        result = self._run(payload_cwd=repo, file_path=str(target), tool_name="Edit")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_allows_markdown_extension_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "notes.markdown"
+
+        result = self._run(payload_cwd=repo, file_path=str(target), tool_name="Write")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_allows_uppercase_md_extension_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "README.MD"
+
+        result = self._run(payload_cwd=repo, file_path=str(target), tool_name="Write")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_blocks_py_write_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "script.py"
+
+        result = self._run(payload_cwd=repo, file_path=str(target), tool_name="Write")
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
+    def test_blocks_ts_edit_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "app.ts"
+
+        result = self._run(payload_cwd=repo, file_path=str(target), tool_name="Edit")
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
+    def test_blocks_bash_on_main(self) -> None:
+        # A Bash tool call has no file_path; it must stay blocked on main even
+        # though the markdown exemption exists for Write/Edit.
+        repo = self._init_repo()
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
 
     def test_help_flags(self) -> None:
         for flag in ("-h", "--help"):
