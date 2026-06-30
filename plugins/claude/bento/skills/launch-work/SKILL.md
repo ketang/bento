@@ -96,7 +96,14 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
 ```
 
 9. Confirm implementation will happen in that linked worktree, not in the
-   primary checkout. Then read `launch-work/references/project-hook-scripts.md` and
+   primary checkout. If the primary checkout has an untracked
+   `.claude/settings.json` or `.claude/settings.local.json` (the project's
+   permission allowlist), symlink it into the new worktree's `.claude/`
+   directory so the agent inherits the allowlist and does not stall on Bash
+   permission prompts. A linked worktree only contains git-tracked files, so an
+   untracked settings file in the primary checkout is otherwise absent. Skip
+   files the worktree already has. Then read
+   `launch-work/references/project-hook-scripts.md` and
     `launch-work/references/project-hook-skills.md`. Run the **`pre`** hook
     scripts after worktree verification and before dependency installation:
 
