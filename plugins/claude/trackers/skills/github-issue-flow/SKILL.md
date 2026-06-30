@@ -1,7 +1,6 @@
 ---
 name: github-issue-flow
 description: Use when the repo uses GitHub Issues as its tracker — list, claim, and close issues only after verified landing.
-recommended_model: low
 ---
 
 # GitHub Issue Flow

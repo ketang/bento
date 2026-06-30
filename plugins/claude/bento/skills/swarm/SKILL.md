@@ -1,7 +1,6 @@
 ---
 name: swarm
 description: Use when multiple ready tasks can be worked in parallel — triage, batch non-overlapping work, launch isolated worktrees, review plans, land safely.
-recommended_model: high
 ---
 
 # Swarm

@@ -1,7 +1,6 @@
 ---
 name: build-vs-buy
 description: Use before building substantial new functionality — scan for incumbents, research libraries or services, compare against a build baseline.
-recommended_model: high
 ---
 
 # Build vs Buy

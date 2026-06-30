@@ -1,7 +1,6 @@
 ---
 name: beads-issue-flow
 description: Use when the repo uses Beads as its tracker — read, claim, update, and close issues at the correct landing-lifecycle stage.
-recommended_model: low
 ---
 
 # Beads Issue Flow

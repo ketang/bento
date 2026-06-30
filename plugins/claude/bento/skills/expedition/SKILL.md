@@ -1,7 +1,6 @@
 ---
 name: expedition
 description: Use when a large body of mostly interdependent work should run as a named expedition on its own long-lived base branch, with parallel task branches off a shared base branch with one landing lease, durable in-branch plan/log/handoff files, and preserved failed experiments.
-recommended_model: high
 ---
 
 # Expedition
