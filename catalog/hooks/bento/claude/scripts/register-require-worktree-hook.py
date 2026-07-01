@@ -140,36 +140,6 @@ def _entry_for(matcher: str, command: str) -> dict:
     }
 
 
-def _is_stale_bento_entry(entry: dict, current_command: str) -> bool:
-    """True if entry looks like a stale bento require-worktree.sh registration.
-
-    Scoped to this plugin's namespace path (`/bento/bento/`) so other plugins
-    that happen to ship a similarly-named script are not evicted.
-    """
-    if not isinstance(entry, dict):
-        return False
-    if entry.get("matcher") not in EDIT_TOOL_MATCHERS:
-        return False
-    hooks = entry.get("hooks")
-    if not isinstance(hooks, list) or not hooks:
-        return False
-    for hook in hooks:
-        if not isinstance(hook, dict):
-            return False
-        if hook.get("type") != "command":
-            return False
-        cmd = hook.get("command")
-        if not isinstance(cmd, str):
-            return False
-        if "/require-worktree.sh" not in cmd:
-            return False
-        if "/bento/bento/" not in cmd:
-            return False
-        if cmd == current_command:
-            return False
-    return True
-
-
 def register(settings: dict, command: str) -> bool:
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
@@ -178,19 +148,7 @@ def register(settings: dict, command: str) -> bool:
     if not isinstance(pre_tool_use, list):
         return False
 
-    # TODO(bento-stable-symlink): remove this entire block after migration release ships.
-    # It exists only to sweep versioned paths written by older plugin versions.
-    # Evict stale bento require-worktree.sh entries from older plugin versions.
     changed = False
-    kept: list = []
-    for entry in pre_tool_use:
-        if _is_stale_bento_entry(entry, command):
-            changed = True
-            continue
-        kept.append(entry)
-    if changed:
-        pre_tool_use[:] = kept
-
     for matcher in EDIT_TOOL_MATCHERS:
         already_registered = any(
             isinstance(entry, dict)
