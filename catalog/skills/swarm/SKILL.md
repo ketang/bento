@@ -159,6 +159,31 @@ under `/tmp`, the top level of the user's home directory, the project parent,
 or inside the checked-out repository unless the project explicitly documents
 one of those locations.
 
+Worktree setup MUST propagate the project's permission allowlist into the new
+worktree. Claude Code reads project permissions from the `.claude/` directory
+of the checkout it is operating in; a linked worktree only contains git-tracked
+files, so an untracked `.claude/settings.json` or `.claude/settings.local.json`
+in the primary checkout is absent in the worktree. Without it, workers stall
+silently on Bash permission prompts even when spawned with
+`mode: "bypassPermissions"`. At worktree setup time, before the worker starts
+editing, symlink the primary checkout's settings into the worktree:
+
+```bash
+# Run from the worker worktree root, with PRIMARY set to the primary checkout.
+mkdir -p .claude
+for f in settings.json settings.local.json; do
+  if [ -e "$PRIMARY/.claude/$f" ] && [ ! -e ".claude/$f" ]; then
+    ln -s "$PRIMARY/.claude/$f" ".claude/$f"
+  fi
+done
+```
+
+Only create the symlink when the worktree does not already have that file (a
+project that commits `.claude/settings.json` already ships it to every
+worktree). The teammate prompt MUST require this step as part of worktree
+bootstrap so the worker inherits the project's allowlisted command classes and
+does not block on permission prompts.
+
 The teammate must verify working directory and branch before any edits:
 
 ```bash
