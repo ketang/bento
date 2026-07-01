@@ -1,7 +1,6 @@
 ---
 name: generate-audit
 description: Use when a repo needs a project-specific audit playbook or local `audit` skill tailored to its stack and risk surfaces.
-recommended_model: high
 ---
 
 # Generate Audit

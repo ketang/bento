@@ -1,7 +1,6 @@
 ---
 name: go-pgx-goose
 description: Use in Go projects using pgx and Goose migrations — discover repo quality gates and migration/codegen commands before applying stack conventions.
-recommended_model: mid
 ---
 
 # Go + pgx + Goose

@@ -1,7 +1,6 @@
 ---
 name: closure
 description: Do NOT use to clean up your own active or just-finished work — that is land-work's job, including removing your worktree and branch after the merge. Use only as a periodic garbage-collection pass over OTHER agents' abandoned or crashed git state — dead-agent branches, worktrees, stashes, and uncommitted work.
-recommended_model: high
 ---
 
 # Closure

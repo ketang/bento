@@ -1,7 +1,6 @@
 ---
 name: react-vite-mantine
 description: Use in React/TypeScript/Vite + Mantine projects — discover repo verification commands, component organization, and theme conventions before edits.
-recommended_model: mid
 ---
 
 # React + Vite + Mantine

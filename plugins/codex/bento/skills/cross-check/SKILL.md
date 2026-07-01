@@ -1,7 +1,6 @@
 ---
 name: cross-check
 description: Hard trigger — invoke when an issue draft is ready to file, when a plan is ready to present to the operator, or when work on a branch is complete. Hands the artifact to the opposite agent runtime (Claude↔Codex) for an independent, read-only critical review; falls back to an independent same-runtime reviewer when the counterpart is unavailable. Review-only; soft gate.
-recommended_model: high
 ---
 
 # Cross-check

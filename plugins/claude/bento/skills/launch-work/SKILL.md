@@ -1,7 +1,6 @@
 ---
 name: launch-work
 description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Creates branch+worktree. Never skip for small changes.
-recommended_model: mid
 ---
 
 # Launch Work

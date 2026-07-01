@@ -1,7 +1,6 @@
 ---
 name: handoff
 description: Use when the current session needs a structured reboot prompt — context-window pressure, delegation to a teammate, or any user-initiated session handoff. Writes a markdown file under /tmp/ with seven labeled slots and echoes the contents back to chat.
-recommended_model: high
 ---
 
 # Handoff

@@ -1,7 +1,6 @@
 ---
 name: graphql-gqlgen-gql-tada
 description: Use in projects pairing gqlgen (backend) with gql.tada (frontend) — discover schema paths and codegen workflow before applying stack conventions.
-recommended_model: mid
 ---
 
 # GraphQL Stack

@@ -1,7 +1,6 @@
 ---
 name: bentobug
 description: Use when the user explicitly reports a bug or unwanted behavior in a bento skill, hook, or helper script and asks to capture or file it. Captures a structured bento bug report from a required user note. Independent of telemetry — works with zero telemetry data.
-recommended_model: low
 ---
 
 # Bentobug

@@ -1,7 +1,6 @@
 ---
 name: project-memory
 description: Use when a repo maintains durable knowledge files for future sessions — capture facts, log errors, keep the documented memory structure clean.
-recommended_model: low
 ---
 
 # Project Memory
