@@ -98,6 +98,27 @@ if [[ -f "$config_file" ]]; then
   done < "$config_file"
 fi
 
+# Markdown exemption: plan files, specs, and notes are low-risk and should not
+# require a feature branch. When a Write/Edit targets a .md or .markdown file,
+# allow it through. This runs in bash before the Python logging block so no
+# rejection record is written for allowed markdown writes.
+exemption="$(echo "$payload_raw" | python3 -c "
+import json, sys
+try:
+    d = json.load(sys.stdin)
+except Exception:
+    d = {}
+tool = d.get('tool_name') or ''
+ti = d.get('tool_input')
+path = (ti.get('file_path') or '') if isinstance(ti, dict) else ''
+if tool in ('Write', 'Edit') and path.lower().endswith(('.md', '.markdown')):
+    print('allow')
+" 2>/dev/null || true)"
+
+if [[ "$exemption" == "allow" ]]; then
+  exit 0
+fi
+
 cat >&2 <<'MESSAGE'
 Blocked: editing files directly on 'main' is not allowed.
 To disable this check for this repo, add 'require_worktree=false' to .agent-mode.local.
