@@ -5,6 +5,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 from tests.script_test_utils import git, load_module, write
@@ -197,6 +198,46 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertIn(("src/test_example.py", "pytest_skip"), signal_types)
         self.assertIn((".github/workflows/ci.yml", "workflow_disabled"), signal_types)
         self.assertIn(("README.md", "re_enable_todo"), signal_types)
+
+    def test_skips_large_text_files_with_warning(self) -> None:
+        huge_test = self.repo / "src/huge_test.py"
+        huge_test.parent.mkdir(exist_ok=True)
+        huge_test.write_text(
+            "# filler\n" * (32 * 1024) + "@pytest.mark.skip(reason='too large')\n",
+            encoding="utf-8",
+        )
+
+        payload = self.run_helper()
+
+        self.assertIn("skipped large text file: src/huge_test.py", payload["warnings"])
+        signals = payload["test_automation_health"]["disabled_signals"]
+        self.assertNotIn("src/huge_test.py", {entry["path"] for entry in signals})
+
+    def test_disabled_signal_scanning_caches_splitlines_once_per_file(self) -> None:
+        module = load_module(SCRIPT)
+
+        class CountingText(str):
+            splitlines_calls = 0
+
+            def splitlines(self, *args, **kwargs):  # type: ignore[no-untyped-def]
+                type(self).splitlines_calls += 1
+                return super().splitlines(*args, **kwargs)
+
+        content = CountingText(
+            "\n".join(
+                [
+                    "import pytest",
+                    "@pytest.mark.skip(reason='one')",
+                    "@pytest.mark.xfail(reason='two')",
+                ]
+            )
+        )
+
+        with mock.patch.object(module, "read_text_if_reasonable", return_value=content):
+            signals = module.disabled_test_signals(Path("/repo"), ["src/test_example.py"])
+
+        self.assertEqual(len(signals), 2)
+        self.assertEqual(CountingText.splitlines_calls, 1)
 
     def test_classifies_docs_for_design_contributor_and_install_utility_review(self) -> None:
         write(self.repo / "DESIGN.md", "# Design\nArchitecture and tradeoffs.\n")
