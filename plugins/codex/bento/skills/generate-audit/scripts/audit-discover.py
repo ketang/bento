@@ -85,7 +85,7 @@ TEXT_FILE_SUFFIXES = {
     ".swift",
 }
 MAX_TEXT_SCAN_BYTES = 256 * 1024
-_large_file_skips: list[Path] = []
+_large_file_skips: set[Path] = set()
 
 DOC_COMMAND_LANGUAGES = {"bash", "sh", "shell", "zsh", "console", "shellscript"}
 
@@ -276,7 +276,7 @@ def is_text_like(path: str) -> bool:
 def read_text_if_reasonable(path: Path) -> str | None:
     try:
         if path.stat().st_size > MAX_TEXT_SCAN_BYTES:
-            _large_file_skips.append(path)
+            _large_file_skips.add(path)
             return None
         data = path.read_bytes()
     except OSError:
@@ -290,17 +290,13 @@ def read_text_if_reasonable(path: Path) -> str | None:
 
 
 def large_text_file_warnings(repo_root: Path) -> list[str]:
-    seen: set[Path] = set()
     result: list[str] = []
     for path in _large_file_skips:
-        if path in seen:
-            continue
-        seen.add(path)
         try:
             result.append(f"skipped large text file: {path.relative_to(repo_root)}")
         except ValueError:
             result.append(f"skipped large text file: {path}")
-    return result
+    return sorted(result)
 
 
 def git_stdout(*args: str, cwd: Path) -> str | None:
