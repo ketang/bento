@@ -101,6 +101,35 @@ class CodexSourceRepoContainmentTest(unittest.TestCase):
         self.assertIsNotNone(decision, msg=reason)
         self.assertIn("source repo", reason.lower())
 
+    def test_rejects_stray_script_at_repo_root(self) -> None:
+        """A stray *.py at the source-repo root is not a bundled plugin helper
+        and must not be auto-allowed, while the catalog skill script is."""
+        stray = self.source_root / "stray.py"
+        stray.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        stray.chmod(0o755)
+        decision, reason = self.module.decide(
+            str(stray), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNone(decision)
+        self.assertIn("allowed plugin script directory", reason.lower())
+        allowed, allowed_reason = self.module.decide(
+            str(self.script), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNotNone(allowed, msg=allowed_reason)
+
+    def test_allows_script_in_bundled_codex_plugin_dir(self) -> None:
+        """A *.py under plugins/codex/<name>/ is a bundled plugin copy."""
+        bundled_dir = self.source_root / "plugins" / "codex" / "bento" / "hooks"
+        bundled_dir.mkdir(parents=True)
+        bundled = bundled_dir / "tool.py"
+        bundled.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        bundled.chmod(0o755)
+        decision, reason = self.module.decide(
+            str(bundled), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNotNone(decision, msg=reason)
+        self.assertIn("source repo", reason.lower())
+
 
 if __name__ == "__main__":
     unittest.main()
