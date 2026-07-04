@@ -14,7 +14,8 @@ installable plugin bundles from them.
 - `.claude-plugin/marketplace.json` contains generated Claude marketplace metadata
 - the Codex marketplace manifest is not a checked-in artifact; it is produced at
   install time by `install/_codex-installer-lib.sh`
-- `hooks/` contains related automation scripts, but hook wiring is external
+- `catalog/hooks/` contains the canonical platform-peer hook sources; the
+  top-level `hooks/` directory holds only hook docs, references, and experiments
 
 ## Issue tracking
 

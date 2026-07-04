@@ -239,21 +239,33 @@ packaging-specific constraint requires otherwise.
 
 ## Generated plugin format
 
-Each generated plugin lives at `plugins/<plugin-name>/`:
+Generated plugins are organized platform-first, so each runtime gets its own
+tree: `plugins/claude/<plugin-name>/` and `plugins/codex/<plugin-name>/`.
 
 ```text
-plugins/<plugin-name>/
-├── .codex-plugin/
-│   └── plugin.json
-├── .claude-plugin/
-│   └── plugin.json
-├── assets/
-│   ├── icon.png
-│   ├── logo.png
-│   └── screenshot-1.png
-└── skills/
-    └── <skill-name>/
-        └── SKILL.md
+plugins/
+├── claude/
+│   └── <plugin-name>/
+│       ├── .claude-plugin/
+│       │   └── plugin.json
+│       ├── assets/
+│       │   ├── icon.png
+│       │   ├── logo.png
+│       │   └── screenshot-1.png
+│       ├── hooks/          # present only when the plugin declares hooks
+│       │   ├── hooks.json
+│       │   └── scripts/
+│       └── skills/
+│           └── <skill-name>/
+│               └── SKILL.md
+└── codex/
+    ├── plugin-names.txt    # the Codex plugin set the installer materializes
+    └── <plugin-name>/
+        ├── .codex-plugin/
+        │   └── plugin.json
+        ├── assets/
+        ├── hooks/          # present only when the plugin declares hooks
+        └── skills/
 ```
 
 Generated Claude `plugin.json` format:
@@ -330,7 +342,7 @@ bento/
 ├── install/        # end-user installer entrypoints and shared installer helper
 ├── plugins/        # generated installable plugins
 ├── scripts/        # repo utilities such as build-plugins
-├── hooks/          # hook scripts organized by event type
+├── hooks/          # hook docs, references, and experiments (hook sources live in catalog/hooks/)
 ├── AGENTS.md       # agent-facing guidance for working in this repo
 └── README.md
 ```
