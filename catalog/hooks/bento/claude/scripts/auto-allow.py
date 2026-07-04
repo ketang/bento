@@ -52,6 +52,10 @@ READER_FLAG_RE = re.compile(r"^(-[lwcn]|-\d+|--lines=\d+|--bytes=\d+|\d+)$")
 
 SOURCE_REPO_WALK_DEPTH = 8
 
+# Platform packaging directory this hook copy ships under. Used to constrain
+# source-repo containment to this platform's bundled plugin.
+PLATFORM = "claude"
+
 
 def _hard_reject(command: str) -> str | None:
     for token in HARD_REJECT_SENTINELS:
@@ -148,6 +152,44 @@ def _find_source_repo_root(script_path: Path, plugin_name: str) -> Path | None:
     return None
 
 
+def _is_allowed_source_subpath(
+    resolved: Path, source_root: Path, plugin_name: str
+) -> bool:
+    """Whether resolved sits under a directory in the source repo that actually
+    ships plugin helper scripts. Restricting to these paths keeps the trust
+    boundary at the plugin's own bundled helpers rather than any *.py anywhere
+    in a clone of the source repo."""
+    try:
+        parts = resolved.relative_to(source_root).parts
+    except ValueError:
+        return False
+    # plugins/<platform>/<name>/... — the platform's bundled plugin copy
+    if (
+        len(parts) >= 4
+        and parts[0] == "plugins"
+        and parts[1] == PLATFORM
+        and parts[2] == plugin_name
+    ):
+        return True
+    # catalog/skills/*/scripts/... — canonical skill helper scripts
+    if (
+        len(parts) >= 5
+        and parts[0] == "catalog"
+        and parts[1] == "skills"
+        and parts[3] == "scripts"
+    ):
+        return True
+    # catalog/hooks/*/*/scripts/... — canonical hook helper scripts
+    if (
+        len(parts) >= 6
+        and parts[0] == "catalog"
+        and parts[1] == "hooks"
+        and parts[4] == "scripts"
+    ):
+        return True
+    return False
+
+
 def _check_containment(
     resolved: Path, plugin_root: Path, plugin_name: str
 ) -> tuple[Path | None, bool, str]:
@@ -160,7 +202,12 @@ def _check_containment(
         pass
     source_root = _find_source_repo_root(resolved, plugin_name)
     if source_root is not None:
-        return source_root, True, ""
+        if _is_allowed_source_subpath(resolved, source_root, plugin_name):
+            return source_root, True, ""
+        return None, False, (
+            f"resolved path {resolved!s} is inside source repo {source_root!s} "
+            f"but not under an allowed plugin script directory"
+        )
     return None, False, f"resolved path {resolved!s} is outside plugin root {root!s}"
 
 

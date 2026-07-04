@@ -287,6 +287,64 @@ class SourceRepoContainmentTest(unittest.TestCase):
         self.assertIsNone(decision)
         self.assertIn("outside", reason.lower())
 
+    def test_rejects_stray_script_at_repo_root(self) -> None:
+        """A stray *.py at the source-repo root is a valid marketplace root but
+        not a bundled plugin helper, so it must NOT be auto-allowed even though
+        a catalog skill script under the same root is."""
+        stray = self.source_root / "stray.py"
+        stray.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        stray.chmod(0o755)
+        decision, reason = self.module.decide(
+            str(stray), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNone(decision)
+        self.assertIn("allowed plugin script directory", reason.lower())
+        # The catalog skill script under the same root is still allowed.
+        allowed, allowed_reason = self.module.decide(
+            str(self.script), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNotNone(allowed, msg=allowed_reason)
+
+    def test_rejects_script_in_non_scripts_catalog_dir(self) -> None:
+        """A *.py under catalog/skills/<skill>/ but not in scripts/ is not a
+        bundled helper and must not be auto-allowed."""
+        other = self.source_root / "catalog" / "skills" / "foo" / "helper.py"
+        other.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        other.chmod(0o755)
+        decision, reason = self.module.decide(
+            str(other), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNone(decision)
+        self.assertIn("allowed plugin script directory", reason.lower())
+
+    def test_allows_script_in_bundled_plugin_dir(self) -> None:
+        """A *.py under plugins/<platform>/<name>/ is a bundled plugin copy."""
+        bundled_dir = self.source_root / "plugins" / "claude" / "bento" / "hooks"
+        bundled_dir.mkdir(parents=True)
+        bundled = bundled_dir / "tool.py"
+        bundled.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        bundled.chmod(0o755)
+        decision, reason = self.module.decide(
+            str(bundled), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNotNone(decision, msg=reason)
+        self.assertIn("source repo", reason.lower())
+
+    def test_allows_script_in_catalog_hooks_dir(self) -> None:
+        """A *.py under catalog/hooks/<mkt>/<platform>/scripts/ is a helper."""
+        hooks_dir = (
+            self.source_root / "catalog" / "hooks" / "bento" / "claude" / "scripts"
+        )
+        hooks_dir.mkdir(parents=True)
+        hook_script = hooks_dir / "auto-allow.py"
+        hook_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+        hook_script.chmod(0o755)
+        decision, reason = self.module.decide(
+            str(hook_script), PLUGIN_NAME, self.cache_root
+        )
+        self.assertIsNotNone(decision, msg=reason)
+        self.assertIn("source repo", reason.lower())
+
 
 class RunMainTest(unittest.TestCase):
     def setUp(self) -> None:
