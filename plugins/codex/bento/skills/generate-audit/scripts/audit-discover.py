@@ -85,6 +85,7 @@ TEXT_FILE_SUFFIXES = {
     ".swift",
 }
 MAX_TEXT_SCAN_BYTES = 256 * 1024
+_large_file_skips: list[Path] = []
 
 DOC_COMMAND_LANGUAGES = {"bash", "sh", "shell", "zsh", "console", "shellscript"}
 
@@ -275,6 +276,7 @@ def is_text_like(path: str) -> bool:
 def read_text_if_reasonable(path: Path) -> str | None:
     try:
         if path.stat().st_size > MAX_TEXT_SCAN_BYTES:
+            _large_file_skips.append(path)
             return None
         data = path.read_bytes()
     except OSError:
@@ -287,17 +289,18 @@ def read_text_if_reasonable(path: Path) -> str | None:
         return data.decode("utf-8", errors="ignore")
 
 
-def large_text_file_warnings(repo_root: Path, rel_files: list[str]) -> list[str]:
-    warnings: list[str] = []
-    for path in rel_files:
-        if not is_text_like(path):
+def large_text_file_warnings(repo_root: Path) -> list[str]:
+    seen: set[Path] = set()
+    result: list[str] = []
+    for path in _large_file_skips:
+        if path in seen:
             continue
+        seen.add(path)
         try:
-            if (repo_root / path).stat().st_size > MAX_TEXT_SCAN_BYTES:
-                warnings.append(f"skipped large text file: {path}")
-        except OSError:
-            continue
-    return warnings
+            result.append(f"skipped large text file: {path.relative_to(repo_root)}")
+        except ValueError:
+            result.append(f"skipped large text file: {path}")
+    return result
 
 
 def git_stdout(*args: str, cwd: Path) -> str | None:
@@ -1193,7 +1196,7 @@ def main() -> int:
     repo_root = detect_repo_root(cwd)
     primary_branch, warnings = detect_primary_branch(repo_root)
     rel_files = [str(path) for path in walk_repo(repo_root)]
-    warnings.extend(large_text_file_warnings(repo_root, rel_files))
+    _large_file_skips.clear()
     file_set = set(rel_files)
 
     package_json = read_json_if_present(repo_root / "package.json")
@@ -1221,6 +1224,7 @@ def main() -> int:
     doc_commands = extract_doc_commands(repo_root, docs)
     repo_commands = known_repo_commands(rel_files, project_commands, static_analysis)
     doc_command_consistency = evaluate_doc_commands(doc_commands, repo_commands, rel_files)
+    warnings.extend(large_text_file_warnings(repo_root))
 
     payload = {
         "repo_root": str(repo_root),
