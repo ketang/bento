@@ -45,6 +45,13 @@ proposed title and body. Only create the GitHub issue after the shared
 precheck returns `ready: yes`, or `ready: triage-only` with the repo's
 documented triage label and unresolved questions included in the body.
 
+## Migrating to/from this tracker
+
+When moving a repo onto GitHub Issues from another tracker (or off it), follow
+`references/tracker-migration.md`. It covers migrating open issues with a
+count reconciliation, archiving the old tracker's state deliberately, and
+cleaning up stale tracker-specific `.gitignore` entries.
+
 ## Policy Notes
 
 - Do not assume every repo uses an `in-progress` label.
