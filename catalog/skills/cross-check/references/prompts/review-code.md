@@ -17,6 +17,14 @@ The artifact below is a diff (and scope description). Review it on these axes:
   code, missing authz checks.
 - **Tests:** is the new/changed behavior actually covered? Are the tests
   meaningful or do they assert trivialities?
+- **Invocation / reachability:** for every new exported function,
+  background-job worker, config variable, route, or UI component introduced in
+  this diff, confirm a production caller/producer exists — trace the path that
+  actually reaches it. Flag any that are registration-only or test-only (wired
+  up or referenced only in tests, never invoked in production). Also flag any
+  operation implemented separately from an existing entrypoint that could drift
+  from it — a second capture path, duplicated auth handling, a shared constant
+  defined twice.
 - **Drift — anchored to the changed files (NOT a global audit):** for each file
   the diff touches, trace outward to its callers, callees, sibling/parallel
   implementations, its tests, and the docs/comments that describe it. Flag where
