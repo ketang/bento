@@ -146,7 +146,17 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     the current or missing behavior. Commit the failing test, then implement
     the change, make the test pass, and run the relevant verification gates.
 
-12. Run the **`post`** hook scripts before declaring the work ready to land:
+12. If the change touches a runtime-mediated integration surface that no
+    automated test drives — browser-extension popup/service-worker/messaging,
+    mobile capture/record/upload flows, CLI auth/credential commands, or a
+    similar entrypoint whose behavior only appears once the real runtime wires
+    the pieces together — artifact-level tests structurally cannot catch a
+    broken boundary. Before closure, drive one scripted or manual smoke through
+    the **real** entrypoint (use the `verify` skill; for browser flows use
+    `generate-web-demo`/`maintain-web-demo`), or record an explicit named
+    verification gap in the task summary. Do not invent a new smoke harness.
+
+13. Run the **`post`** hook scripts before declaring the work ready to land:
 
     ```bash
     launch-work/scripts/run-lifecycle-extensions.py run-hooks \
@@ -176,7 +186,7 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     halts,
     preserve branch and linked worktree and surface the message.
 
-13. In the final task summary, include a brief note describing any additions
+14. In the final task summary, include a brief note describing any additions
     or expansions made to the automated test suite. If test coverage did not
     change, say so explicitly.
 
@@ -216,6 +226,11 @@ hygiene whenever concurrent activity is possible:
 - Do not skip claim steps when the repo uses a tracker-backed active-work model.
 - If automated coverage is not feasible, state that explicitly and use the
   closest available verification path.
+- When a change touches a runtime-mediated integration surface no automated
+  test drives (extension popup/service-worker/messaging, mobile
+  capture/record/upload, CLI auth/credential commands, and similar), smoke the
+  real entrypoint before closure — via `verify` or the web-demo skills — or
+  record an explicit named verification gap. See workflow step 12.
 - Do not skip discovered hook scripts or hook skills at the `pre` and `post`
   positions. A `75` exit code (hook scripts) or matched `## Stop conditions`
   predicate (hook skills) is a human handoff, not a destructive failure;
@@ -231,6 +246,7 @@ hygiene whenever concurrent activity is possible:
 | "I'll claim or file the issue after I make progress." | Tracker claims prevent duplicate work and encode ownership before implementation. If the repo uses active-work claims, inspect and claim before editing. |
 | "The hook/action probably does not matter for this change." | Project extensions are part of the repo's local contract. Skipping them bypasses stop conditions and project-specific checks that the base skill cannot know. |
 | "I'll add tests after the implementation works." | For new work or behavioral changes with feasible coverage, the failing test is the specification checkpoint. Deferring it invites unverifiable changes and stale final summaries. |
+| "Unit tests pass, so the extension/mobile/CLI-auth flow works." | Runtime-mediated boundaries (message passing, capture pipelines, credential exchange) only connect when the real runtime wires them together; green artifact-level tests cannot exercise that wiring. Smoke the real entrypoint or record a named verification gap. |
 
 ## Stop Conditions
 
