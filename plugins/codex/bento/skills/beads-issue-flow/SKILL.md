@@ -171,6 +171,15 @@ Pushing the integration branch is `land-work`'s responsibility; this rule does
 not push on its behalf. It only refuses to close until that push is confirmed,
 so a landed-but-unpushed branch cannot be marked done.
 
+## Migrating to/from this tracker
+
+When moving a repo off Beads onto another tracker (or onto Beads from one),
+follow `../github-issue-flow/references/tracker-migration.md`. It covers
+migrating open issues with a count reconciliation, archiving the old tracker's
+state deliberately (do not leave a hand-renamed `.beads`-style directory
+untracked), and cleaning up the stale "Beads / Dolt files" `.gitignore` block
+once Beads is decommissioned.
+
 ## Policy Notes
 
 - Do not assume every repo uses `in_progress` as the active-work status.
