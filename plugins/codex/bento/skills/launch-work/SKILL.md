@@ -152,9 +152,10 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     similar entrypoint whose behavior only appears once the real runtime wires
     the pieces together — artifact-level tests structurally cannot catch a
     broken boundary. Before closure, drive one scripted or manual smoke through
-    the **real** entrypoint (use the `verify` skill; for browser flows use
-    `generate-web-demo`/`maintain-web-demo`), or record an explicit named
-    verification gap in the task summary. Do not invent a new smoke harness.
+    the **real** entrypoint (via the `verify` skill or, for browser flows,
+    `generate-web-demo`/`maintain-web-demo` where available; otherwise a direct
+    scripted or manual smoke), or record an explicit named verification gap in
+    the task summary. Do not build a new smoke harness for this.
 
 13. Run the **`post`** hook scripts before declaring the work ready to land:
 
@@ -229,8 +230,9 @@ hygiene whenever concurrent activity is possible:
 - When a change touches a runtime-mediated integration surface no automated
   test drives (extension popup/service-worker/messaging, mobile
   capture/record/upload, CLI auth/credential commands, and similar), smoke the
-  real entrypoint before closure — via `verify` or the web-demo skills — or
-  record an explicit named verification gap. See workflow step 12.
+  real entrypoint before closure — via `verify`/web-demo skills where
+  available, else a direct smoke — or record an explicit named verification
+  gap. See workflow step 12.
 - Do not skip discovered hook scripts or hook skills at the `pre` and `post`
   positions. A `75` exit code (hook scripts) or matched `## Stop conditions`
   predicate (hook skills) is a human handoff, not a destructive failure;
