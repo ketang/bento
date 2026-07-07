@@ -118,6 +118,11 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
     has not started.
 2b. If a tracked `.launch-work/log.md` exists on the branch, remove it in a
     normal commit before review.
+2c. **Gate evidence — discover and baseline.** Read
+    `references/gate-evidence.md` and follow it. Discover the repo's gate suite
+    and confirm the primary branch is green before landing (halt on a
+    pre-existing red base). If no suite is discoverable after checking every
+    listed surface, record that explicitly; never claim green.
 3. Treat any verification that ran before a rebase, merge, cherry-pick, or
    manual conflict resolution as stale evidence only. It does not authorize a
    landing after the candidate changes.
@@ -194,10 +199,16 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
    If you are preparing to merge into local `main`, rebase against local
    `main` before attempting the merge.
    If the rebase or preview merge requires manual conflict resolution, require
-   a fresh full-quality-gate run and an explicit review checkpoint on the
-   resolved candidate before landing.
+   a fresh run of the discovered gate suite (step 2c) and an explicit review
+   checkpoint on the resolved candidate before landing.
 6. Push the feature branch with `--force-with-lease` if rebasing changed
    history.
+6a. **Gate requirement (both merge paths).** Before completing the merge —
+    whether via the step 7 helper or the step 8 compare-and-set flow — the
+    discovered gate suite (step 2c) must pass on the exact merge candidate.
+    Capture each gate command and its exit status. Merge only on all-green or a
+    waiver recorded per `references/gate-evidence.md`. If the merge helper
+    cannot run against the exact candidate, use the step 8 flow instead.
 7. Prefer the repo's documented merge helper if one exists only when it can
    prove or preserve the same exact candidate you verified. If the helper
    cannot expose equivalent candidate evidence, fall back to the explicit
@@ -212,8 +223,8 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 land-work/scripts/land-work-create-preview.py --base-ref <sha>
 ```
 
-   - run the full required verification gate against that exact preview only;
-     do not reuse pre-rebase or pre-conflict results
+   - satisfy the gate requirement (step 6a) against that exact preview only; do
+     not reuse pre-rebase or pre-conflict results
    - re-check the lease with:
 
 ```bash
@@ -279,7 +290,10 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 9. After the landing succeeds, close or update the tracker item through the
    repo's tracker workflow. Follow `references/workflow-invariants.md`:
    mutate tracker state only after the work is verified as landed on the
-   detected primary branch.
+   detected primary branch. The closure note must carry the gate evidence
+   (step 6a) — each gate command and its exit status, or the recorded waiver, or
+   "no gate suite discovered" when none ran. Evidence, not the bare assertion
+   that "tests pass".
 9a. Audit the primary checkout root for stray untracked files. The prepare
     helper only checks the feature worktree, so junk in the primary root
     (stray scratch files, accidental writes) survives every landing. Run the
@@ -347,6 +361,11 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 ## Non-Negotiable Rules
 
 - Do not close the issue before the verified merge succeeds.
+- Do not merge unless the discovered gate suite passes on the exact candidate
+  (step 6a) or a waiver is recorded; never claim green when no suite was found.
+- Do not land onto a primary branch that is already red on a discovered gate.
+- Do not close without gate evidence in the note — commands and exit statuses,
+  not the bare claim that tests pass.
 - Do not fast-forward feature branches into the primary branch unless the repo
   explicitly requires it.
 - Always use regular merge commits (`--no-ff`). Never squash.
@@ -384,6 +403,8 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 | "The diff is simple; I can skip the preview/exact-candidate checks." | Simplicity does not prove candidate identity. Preview, lease, and landing verification protect against stale bases, helper mismatch, generated artifacts, and accidental local-only state. |
 | "Closure will clean up my just-landed branch." | The landing agent owns direct post-merge cleanup: leave the feature worktree, remove that worktree, then delete the merged branch. Closure is only a fallback for stale or ambiguous leftovers. |
 | "The landing is done; the preview worktree under /tmp is harmless to leave." | Preview worktrees are registered git worktrees, not loose temp files. Left behind, they accumulate across landings and make every later `git worktree` probe slower or crash-prone. Remove the preview on every exit path; closure is not your janitor for worktrees you created this run. |
+| "The change is small and I ran the tests locally earlier, so gates are fine." | Earlier or partial runs are not evidence for the exact candidate, and "small" does not exempt a change from the repo's gates. |
+| "The primary branch was already red, but my branch didn't break it." | Landing on a red base hides which change is responsible and lets breakage linger. Halt on a pre-existing red base. |
 
 ## Tracker Handoff
 

@@ -567,6 +567,32 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertIn("For Codex, avoid shell pipelines for discovery", normalized_skill_text)
         self.assertIn("git worktree list --porcelain", normalized_skill_text)
 
+    def test_build_repo_includes_land_work_gate_evidence_step(self) -> None:
+        self.build_repo()
+
+        skills_dir = self.root / "plugins" / "claude" / "bento" / "skills" / "land-work"
+        skill_text = (skills_dir / "SKILL.md").read_text(encoding="utf-8")
+        normalized = re.sub(r"\s+", " ", skill_text)
+
+        # (a) discovered gates run, (b) merge blocked absent a recorded waiver,
+        # (c) exit-status evidence in the closure note, (d) halt on red primary.
+        self.assertIn("Gate evidence", normalized)
+        self.assertIn(
+            "discovered gate suite (step 2c) must pass on the exact merge candidate",
+            normalized,
+        )
+        self.assertIn("Capture each gate command and its exit status", normalized)
+        self.assertIn("waiver recorded", normalized)
+        self.assertIn("already red on a discovered gate", normalized)
+
+        reference = (skills_dir / "references" / "gate-evidence.md").read_text(encoding="utf-8")
+        normalized_ref = re.sub(r"\s+", " ", reference)
+        self.assertIn("Pre-existing red primary branch", reference)
+        self.assertIn("no repo gate suite discovered", normalized_ref)
+        # waiver carve-out reconciles with the tracker-mutation-timing invariant
+        self.assertIn("an unrecorded waiver is not a waiver", normalized_ref)
+        self.assertIn("one tracker mutation allowed before verified landing", normalized_ref)
+
     def test_issue_completeness_precheck_is_packaged_with_tracker_flows(self) -> None:
         self.build_repo()
 
