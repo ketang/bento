@@ -28,6 +28,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shlex
 import shutil
 import subprocess
 import sys
@@ -76,10 +77,44 @@ PLUGIN_PRECONDITIONS = (
 # uses where "@" abuts preceding text.
 _IMPORT_RE = re.compile(r"(?:^|\s)@(\S+)")
 
-# Binary-gating patterns inside wrapper scripts: `command -v X`, `which X`,
-# `hash X`, `type X`, with optional quoting around the binary name.
+# Extensions that mark a post-@ token as a doc import even without an
+# existing-directory prefix. Kept narrow so prose like "@app.route" is not
+# treated as a dangling import.
+_DOC_IMPORT_EXTENSIONS = frozenset({".md", ".markdown", ".mdc", ".mdx"})
+
+# Fenced code blocks (``` or ~~~) and inline code spans (`...`): @tokens inside
+# them are code, not doc imports (e.g. `@types/node`, `@app.route("/x")`).
+_FENCE_RE = re.compile(r"(?ms)^[ \t]*(`{3,}|~{3,}).*?^[ \t]*\1[ \t]*$")
+_INLINE_CODE_RE = re.compile(r"`+[^`\n]*`+")
+
+# Command-position binary gating inside wrapper scripts: `command -v X`,
+# `which X`, `hash X`, `type X`. Anchored to the start of a shell command
+# segment (optionally after a control keyword and/or `!`) so prose and flags
+# like `find . -type f` or a `# which formatter` comment never match.
 _GATE_RE = re.compile(
-    r"""(?:command\s+-v|which|hash|type)\s+["']?([A-Za-z0-9_.\-/]+)["']?"""
+    r"""^\s*(?:(?:if|elif|while|until|then|else|do)\s+)?!?\s*
+        (?:command\s+-v|which|hash|type)\s+
+        ["']?([A-Za-z0-9_.\-/]+)""",
+    re.VERBOSE,
+)
+
+# Split a shell line into command segments on the separators that begin a new
+# simple command, so gating is judged at each segment's start.
+_SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;&|()]")
+
+# Leading VAR=value environment-assignment prefix (e.g. `FOO=1 my-hook.sh`).
+_ENV_ASSIGN_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*=")
+
+# Shell keywords/builtins that are never external binaries. When a hook
+# command's effective first word is one of these, it cannot be judged as a
+# missing binary, so it is skipped.
+_SHELL_BUILTINS = frozenset(
+    {
+        "if", "then", "else", "elif", "fi", "for", "while", "until", "do",
+        "done", "case", "esac", "exec", "eval", "source", ".", "[", "[[",
+        "test", "true", "false", ":", "cd", "export", "unset", "set",
+        "command", "builtin", "return", "exit", "read", "echo", "printf",
+    }
 )
 
 
@@ -110,18 +145,44 @@ def repo_root(cwd: str) -> str | None:
 # --- check 1: imports -------------------------------------------------------
 
 
-def _is_import_token(tok: str) -> bool:
-    """True if a post-@ token looks like a file reference rather than a
-    decorator, mention, or bare word. Requires a path separator or a file
-    extension so bare tokens like ``@dangerous`` are ignored."""
-    return "/" in tok or bool(re.search(r"\.\w+$", tok))
+def _strip_code(text: str) -> str:
+    """Blank out fenced code blocks and inline code spans so @tokens inside
+    them (e.g. `@types/node`) are not mistaken for doc imports."""
+    text = _FENCE_RE.sub(" ", text)
+    return _INLINE_CODE_RE.sub(" ", text)
+
+
+def _clean_token(raw: str) -> str:
+    """Strip wrapping quotes/backticks and trailing punctuation, looping until
+    stable so mixed trailers like ``docs/x.md`,`` fully resolve."""
+    tok = raw
+    while True:
+        stripped = tok.strip("`\"'").rstrip(",);:.")
+        if stripped == tok:
+            return stripped
+        tok = stripped
+
+
+def _looks_like_import(token: str, target: Path) -> bool:
+    """True if a post-@ token names a doc import rather than prose. A token
+    qualifies when it has a doc extension, or contains a path separator and
+    resolves under an existing directory. Bare words (``@dangerous``) and
+    package specs without a real directory prefix (``@types/node``) do not."""
+    if Path(token).suffix.lower() in _DOC_IMPORT_EXTENSIONS:
+        return True
+    if "/" in token:
+        try:
+            return target.parent.is_dir()
+        except OSError:
+            return False
+    return False
 
 
 def _extract_imports(text: str) -> list[str]:
     imports = []
-    for raw in _IMPORT_RE.findall(text):
-        tok = raw.strip("`\"'").rstrip(",);:.")
-        if tok and _is_import_token(tok):
+    for raw in _IMPORT_RE.findall(_strip_code(text)):
+        tok = _clean_token(raw)
+        if tok:
             imports.append(tok)
     return imports
 
@@ -166,6 +227,8 @@ def check_imports(root: Path) -> list[str]:
             target = Path(expanded)
             if not target.is_absolute():
                 target = doc.parent / target
+            if not _looks_like_import(token, target):
+                continue
             if target.is_dir():
                 continue
             if target.exists():
@@ -244,11 +307,18 @@ def _gated_binaries(script: Path) -> list[str]:
     if text is None:
         return []
     seen: list[str] = []
-    for name in _GATE_RE.findall(text):
-        # Skip shell builtins commonly probed and path-y self references.
-        if "/" in name or name in seen or name in {"-v", "command"}:
+    for line in text.splitlines():
+        if line.lstrip().startswith("#"):
             continue
-        seen.append(name)
+        for segment in _SEGMENT_SPLIT_RE.split(line):
+            match = _GATE_RE.match(segment)
+            if match is None:
+                continue
+            name = match.group(1)
+            # Skip path-y self references and shell builtins commonly probed.
+            if "/" in name or name in seen or name in {"-v", "command"}:
+                continue
+            seen.append(name)
     return seen
 
 
@@ -273,11 +343,34 @@ def check_hook_binaries(root: Path, env: dict) -> list[str]:
         if not isinstance(settings, dict):
             continue
         for command in _iter_hook_commands(settings):
-            first = command.split()[0]
+            # Commands that reference ${CLAUDE_PLUGIN_ROOT} belong to some
+            # plugin; from the project root we cannot know which. When the
+            # doctor itself runs as a plugin hook that variable is set to
+            # bento's own root, so expanding it here would judge another
+            # plugin's command against the wrong tree. Skip entirely.
+            if "CLAUDE_PLUGIN_ROOT" in command:
+                continue
+            try:
+                words = shlex.split(command)
+            except ValueError:
+                words = command.split()
+            # Skip leading VAR=value environment-assignment prefixes.
+            idx = 0
+            while idx < len(words) and _ENV_ASSIGN_RE.match(words[idx]):
+                idx += 1
+            if idx >= len(words):
+                continue
+            first = words[idx]
+            # A shell builtin/keyword as the effective command is never a
+            # missing external binary, so it cannot be judged here.
+            if first in _SHELL_BUILTINS:
+                continue
             resolved = _expand_vars(first, env)
             if resolved is None:
-                # Contains an unset variable (e.g. ${CLAUDE_PLUGIN_ROOT});
-                # cannot judge from here, so skip rather than false-flag.
+                # Contains an unset variable; cannot judge from here, so skip
+                # rather than false-flag.
+                continue
+            if not resolved:
                 continue
             if "/" in resolved:
                 script = Path(os.path.expanduser(resolved))
@@ -436,15 +529,29 @@ def evaluate(
 
 
 def main() -> int:
+    # The whole body — including output emission and the final flush — is
+    # guarded so no failure path (malformed stdin, a check bug, or a
+    # BrokenPipe/OSError while writing) can ever exit nonzero and block the
+    # session. This hook's core guarantee is: always exit 0.
     try:
         hook_input = json.load(sys.stdin)
         decision = evaluate(hook_input)
+        if decision is not None:
+            json.dump(decision, sys.stdout)
+            sys.stdout.write("\n")
+        sys.stdout.flush()
+    except BrokenPipeError:
+        # Downstream closed the pipe. Redirect stdout to devnull so the
+        # interpreter's shutdown flush cannot re-raise and force a nonzero
+        # exit.
+        try:
+            devnull = os.open(os.devnull, os.O_WRONLY)
+            os.dup2(devnull, sys.stdout.fileno())
+        except Exception:
+            pass
     except Exception:
         # Never block session start.
-        return 0
-    if decision is not None:
-        json.dump(decision, sys.stdout)
-        sys.stdout.write("\n")
+        pass
     return 0
 
 

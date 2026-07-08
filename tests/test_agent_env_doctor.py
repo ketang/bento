@@ -1,7 +1,9 @@
 import importlib.machinery
 import importlib.util
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -67,6 +69,26 @@ class AgentEnvDoctorTest(unittest.TestCase):
     def _context(self, decision) -> str:
         self.assertIsNotNone(decision)
         return decision["hookSpecificOutput"]["additionalContext"]
+
+    def _run_script(self, payload: str, env_overrides=None):
+        """Run the hook as a subprocess in a hermetic environment: a fake HOME
+        (so the developer's real plugin registry never leaks into the result)
+        and an empty PATH. Launched via the interpreter's absolute path so the
+        empty PATH does not break process spawning."""
+        env = {
+            "HOME": str(self.home),
+            "PATH": "",
+            "PYTHONDONTWRITEBYTECODE": "1",
+        }
+        if env_overrides:
+            env.update(env_overrides)
+        return subprocess.run(
+            [sys.executable, str(SCRIPT)],
+            input=payload,
+            capture_output=True,
+            text=True,
+            env=env,
+        )
 
     # --- check 1: imports ---------------------------------------------------
 
@@ -264,13 +286,7 @@ class AgentEnvDoctorTest(unittest.TestCase):
         # End-to-end: even with problems present, the process exits 0 and emits
         # only a hookSpecificOutput object (never a blocking decision).
         (self.repo / "CLAUDE.md").write_text("@gone.md\n", encoding="utf-8")
-        payload = json.dumps(self._hook_input())
-        result = subprocess.run(
-            ["python3", str(SCRIPT)],
-            input=payload,
-            capture_output=True,
-            text=True,
-        )
+        result = self._run_script(json.dumps(self._hook_input()))
         self.assertEqual(result.returncode, 0)
         # Output (if any) must be a SessionStart additionalContext object, never
         # {"decision": "block"} or exit code 2.
@@ -281,13 +297,232 @@ class AgentEnvDoctorTest(unittest.TestCase):
             self.assertNotIn("decision", parsed)
 
     def test_malformed_stdin_exits_zero(self) -> None:
-        result = subprocess.run(
-            ["python3", str(SCRIPT)],
-            input="not json",
-            capture_output=True,
-            text=True,
-        )
+        result = self._run_script("not json")
         self.assertEqual(result.returncode, 0)
+
+    # --- regression: false-positive generators ------------------------------
+
+    def test_import_token_in_code_fence_ignored(self) -> None:
+        # B1: @tokens inside a fenced code block are code, not doc imports.
+        (self.repo / "CLAUDE.md").write_text(
+            "See the config:\n```json\n\"deps\": [\"@types/node\"]\n```\n"
+            "and inline `@app.route(\"/health\")` too.\n",
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_package_spec_token_not_flagged(self) -> None:
+        # B1: @types/node in prose has no doc extension and no existing-dir
+        # prefix, so it is not a dangling import.
+        (self.repo / "CLAUDE.md").write_text(
+            "Install @types/node and @scope/pkg for typings.\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_decorator_prose_not_flagged(self) -> None:
+        # B1: @app.route("/health") in prose must not be flagged.
+        (self.repo / "AGENTS.md").write_text(
+            "The handler is registered with @app.route(\"/health\").\n",
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_existing_dir_prefix_dangling_import_still_flagged(self) -> None:
+        # B1: an extension-less token into a real directory is still an import.
+        (self.repo / "docs").mkdir()
+        (self.repo / "CLAUDE.md").write_text("@docs/missing-guide\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("docs/missing-guide", context)
+        self.assertIn("dangling", context)
+
+    def test_trailing_backtick_token_resolves(self) -> None:
+        # B5: '@docs/setup.md`,' must strip both the comma and the backtick and
+        # resolve to the real, non-empty file (so: silent).
+        (self.repo / "docs").mkdir()
+        (self.repo / "docs" / "setup.md").write_text("real\n", encoding="utf-8")
+        (self.repo / "CLAUDE.md").write_text(
+            "Read @docs/setup.md`, please.\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_import_cycle_terminates_without_spam(self) -> None:
+        # a.md <-> b.md mutually import each other; must terminate, no warnings.
+        (self.repo / "CLAUDE.md").write_text("@a.md\n", encoding="utf-8")
+        (self.repo / "a.md").write_text("A\n@b.md\n", encoding="utf-8")
+        (self.repo / "b.md").write_text("B\n@a.md\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_gate_regex_does_not_match_find_type_flag(self) -> None:
+        # B4: `find . -type f` inside a wrapper must not register 'f' (or any
+        # token) as a gated binary => no inert-hook warning.
+        wrapper = self.repo / "guard.sh"
+        wrapper.write_text(
+            "#!/bin/sh\nfind . -type f -name '*.py'\n# decide which formatter\n",
+            encoding="utf-8",
+        )
+        self._write_settings(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {"hooks": [{"type": "command", "command": str(wrapper)}]}
+                    ]
+                }
+            }
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_quoted_hook_command_with_args_not_false_flagged(self) -> None:
+        # B2: a quoted command path with a trailing flag must resolve to the
+        # real script, not to a quote-wrapped path that "does not exist".
+        wrapper = self.repo / "hook.sh"
+        wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self._write_settings(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f'"{wrapper}" --fast',
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_env_assignment_prefix_not_false_flagged(self) -> None:
+        # B3: `FOO=1 <script>` must skip the assignment and judge the script,
+        # not shutil.which("FOO=1").
+        wrapper = self.repo / "hook.sh"
+        wrapper.write_text("#!/bin/sh\nexit 0\n", encoding="utf-8")
+        self._write_settings(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": f"FOO=1 BAR=2 {wrapper}",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_shell_builtin_hook_command_not_false_flagged(self) -> None:
+        # B3: a builtin/keyword as the effective command cannot be judged.
+        self._write_settings(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {"type": "command", "command": "[ -x /bin/true ]"}
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_plugin_root_command_skipped_even_when_var_set(self) -> None:
+        # B6: a command referencing ${CLAUDE_PLUGIN_ROOT} must be skipped even
+        # when that variable is defined in the doctor's own environment (it
+        # points at bento's root, not the other plugin's).
+        self._write_settings(
+            {
+                "hooks": {
+                    "SessionStart": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": "${CLAUDE_PLUGIN_ROOT}/hooks/x.py",
+                                }
+                            ]
+                        }
+                    ]
+                }
+            }
+        )
+        env = {
+            "HOME": str(self.home),
+            "PATH": "",
+            "CLAUDE_PLUGIN_ROOT": str(self.root / "bento-plugin-root"),
+        }
+        self.assertIsNone(self._evaluate(env=env))
+
+    def test_settings_local_json_is_scanned(self) -> None:
+        # settings.local.json is scanned alongside settings.json.
+        self._write_settings(
+            {
+                "hooks": {
+                    "PreToolUse": [
+                        {
+                            "hooks": [
+                                {
+                                    "type": "command",
+                                    "command": str(self.repo / "nope.sh"),
+                                }
+                            ]
+                        }
+                    ]
+                }
+            },
+            name="settings.local.json",
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("nope.sh", context)
+        self.assertIn("settings.local.json", context)
+
+    def test_malformed_settings_json_flagged(self) -> None:
+        settings_dir = self.repo / ".claude"
+        settings_dir.mkdir(exist_ok=True)
+        (settings_dir / "settings.json").write_text("{not json", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("unreadable hook config", context)
+        self.assertIn("settings.json", context)
+
+    def test_unreadable_agent_doc_exits_zero(self) -> None:
+        # A doc the process cannot read must not crash the hook (fix A: every
+        # path, including read errors, ends in exit 0).
+        doc = self.repo / "CLAUDE.md"
+        doc.write_text("@gone.md\n", encoding="utf-8")
+        os.chmod(doc, 0o000)
+        try:
+            result = self._run_script(json.dumps(self._hook_input()))
+        finally:
+            os.chmod(doc, 0o644)
+        self.assertEqual(result.returncode, 0)
+
+    def test_closed_stdout_broken_pipe_exits_zero(self) -> None:
+        # fix A: a BrokenPipeError while emitting the decision must not surface
+        # as a nonzero exit. Give the child a dangling import so it produces
+        # output, then close the read end of its stdout pipe before it writes.
+        (self.repo / "CLAUDE.md").write_text("@gone.md\n", encoding="utf-8")
+        payload = json.dumps(self._hook_input())
+        read_fd, write_fd = os.pipe()
+        proc = subprocess.Popen(
+            [sys.executable, str(SCRIPT)],
+            stdin=subprocess.PIPE,
+            stdout=write_fd,
+            stderr=subprocess.DEVNULL,
+            env={"HOME": str(self.home), "PATH": ""},
+        )
+        os.close(write_fd)
+        os.close(read_fd)  # no reader: any child write to stdout hits EPIPE
+        proc.stdin.write(payload.encode())
+        proc.stdin.close()
+        self.assertEqual(proc.wait(timeout=30), 0)
 
 
 if __name__ == "__main__":

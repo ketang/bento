@@ -18,6 +18,10 @@
           {
             "type": "command",
             "command": "${PLUGIN_ROOT}/hooks/scripts/seed-agent-plugins.py ${PLUGIN_ROOT}"
+          },
+          {
+            "type": "command",
+            "command": "${PLUGIN_ROOT}/hooks/scripts/agent-env-doctor.py"
           }
         ]
       }
