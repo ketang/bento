@@ -63,6 +63,7 @@ class BuildPluginsTest(unittest.TestCase):
         claude_bento = self.root / "plugins" / "claude" / "bento"
         codex_bento = self.root / "plugins" / "codex" / "bento"
         executable_helpers = [
+            claude_bento / "skills" / "audit" / "scripts" / "audit-discover.py",
             claude_bento / "skills" / "build-vs-buy" / "scripts" / "build-vs-buy-discover.py",
             claude_bento / "skills" / "closure" / "scripts" / "closure-scan.py",
             claude_bento / "skills" / "expedition" / "scripts" / "expedition.py",
@@ -82,6 +83,8 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertFalse((claude_bento / ".codex-plugin").exists())
         self.assertTrue((codex_bento / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse((codex_bento / ".claude-plugin").exists())
+        self.assertTrue((claude_bento / "skills" / "audit" / "SKILL.md").exists())
+        self.assertTrue((codex_bento / "skills" / "audit" / "SKILL.md").exists())
         self.assertTrue((claude_bento / "skills" / "closure" / "SKILL.md").exists())
         self.assertTrue((claude_bento / "skills" / "generate-web-demo" / "SKILL.md").exists())
         self.assertTrue((claude_bento / "skills" / "maintain-web-demo" / "SKILL.md").exists())
@@ -148,6 +151,8 @@ class BuildPluginsTest(unittest.TestCase):
         skills_dir = codex_bento / manifest["skills"].lstrip("./")
 
         declared = self.module.skills_for("bento", "codex")
+        self.assertIn("audit", declared)
+        self.assertIn("generate-audit", declared)
         self.assertIn("handoff", declared)
 
         for skill in declared:
