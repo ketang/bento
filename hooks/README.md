@@ -27,8 +27,18 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
 
 ## Available catalog hooks
 
-- `bento` — Bash auto-approval (`PreToolUse`), worktree-permission seeding, and
-  the `require-worktree` registration hook (`SessionStart`).
+- `bento` — Bash auto-approval (`PreToolUse`), worktree-permission seeding, the
+  `require-worktree` registration hook, and the `agent-env-doctor`
+  (`SessionStart`). The doctor is advisory and non-blocking: on session start it
+  scans the repo for agent wiring that is silently broken — dangling/empty
+  `@import`s in `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, registered hook commands
+  whose binary is missing, dormant installed plugins, and unrecognized
+  `.agent-mode.local` tokens — and injects warning lines into session context.
+  It never blocks (always exits 0) and is suppressed per repo by adding
+  `agent_env_doctor=false` to `.agent-mode.local` (the same file and mechanism
+  the `require-worktree` and `hygiene` hooks use). A Codex peer runs the
+  runtime-agnostic subset (the `@import` and `.agent-mode.local` checks); the
+  hook-binary and dormant-plugin checks are Claude-only.
 - `session-id` — persists the Claude Code session id and a per-session scratch
   directory (`SessionStart`).
 - `telemetry` — opt-in Bash telemetry capture.

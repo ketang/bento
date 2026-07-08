@@ -25,6 +25,10 @@
           {
             "type": "command",
             "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/register-require-worktree-hook.py ${CLAUDE_PLUGIN_ROOT}"
+          },
+          {
+            "type": "command",
+            "command": "${CLAUDE_PLUGIN_ROOT}/hooks/scripts/agent-env-doctor.py"
           }
         ]
       }
