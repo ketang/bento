@@ -87,6 +87,7 @@ PLUGIN_DEFS = {
             "swarm",
             "expedition",
             "build-vs-buy",
+            "audit",
             "generate-audit",
             "generate-web-demo",
             "maintain-web-demo",

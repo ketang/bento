@@ -12,7 +12,7 @@ from tests.script_test_utils import git, load_module, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-SCRIPT = REPO_ROOT / "catalog/skills/generate-audit/scripts/audit-discover.py"
+SCRIPT = REPO_ROOT / "catalog/skills/audit/scripts/audit-discover.py"
 
 
 def run(cmd: list[str], cwd: Path, check: bool = True, env: dict | None = None) -> subprocess.CompletedProcess[str]:

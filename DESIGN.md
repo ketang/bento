@@ -190,7 +190,8 @@ Current rationale summary:
 | `beads-issue-flow` | low | Narrow procedural tracker workflow with explicit commands |
 | `build-vs-buy` | high | Constraint discovery, external comparison, and tradeoff judgment |
 | `closure` | high | Cleanup can discard useful git state despite helper support |
-| `generate-audit` | high | Broad repo inference and tailored audit generation |
+| `audit` | high | Broad repo inference, critical review, and cross-surface report synthesis |
+| `generate-audit` | high | Legacy compatibility for tailored audit-plan generation |
 | `github-issue-flow` | low | Narrow procedural issue workflow with explicit commands |
 | `go-pgx-goose` | mid | Stack-specific implementation with migration and fixture risk |
 | `graphql-gqlgen-gql-tada` | mid | Schema and generated-artifact workflow with cross-layer effects |
