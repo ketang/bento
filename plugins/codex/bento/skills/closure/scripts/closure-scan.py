@@ -465,9 +465,11 @@ def _jsonl_last_timestamp(jsonl_file: Path) -> float:
 def _encode_claude_project_path(path: Path) -> str:
     """
     Encode an absolute path into the directory name used by Claude Code under
-    ~/.claude/projects/.  Example: /home/user/project/foo → -home-user-project-foo
+    ~/.claude/projects/.  Claude replaces both "/" and "." with "-", so a
+    worktree at /home/user/.local/share/worktrees/foo encodes as
+    -home-user--local-share-worktrees-foo (note the doubled dash from "/.").
     """
-    return str(path).replace("/", "-")
+    return str(path).replace("/", "-").replace(".", "-")
 
 
 def scan_claude_sessions(worktree_path: Path) -> dict[str, object] | None:
