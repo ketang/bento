@@ -918,5 +918,24 @@ class LaunchWorkLogScanTest(unittest.TestCase):
         self.assertTrue(wt.exists())
 
 
+class EncodeClaudeProjectPathTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.mod = _load_module()
+
+    def test_plain_path_replaces_slashes(self) -> None:
+        encoded = self.mod._encode_claude_project_path(Path("/home/user/project/foo"))
+        self.assertEqual(encoded, "-home-user-project-foo")
+
+    def test_dotted_worktree_path_matches_claude_convention(self) -> None:
+        # Claude Code encodes both "/" and "." as "-", so a worktree under
+        # ~/.local/share/worktrees/... yields a doubled dash from "/.".
+        encoded = self.mod._encode_claude_project_path(
+            Path("/home/ketan/.local/share/worktrees/bento/bento-d8m")
+        )
+        self.assertEqual(
+            encoded, "-home-ketan--local-share-worktrees-bento-bento-d8m"
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
