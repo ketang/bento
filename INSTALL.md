@@ -14,6 +14,11 @@ Then install one or more plugins:
 /plugin install stacks@bento
 ```
 
+The marketplace also publishes `session-id` and `hygiene` (hook-only plugins),
+plus the external `bugshot` and `storystore` plugins. The authoritative list is
+`.claude-plugin/marketplace.json`; see
+[docs/installing-plugins.md](docs/installing-plugins.md) for what each provides.
+
 Reload plugins in the current session:
 
 ```text
@@ -32,5 +37,8 @@ curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-hom
 curl -fsSL https://raw.githubusercontent.com/ketang/bento/main/install/codex-project.sh | bash
 ```
 
-For the longer guide, including updates, removal, and hook wiring, see
-[docs/installing-plugins.md](docs/installing-plugins.md).
+Lifecycle hooks ship inside the plugins, so installing a plugin installs its
+hooks — no manual `settings.json` wiring is needed.
+
+For the longer guide, including updates, removal, and how bundled hooks install,
+see [docs/installing-plugins.md](docs/installing-plugins.md).

@@ -35,7 +35,7 @@ their own `hooks.json` and scripts where their hook contracts differ.
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
 | Issue tracking | Beads (`bd`) | Keeps tracker state in-repo and matches the included `beads-issue-flow` workflow |
 | Skill source model | Canonical skills in `catalog/skills/`; generated installable plugins in `plugins/` | Supports both broad and narrow install options without maintaining duplicate skill content |
-| Initial plugin set | `bento`, `trackers`, `stacks` | Keeps installation overhead low while still allowing narrower opt-in installs |
+| Published Claude plugin set | `bento`, `trackers`, `stacks`, `session-id`, `hygiene`, plus external `bugshot` and `storystore` | Keeps installation overhead low while still allowing narrower opt-in installs; the authoritative list is `.claude-plugin/marketplace.json`. Codex materializes only `bento`, `trackers`, `stacks` (see `plugins/codex/plugin-names.txt`). |
 
 ## Registration
 
@@ -57,14 +57,19 @@ their own `hooks.json` and scripts where their hook contracts differ.
 
 Canonical skills live under `catalog/skills/<skill-name>/`.
 
-Generated plugins live at `plugins/<name>/` with:
-- `.claude-plugin/plugin.json` — Claude metadata (name, description, version, author)
-- `.codex-plugin/plugin.json` — Codex metadata and interface presentation fields
+Generated plugins are organized platform-first, one tree per runtime:
+`plugins/claude/<name>/` and `plugins/codex/<name>/`. Each plugin directory
+contains:
+- `.claude-plugin/plugin.json` (Claude tree) or `.codex-plugin/plugin.json`
+  (Codex tree) — the platform's plugin metadata
 - `assets/` — generated Codex-facing icon, logo, and screenshot assets
 - `skills/<skill-name>/SKILL.md` — composed from the canonical shared skill
   contract and any target-platform overlay
 - `hooks/hooks.json` and `hooks/scripts/` — copied from the target platform's
   peer hook source when the plugin declares hooks for that runtime
+
+`plugins/codex/plugin-names.txt` lists exactly the Codex plugin directories the
+installer materializes.
 
 For Codex, these generated artifacts expose installable skills, apps, MCP
 servers, hooks, and UI metadata. They do not currently define custom slash
@@ -202,4 +207,9 @@ Current rationale summary:
 
 ## Hook format
 
-Scripts in `hooks/<event-name>/<concern>.sh`. Wire into `settings.json` with the tool matcher format. Multiple hooks for the same event are listed as an array within the matcher entry.
+Lifecycle hooks are platform-peer sources under
+`catalog/hooks/<hook-name>/<platform>/`, each with its own `hooks.json` and
+`scripts/`. `scripts/build-plugins` copies the peer source for the target
+runtime into `plugins/<platform>/<plugin>/hooks/`, so hooks ship inside the
+generated plugins and install with them — they are not wired separately into
+`settings.json`. See [hooks/README.md](hooks/README.md) for the exact format.

@@ -9,7 +9,7 @@ This guide covers the end-user workflow:
 2. Install one or more plugins from that marketplace
 3. Find the generated Codex plugin artifacts in this repo
 4. Update or remove plugins later
-5. Optionally wire in hook scripts from this repo
+5. Understand how bundled lifecycle hooks install with their plugins
 
 ## Before you start
 
@@ -31,11 +31,16 @@ its plugins. Adding the marketplace does not install any plugins by itself.
 
 ## Step 2: Choose a plugin
 
-The marketplace currently publishes these plugins:
+The marketplace currently publishes these plugins (authoritative list:
+`.claude-plugin/marketplace.json`):
 
 - `bento` for the full Bento skill pack
 - `trackers` for tracker-oriented workflows such as Beads and GitHub Issues
 - `stacks` for stack-specific engineering skills
+- `session-id` for the SessionStart hook that records the Claude Code session id
+- `hygiene` for the SessionStart + Stop hooks that warn about untracked files
+- `bugshot` (sourced from `ketang/bugshot`) for the screenshot review gallery
+- `storystore` (sourced from `ketang/storystore`) for intent-story documentation
 
 If you are unsure, start with `bento`.
 
@@ -73,8 +78,9 @@ Bento provides two Codex installers:
 - project-scoped: only available inside one repository
 
 Both installers download the published plugin bundles from GitHub, install the
-three Bento plugins, create a timestamped backup before editing any existing
-marketplace file, and safely merge only the Bento entries.
+Codex plugin set (`bento`, `trackers`, `stacks` — the entries in
+`plugins/codex/plugin-names.txt`), create a timestamped backup before editing
+any existing marketplace file, and safely merge only the Bento entries.
 
 ### Home-scoped install
 
@@ -122,12 +128,13 @@ file.
 For reference, this repository generates the following Codex artifacts when
 `scripts/build-plugins` is run:
 
-- `plugins/<plugin-name>/.codex-plugin/plugin.json`
-- `plugins/<plugin-name>/assets/icon.png`
-- `plugins/<plugin-name>/assets/logo.png`
-- `plugins/<plugin-name>/assets/screenshot-1.png`
-- `plugins/<plugin-name>/assets/screenshot-2.png`
-- `plugins/<plugin-name>/assets/screenshot-3.png`
+- `plugins/codex/<plugin-name>/.codex-plugin/plugin.json`
+- `plugins/codex/<plugin-name>/assets/icon.png`
+- `plugins/codex/<plugin-name>/assets/logo.png`
+- `plugins/codex/<plugin-name>/assets/screenshot-1.png`
+- `plugins/codex/<plugin-name>/assets/screenshot-2.png`
+- `plugins/codex/<plugin-name>/assets/screenshot-3.png`
+- `plugins/codex/plugin-names.txt` (the Codex plugin set the installer reads)
 
 ## Updating a plugin
 
@@ -154,13 +161,22 @@ the same `<plugin-name>@bento` name you used during installation:
 /plugin uninstall bento@bento
 ```
 
-## Hooks are separate
+## Hooks ship inside plugins
 
-Hook scripts in this repository are not installed through the plugin system.
-They must be wired manually in `~/.claude/settings.json`.
+Lifecycle hooks are bundled into the generated plugins, so installing a plugin
+installs its hooks — there is no separate manual step in
+`~/.claude/settings.json`. When a plugin declares hooks, its bundle carries a
+`hooks/hooks.json` and `hooks/scripts/` directory (see
+`plugins/claude/<plugin>/hooks/`), and Claude Code loads them with the plugin.
 
-See [hooks/README.md](../hooks/README.md)
-for hook wiring examples.
+Some plugins are hook-only. For example, `session-id` ships just a SessionStart
+hook and no skills, and `hygiene` ships SessionStart + Stop hooks; installing
+either registers its hooks through the normal plugin flow.
+
+The top-level `hooks/` directory in this repository is documentation and
+experiments only; the canonical hook sources live under
+`catalog/hooks/<hook-name>/<platform>/`. See
+[hooks/README.md](../hooks/README.md) for the hook source layout and contract.
 
 ## For maintainers
 
