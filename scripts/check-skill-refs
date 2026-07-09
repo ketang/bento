@@ -1,0 +1,235 @@
+#!/usr/bin/env python3
+"""Lint prose/code references inside canonical skill sources.
+
+Every markdown file under ``catalog/skills/`` may point at:
+
+* helper scripts (``<skill>/scripts/*.py``),
+* reference docs (``references/*.md`` and cross-skill relative paths), and
+* sibling skills by name (``bento:<name>``).
+
+Nothing checks that those references actually resolve, so three defects shipped:
+
+  (a) land-work/SKILL.md referenced a deleted ``land-work-clean-log.py`` script,
+  (b) code-bloat-sniffer/SKILL.md pointed at the renamed skill
+      ``issue-completeness-precheck`` (a line-wrapped backtick hid it from the
+      rename sweep), and
+  (c) land-work/references/direct-primary-branch.md linked
+      ``references/primary-branch-sync.md``, which only exists under closure/.
+
+This linter extracts those reference tokens and asserts each resolves on disk.
+It is wired into ``scripts/build-plugins`` (before the unit-test run) and is also
+exercised by ``tests/test_check_skill_refs.py``.
+
+The public helpers (``catalog_skill_names``, ``check_markdown_file``,
+``check_tree``) are import-safe and take explicit roots so tests can point them
+at fixtures.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_SKILLS_ROOT = ROOT_DIR / "catalog" / "skills"
+
+# ``bento:<name>`` tokens that are legitimate but do not map to a catalog skill
+# directory (e.g. skills that live in a separate marketplace). Empty today; keep
+# the hook so a valid external reference can be whitelisted without weakening the
+# check for everything else.
+SKILL_NAME_ALLOWLIST: frozenset[str] = frozenset()
+
+# A path token we care about: ends in .py or .md and contains a directory
+# separator (bare "SKILL.md" style mentions are too ambiguous to resolve).
+_PATH_TOKEN_RE = re.compile(r"(?<![\w./-])((?:\.{1,2}/)?[\w][\w./-]*\.(?:py|md))")
+
+# ``bento:<name>`` skill references. Applied to inline-code spans after
+# line-wrap joining so a name split across a newline still matches.
+_SKILL_REF_RE = re.compile(r"bento:([a-z0-9][a-z0-9-]*)")
+
+# Inline code spans (single or multi backtick). DOTALL so a span may wrap lines.
+_INLINE_CODE_RE = re.compile(r"(`+)(.+?)\1", re.DOTALL)
+
+
+def catalog_skill_names(skills_root: Path) -> set[str]:
+    """Directory names directly under ``skills_root`` (one per skill)."""
+    if not skills_root.is_dir():
+        return set()
+    return {child.name for child in skills_root.iterdir() if child.is_dir()}
+
+
+def _is_external_or_placeholder(token: str) -> bool:
+    """True for tokens we cannot or should not resolve on disk."""
+    if "..." in token:  # abstract placeholder, e.g. /.../skills/land-work/...
+        return True
+    if token.startswith(("/", "~")):  # absolute / home-relative runtime path
+        return True
+    if "://" in token or token.startswith(("http", "mailto:")):
+        return True
+    # Domain-like first segment (e.g. github.com/owner/repo/blob/main/x.md).
+    first = token.split("/", 1)[0]
+    if first not in ("..", ".") and "." in first:
+        return True
+    return False
+
+
+def _resolution_bases(md_file: Path, skills_root: Path) -> list[Path]:
+    """Directories a reference token may be relative to.
+
+    Skill sources mix two conventions: runtime skill-relative paths
+    (``<skill>/scripts/x.py`` rooted at the skills dir) and file-relative
+    markdown links (``../../closure/references/x.md``). Try both, plus the
+    owning skill's root, and accept a token that resolves under any of them.
+    """
+    bases = [md_file.parent, skills_root]
+    try:
+        rel = md_file.relative_to(skills_root)
+    except ValueError:
+        rel = None
+    if rel is not None and rel.parts:
+        bases.append(skills_root / rel.parts[0])
+    # De-dupe while preserving order.
+    seen: set[Path] = set()
+    ordered: list[Path] = []
+    for base in bases:
+        if base not in seen:
+            seen.add(base)
+            ordered.append(base)
+    return ordered
+
+
+def _reference_targets_catalog(token: str, skill_names: set[str]) -> bool:
+    """True when a path token is meant to resolve inside the catalog tree.
+
+    Skill sources also mention illustrative paths that live outside the catalog:
+    ``path/file.py`` in an output-format example, ``knowledge/INDEX.md`` inside a
+    target project, ``docs/specs/YYYY-...`` files yet to be created, or
+    ``$XDG_CONFIG_HOME/...`` runtime locations. Those are not catalog references
+    and must not be resolved. A token is in scope when it is a relative link
+    (``../`` / ``./``), a skill-relative path (``references/`` or ``scripts/``),
+    a repo-root canonical path (``catalog/skills/``), or rooted at a known skill
+    directory (``<skill>/...``).
+    """
+    if token.startswith(("../", "./")):
+        return True
+    if token.startswith(("references/", "scripts/", "catalog/skills/")):
+        return True
+    first = token.split("/", 1)[0]
+    return first in skill_names
+
+
+def _token_resolves(token: str, md_file: Path, skills_root: Path) -> bool:
+    # Some docs write references from the repo root (``catalog/skills/<...>``);
+    # also try the skills-root-relative remainder so those resolve too.
+    candidate_tokens = [token]
+    prefix = "catalog/skills/"
+    if token.startswith(prefix):
+        candidate_tokens.append(token[len(prefix):])
+    for tok in candidate_tokens:
+        for base in _resolution_bases(md_file, skills_root):
+            candidate = (base / tok).resolve()
+            # Stay inside the skills tree; a "resolving" path that escapes it is
+            # not a real intra-catalog reference.
+            try:
+                candidate.relative_to(skills_root.resolve())
+            except ValueError:
+                continue
+            if candidate.exists():
+                return True
+    return False
+
+
+def _iter_path_tokens(text: str) -> list[str]:
+    tokens: list[str] = []
+    for match in _PATH_TOKEN_RE.finditer(text):
+        token = match.group(1).rstrip(".,)")
+        tokens.append(token)
+    return tokens
+
+
+def _iter_skill_refs(text: str) -> list[str]:
+    """``bento:<name>`` references found inside inline-code spans.
+
+    Line breaks (and their leading indentation) inside a span are stripped first
+    so a name wrapped across lines is rejoined before matching.
+    """
+    names: list[str] = []
+    for match in _INLINE_CODE_RE.finditer(text):
+        joined = re.sub(r"\n[ \t]*", "", match.group(2))
+        names.extend(_SKILL_REF_RE.findall(joined))
+    return names
+
+
+def check_markdown_file(
+    md_file: Path,
+    skills_root: Path,
+    skill_names: set[str],
+    allowlist: frozenset[str] = SKILL_NAME_ALLOWLIST,
+) -> list[str]:
+    """Return a list of human-readable problems for one markdown file."""
+    text = md_file.read_text(encoding="utf-8")
+    try:
+        label = md_file.relative_to(skills_root.parent)
+    except ValueError:
+        label = md_file
+    problems: list[str] = []
+
+    for token in _iter_path_tokens(text):
+        if _is_external_or_placeholder(token):
+            continue
+        if not _reference_targets_catalog(token, skill_names):
+            continue
+        if not _token_resolves(token, md_file, skills_root):
+            problems.append(f"{label}: unresolved path reference `{token}`")
+
+    valid = skill_names | set(allowlist)
+    for name in _iter_skill_refs(text):
+        if name not in valid:
+            problems.append(f"{label}: reference to unknown skill `bento:{name}`")
+
+    return problems
+
+
+def check_tree(
+    skills_root: Path = DEFAULT_SKILLS_ROOT,
+    allowlist: frozenset[str] = SKILL_NAME_ALLOWLIST,
+) -> list[str]:
+    """Check every markdown file under ``skills_root``."""
+    skill_names = catalog_skill_names(skills_root)
+    problems: list[str] = []
+    for md_file in sorted(skills_root.rglob("*.md")):
+        problems.extend(
+            check_markdown_file(md_file, skills_root, skill_names, allowlist)
+        )
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--skills-root",
+        type=Path,
+        default=DEFAULT_SKILLS_ROOT,
+        help="directory containing skill sources (default: catalog/skills)",
+    )
+    args = parser.parse_args(argv)
+
+    problems = check_tree(args.skills_root)
+    if problems:
+        print("check-skill-refs: unresolved skill references:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        print(
+            "Fix the reference or the target it points at.",
+            file=sys.stderr,
+        )
+        return 1
+    print("check-skill-refs: all skill references resolve.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

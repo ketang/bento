@@ -25,6 +25,7 @@ PRIVACY_POLICY_URL = "https://github.com/ketang/bento"
 TERMS_OF_SERVICE_URL = "https://github.com/ketang/bento"
 LICENSE = "MIT"
 TEST_CMD = ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."]
+CHECK_SKILL_REFS_CMD = ["python3", "scripts/check-skill-refs"]
 CLAUDE_VALIDATE_CMD = ["claude", "plugin", "validate", "."]
 
 
@@ -826,6 +827,7 @@ def prune_generated_plugin_dirs() -> None:
 
 
 def run_verify_commands() -> None:
+    subprocess.run(CHECK_SKILL_REFS_CMD, cwd=ROOT_DIR, check=True)
     subprocess.run(TEST_CMD, cwd=ROOT_DIR, check=True)
     if os.environ.get("BENTO_SKIP_CLAUDE_VALIDATE") == "1":
         return
