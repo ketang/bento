@@ -1,0 +1,1 @@
+This directory stores intent stories — structured, prose-form records of how users invoke and experience bento skills. Stories are written in observed mode (from actual usage) or accepted mode (validated with users). They serve as the authoritative source for behavioral fidelity checks across skill iterations.
