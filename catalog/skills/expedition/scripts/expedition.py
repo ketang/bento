@@ -345,6 +345,8 @@ def cmd_close_task(args: argparse.Namespace) -> int:
     merged = False
     rebased = False
     updated = False
+    reverify_required = False
+    warnings: list[str] = []
     if args.apply:
         active_list = list(state.get("active_branches") or [])
         if args.branch:
@@ -361,6 +363,26 @@ def cmd_close_task(args: argparse.Namespace) -> int:
 
         if args.outcome == "kept":
             target_worktree_path = Path(str(target["worktree"])).resolve()
+            # Detect whether the rebase will pull real code under the task. The
+            # base advances by coordinator bookkeeping (lease, log, state) on
+            # every close, so a bare ancestor check flags every task. What makes
+            # prior verification stale is code the base gained that the task was
+            # never verified against — any base change outside docs/expeditions/,
+            # which is coordinator-only and removed at final landing.
+            pre_rebase_head = git("rev-parse", "HEAD", cwd=target_worktree_path).stdout.strip()
+            base_tip = git("rev-parse", str(state["base_branch"]), cwd=target_worktree_path).stdout.strip()
+            fork_point = git(
+                "merge-base", pre_rebase_head, base_tip,
+                cwd=target_worktree_path, check=False,
+            ).stdout.strip()
+            base_changed_files = git(
+                "diff", "--name-only", fork_point, base_tip,
+                cwd=target_worktree_path, check=False,
+            ).stdout.splitlines()
+            base_moved_code = any(
+                line.strip() and not line.startswith("docs/expeditions/")
+                for line in base_changed_files
+            )
             rebase_task = git(
                 "rebase", str(state["base_branch"]),
                 cwd=target_worktree_path, check=False,
@@ -378,6 +400,18 @@ def cmd_close_task(args: argparse.Namespace) -> int:
                 }
                 return _emit(payload, rebase_task.returncode)
             rebased = True
+
+            # When the base advanced in code under the task, the coordinator
+            # must re-run the expedition verification gates on the post-merge
+            # base tip before launching further branches or final landing.
+            if base_moved_code:
+                reverify_required = True
+                warnings.append(
+                    f"{task_branch} was rebased onto an advanced {state['base_branch']}; "
+                    "verification gathered before the rebase is stale. Re-run the expedition "
+                    "verification gates on the post-merge base tip before launching further "
+                    "branches or final landing."
+                )
 
             merge_result = git(
                 "merge", "--no-ff", task_branch, "-m", f"Merge branch '{task_branch}'",
@@ -430,7 +464,10 @@ def cmd_close_task(args: argparse.Namespace) -> int:
         commit_expedition_docs(cwd, str(state["expedition"]), f"log(expedition): close {target['branch']} ({args.outcome})")
         updated = True
 
-    return _emit({**result, "updated": updated, "merged": merged, "rebased": rebased})
+    return _emit({
+        **result, "updated": updated, "merged": merged, "rebased": rebased,
+        "reverify_required": reverify_required, "warnings": warnings,
+    })
 
 
 def cmd_finish(args: argparse.Namespace) -> int:
