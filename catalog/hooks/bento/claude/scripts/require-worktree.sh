@@ -61,6 +61,8 @@ def nearest_existing_dir(path):
 
 if target:
     if not os.path.isabs(target):
+        # hook-cwd-exempt: resolves a relative target path; the payload cwd is
+        # the primary base and os.getcwd() is only a fallback when it is absent.
         target = os.path.join(cwd or os.getcwd(), target)
     out = nearest_existing_dir(target)
 else:
@@ -70,6 +72,8 @@ if out:
     print(out)
 " 2>/dev/null || true)"
 
+# hook-cwd-exempt: last-resort default when the python block above produced no
+# directory (the payload cwd / target path are the primary sources).
 check_dir="${check_dir:-$PWD}"
 
 if ! repo_root="$(git -C "$check_dir" rev-parse --show-toplevel 2>/dev/null)"; then

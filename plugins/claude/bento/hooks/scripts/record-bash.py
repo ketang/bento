@@ -71,6 +71,8 @@ def event_from_payload(payload: dict[str, Any]) -> BashEvent:
         or payload.get("output")
     )
     command = _string(tool_input.get("command") or payload.get("command"))
+    # hook-cwd-exempt: payload cwd/working_directory are the primary sources;
+    # os.getcwd() is only a last-resort fallback when neither is present.
     cwd = _string(tool_input.get("cwd") or tool_input.get("working_directory") or os.getcwd())
     return BashEvent(
         command=command,
@@ -192,6 +194,8 @@ def _format_now() -> str:
 def _realpath(path: str, cwd: str | None = None) -> str:
     candidate = Path(path).expanduser()
     if not candidate.is_absolute():
+        # hook-cwd-exempt: resolves a relative path against the caller-provided
+        # cwd (sourced from the payload); os.getcwd() is only the fallback.
         candidate = Path(cwd or os.getcwd()) / candidate
     return str(candidate.resolve(strict=False))
 

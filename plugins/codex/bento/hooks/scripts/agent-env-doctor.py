@@ -265,6 +265,8 @@ def _project_root(hook_input: dict) -> Path | None:
     cwd = hook_input.get("cwd")
     if not isinstance(cwd, str) or not cwd or not os.path.isdir(cwd):
         try:
+            # hook-cwd-exempt: last-resort fallback only when the payload lacks a
+            # usable `cwd` (hook_input["cwd"] is the primary source above).
             cwd = os.getcwd()
         except OSError:
             return None
