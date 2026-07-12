@@ -89,6 +89,7 @@ the following subcommands:
     the currently active task worktree
 - `expedition/scripts/expedition.py close-task --expedition <name> [--branch <name>] --outcome kept|failed-experiment --summary <text>`
   - for kept branches: acquire the landing lease, rebase the branch onto the current base tip, merge into the base, release the lease; for failed experiments: preserve the branch and release the lease
+  - when the rebase pulls new base code under the task (any base change outside `docs/expeditions/`), the helper reports `reverify_required: true` with a warning: verification the task ran before the rebase is stale, so re-run the expedition verification gates on the post-merge base tip
 - `expedition/scripts/expedition.py finish --expedition <name>`
   - verify that the expedition is ready for final landing and remove the
     branch-local expedition files before the last linear merge to the primary branch
@@ -130,7 +131,7 @@ Every session should end on the expedition base branch and rewrite
 
 1. Create or resume the base worktree.
 2. Triage the expedition plan and launch any number of task and regular experiment branches in parallel. Launch at most one performance optimization experiment branch at a time.
-3. As each branch completes, close it via close-task to acquire the lease, rebase onto the base tip, and merge.
+3. As each branch completes, close it via close-task to acquire the lease, rebase onto the base tip, and merge. The rebase rewrites the task branch onto an advanced base, so any verification the task ran beforehand is stale — verification attaches to the exact tree being landed. When close-task reports `reverify_required`, re-run the expedition verification gates on the post-merge base tip before launching further branches.
 4. Failed experiment branches are preserved without merge; record the outcome in the log and release the lease.
 5. Re-triage and launch replacement branches from the now-advanced base.
 6. Update state.json, log.md, and handoff.md (these are written by the coordinator, never by teammates).
@@ -149,14 +150,18 @@ expedition/scripts/expedition.py finish --expedition <name> --apply
 ```
 
 5. Commit the expedition-doc removal on the rebased base branch.
-6. Land the rebased base branch onto the primary branch using the repo's normal
-   landing flow. Use `land-work` when its safety checks are relevant.
+6. Land the rebased base branch onto the primary branch. Use `land-work` for
+   this final landing of the expedition base onto the primary branch: the
+   base-to-primary merge crosses the expedition boundary and needs land-work's
+   landing lease, independent review, and stale-evidence checks. Task-branch
+   landings onto the base use close-task only and never invoke land-work.
 
 ## Non-Negotiable Rules
 
 - Only the coordinator writes to docs/expeditions/<expedition>/*. Teammates never commit there.
 - Do not launch a second performance optimization experiment for an expedition while one is active.
 - Do not rebase task or experiment branches outside the close-task rebase-onto-base step.
+- Do not treat a task as verified on the strength of pre-rebase evidence. When close-task rebases the task branch (`reverify_required`), re-run the expedition verification gates on the resulting base tip before launching further work or final landing.
 - Do not rebase the expedition base branch onto anything except the detected primary branch, and only do so at final landing.
 - Do not merge one expedition base branch directly into another expedition base branch.
 - Do not delete failed experiment branches before their result is captured in the log.
