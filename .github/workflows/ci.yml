@@ -107,3 +107,6 @@ jobs:
           if not result.wasSuccessful():
               sys.exit(1)
           PY
+
+      - name: Check documented CLI argument parity
+        run: scripts/check-cli-arg-parity

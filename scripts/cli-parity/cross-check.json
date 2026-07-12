@@ -1,0 +1,10 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "cross-check/scripts/cross-check-run.py --current-runtime <claude|codex> --artifact-type <code|issue|plan> --artifact <path-or-omit-for-stdin> --slug <kebab-case-summary> --scope \"<what was reviewed>\"",
+      "script": "scripts/cross-check-run.py",
+      "subcommand": null
+    }
+  ]
+}

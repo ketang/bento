@@ -1,0 +1,10 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "handoff/scripts/handoff.py --input <path-to-filled-template> --slug <kebab-case-summary>",
+      "script": "scripts/handoff.py",
+      "subcommand": null
+    }
+  ]
+}

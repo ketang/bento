@@ -1,0 +1,16 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "swarm/scripts/swarm-triage.py --input <json>",
+      "script": "scripts/swarm-triage.py",
+      "subcommand": null
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch>",
+      "script": "scripts/swarm-post-land.py",
+      "subcommand": null
+    }
+  ]
+}

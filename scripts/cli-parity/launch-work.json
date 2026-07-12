@@ -1,0 +1,22 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path>",
+      "script": "scripts/launch-work-bootstrap.py",
+      "subcommand": null
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "launch-work/scripts/run-lifecycle-extensions.py run-hooks --repo-root <repo-root> --skill launch-work --position pre --branch <branch> --worktree <worktree> --base-ref <primary-branch> --runtime <runtime>",
+      "script": "scripts/run-lifecycle-extensions.py",
+      "subcommand": "run-hooks"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "launch-work/scripts/run-lifecycle-extensions.py discover --repo-root <repo-root> --skill launch-work --kind hook-skills --position pre",
+      "script": "scripts/run-lifecycle-extensions.py",
+      "subcommand": "discover"
+    }
+  ]
+}
