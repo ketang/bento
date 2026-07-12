@@ -40,8 +40,10 @@ produces a markdown audit, never edits source, never files issues.
 
 4. **Dispatch chunks in parallel via
    `superpowers:dispatching-parallel-agents`.** This is the default,
-   not a fallback. Only skip parallelism for trivially small targets
-   (one small directory passed via `path`). Each subagent receives:
+   not a fallback. If superpowers is not installed, dispatch parallel
+   Task subagents directly with one chunk per subagent. Only skip
+   parallelism for trivially small targets (one small directory passed
+   via `path`). Each subagent receives:
    - the chunk path,
    - the patterns guide
      (`code-bloat-sniffer/references/patterns.md`),
