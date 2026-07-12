@@ -1,0 +1,237 @@
+#!/usr/bin/env python3
+"""Lint enforcing the hooks-read-cwd-from-stdin contract.
+
+AGENTS.md rule: "Hook scripts must read the working directory from the `cwd`
+field in the stdin JSON payload, not from `$PWD` or the process CWD. Claude Code
+spawns hook processes from `$HOME`; the process CWD is never the project root."
+
+This linter walks every hook script under `catalog/hooks/*/*/scripts/` and
+enforces two checks:
+
+  A. Process-CWD primitives are flagged. Any `os.getcwd()`, `Path.cwd()`, or
+     `$PWD`/`$(pwd)` usage must carry an explicit `# hook-cwd-exempt: <reason>`
+     annotation on the same line or the line immediately above it. The
+     annotation documents a deliberate, reviewed fallback (e.g. a last-resort
+     default when the payload lacks a usable `cwd`).
+
+  B. Payload-first requirement. Any file that uses a process-CWD primitive must
+     also reference the payload `cwd` field (`"cwd"`/`'cwd'`) — proving it reads
+     the working directory from the payload as the primary source and only falls
+     back to the process CWD. A file that determines a directory purely from the
+     process CWD, without ever consulting the payload, is exactly the historical
+     bug this lint exists to prevent.
+
+Python hooks are analyzed with the `ast` module; shell hooks are scanned with
+targeted regexes (covering both `$PWD`/`$(pwd)` and process-CWD calls embedded
+in inline `python3 -c` blocks).
+
+Exit status is 0 when all hooks comply, 1 when any violation is found.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import re
+import sys
+from pathlib import Path
+from typing import NamedTuple
+
+
+EXEMPT_RE = re.compile(r"#\s*hook-cwd-exempt:\s*(\S.*)$")
+
+# Payload `cwd` field reference, e.g. .get("cwd") / ["cwd"] / 'cwd'.
+CWD_FIELD_RE = re.compile(r"""['"]cwd['"]""")
+
+# Process-CWD primitives detectable in shell (and inline python) via regex.
+SHELL_PRIMITIVE_RES = [
+    (re.compile(r"\$\{?PWD\b"), "$PWD"),
+    (re.compile(r"\$\(\s*pwd\b"), "$(pwd)"),
+    (re.compile(r"(?<![\w.])`\s*pwd\b"), "`pwd`"),
+    (re.compile(r"\bos\.getcwd\s*\("), "os.getcwd()"),
+    (re.compile(r"\bPath\.cwd\s*\("), "Path.cwd()"),
+    (re.compile(r"\bpathlib\.Path\.cwd\s*\("), "pathlib.Path.cwd()"),
+]
+
+
+class Finding(NamedTuple):
+    path: Path
+    line: int
+    message: str
+
+
+def _exempt_lines(lines: list[str]) -> set[int]:
+    """1-indexed line numbers carrying a non-empty `# hook-cwd-exempt:` reason."""
+    exempt = set()
+    for idx, line in enumerate(lines, start=1):
+        if EXEMPT_RE.search(line):
+            exempt.add(idx)
+    return exempt
+
+
+def _is_exempt(line: int, lines: list[str], exempt: set[int]) -> bool:
+    """A primitive is exempt if its own line, or any line in the contiguous
+    block of comment lines directly above it, carries the annotation."""
+    if line in exempt:
+        return True
+    i = line - 1
+    while i >= 1 and lines[i - 1].lstrip().startswith("#"):
+        if i in exempt:
+            return True
+        i -= 1
+    return False
+
+
+def _references_payload_cwd(text: str) -> bool:
+    return bool(CWD_FIELD_RE.search(text))
+
+
+def _python_primitive_calls(tree: ast.AST) -> list[tuple[int, str]]:
+    """Return (lineno, label) for each os.getcwd()/Path.cwd() call in an AST."""
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call):
+            continue
+        func = node.func
+        if not isinstance(func, ast.Attribute):
+            continue
+        if func.attr == "getcwd":
+            found.append((node.lineno, "os.getcwd()"))
+        elif func.attr == "cwd":
+            base = func.value
+            base_name = None
+            if isinstance(base, ast.Name):
+                base_name = base.id
+            elif isinstance(base, ast.Attribute):
+                base_name = base.attr
+            if base_name in {"Path", "pathlib"}:
+                found.append((node.lineno, "Path.cwd()"))
+    return found
+
+
+def check_python_source(text: str, path: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    lines = text.splitlines()
+    exempt = _exempt_lines(lines)
+    try:
+        tree = ast.parse(text)
+    except SyntaxError as exc:  # pragma: no cover - defensive
+        return [Finding(path, exc.lineno or 1, f"could not parse: {exc.msg}")]
+
+    calls = _python_primitive_calls(tree)
+    for lineno, label in calls:
+        if not _is_exempt(lineno, lines, exempt):
+            findings.append(
+                Finding(
+                    path,
+                    lineno,
+                    f"uses process CWD via {label} without a "
+                    f"`# hook-cwd-exempt: <reason>` annotation",
+                )
+            )
+    if calls and not _references_payload_cwd(text):
+        findings.append(
+            Finding(
+                path,
+                calls[0][0],
+                "determines a working directory from the process CWD but never "
+                'references the payload `cwd` field; read the working directory '
+                "from the stdin payload's `cwd` as the primary source",
+            )
+        )
+    return findings
+
+
+def check_shell_source(text: str, path: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    lines = text.splitlines()
+    exempt = _exempt_lines(lines)
+    hit_any = False
+    for idx, line in enumerate(lines, start=1):
+        # Ignore comment-only lines so the annotation itself is not a "hit".
+        code = line.split("#", 1)[0]
+        for regex, label in SHELL_PRIMITIVE_RES:
+            if regex.search(code):
+                hit_any = True
+                if not _is_exempt(idx, lines, exempt):
+                    findings.append(
+                        Finding(
+                            path,
+                            idx,
+                            f"uses process CWD via {label} without a "
+                            f"`# hook-cwd-exempt: <reason>` annotation",
+                        )
+                    )
+                break
+    if hit_any and not _references_payload_cwd(text):
+        findings.append(
+            Finding(
+                path,
+                1,
+                "determines a working directory from the process CWD but never "
+                'references the payload `cwd` field; read the working directory '
+                "from the stdin payload's `cwd` as the primary source",
+            )
+        )
+    return findings
+
+
+def check_file(path: Path) -> list[Finding]:
+    text = path.read_text(encoding="utf-8")
+    if path.suffix == ".py":
+        return check_python_source(text, path)
+    if path.suffix == ".sh":
+        return check_shell_source(text, path)
+    return []
+
+
+def find_hook_scripts(root: Path) -> list[Path]:
+    """Hook scripts under catalog/hooks/*/*/scripts/ (Python and shell)."""
+    base = root / "catalog" / "hooks"
+    if not base.is_dir():
+        return []
+    scripts: list[Path] = []
+    for path in sorted(base.glob("*/*/scripts/*")):
+        if path.suffix in {".py", ".sh"} and path.is_file():
+            scripts.append(path)
+    return scripts
+
+
+def run(root: Path) -> list[Finding]:
+    findings: list[Finding] = []
+    for path in find_hook_scripts(root):
+        findings.extend(check_file(path))
+    return findings
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--root",
+        type=Path,
+        default=Path(__file__).resolve().parent.parent,
+        help="Repository root to scan (defaults to this script's repo).",
+    )
+    args = parser.parse_args(argv)
+
+    findings = run(args.root.resolve())
+    if not findings:
+        return 0
+
+    for f in findings:
+        try:
+            rel = f.path.relative_to(args.root.resolve())
+        except ValueError:
+            rel = f.path
+        print(f"{rel}:{f.line}: {f.message}", file=sys.stderr)
+    print(
+        f"\n{len(findings)} hook-contract violation(s). "
+        "See scripts/check-hook-contract for the rule and the "
+        "`# hook-cwd-exempt:` escape hatch.",
+        file=sys.stderr,
+    )
+    return 1
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

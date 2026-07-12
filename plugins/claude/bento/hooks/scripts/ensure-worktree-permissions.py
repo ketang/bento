@@ -161,6 +161,8 @@ def main() -> int:
         cwd = payload_cwd
         if cwd is None:
             try:
+                # hook-cwd-exempt: last-resort fallback only when the payload
+                # lacks a usable `cwd` (payload_cwd is the primary source above).
                 cwd = Path.cwd()
             except OSError:
                 cwd = None
