@@ -28,6 +28,22 @@ def _have(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
+def _nested_in_agent_session() -> bool:
+    """True if running inside an active Claude Code or Codex agent session.
+
+    Same env markers catalog/skills/cross-check/scripts/cross_check_common.py
+    uses to detect the current runtime. Spawning a nested claude/codex CLI
+    from inside an already-running agent session inherits that session's auth
+    state and fails with schema/auth conflicts unrelated to zolem or the CLI
+    being correctly installed, so these tests must not attempt it.
+    """
+    return bool(
+        os.environ.get("CLAUDECODE")
+        or os.environ.get("CLAUDE_SESSION_ID")
+        or os.environ.get("CODEX_THREAD_ID")
+    )
+
+
 class E2ETestCase(unittest.TestCase):
     """Base class for zolem-backed end-to-end tests.
 
@@ -44,6 +60,12 @@ class E2ETestCase(unittest.TestCase):
     FIXTURE_DIR: Path | None = None
 
     def setUp(self) -> None:
+        if _nested_in_agent_session():
+            self.skipTest(
+                "running nested inside an active Claude Code or Codex agent "
+                "session; a spawned claude/codex CLI would inherit "
+                "conflicting auth state from the outer session"
+            )
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()
         self.zolem_log_path = self.root / "zolem.log"
