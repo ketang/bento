@@ -19,6 +19,8 @@ class CompressDiscoverTest(unittest.TestCase):
         git(self.repo, "init", "-b", "main")
         git(self.repo, "config", "user.name", "Compress Docs Test")
         git(self.repo, "config", "user.email", "compress@example.com")
+        self.isolated_home = Path(self.temp_dir.name) / "isolated_home"
+        self.isolated_home.mkdir()
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
@@ -26,6 +28,12 @@ class CompressDiscoverTest(unittest.TestCase):
     def run_helper(self, env_overrides: dict[str, str] | None = None) -> dict:
         import os
         env = os.environ.copy()
+        # Scope tier-3/4 discovery (which reads $HOME) to a hermetic dir by
+        # default, so real user-global docs on the host machine (e.g. this
+        # user's ~/.claude/CLAUDE.md and ~/dotfiles/AGENTS.md) don't leak
+        # into scan results. Individual tests override HOME to exercise
+        # tier-3/4 behavior deliberately.
+        env["HOME"] = str(self.isolated_home)
         if env_overrides:
             env.update(env_overrides)
         result = subprocess.run(

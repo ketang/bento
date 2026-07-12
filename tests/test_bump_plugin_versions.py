@@ -91,7 +91,10 @@ class BumpPluginVersionsTest(unittest.TestCase):
             },
         )
         self.assertEqual(set(payload["relevant_paths"]), {"scripts/build-plugins"})
-        self.assertEqual(len(set(versions.values())), 1)  # all bumped to the same minor version
+        self.assertEqual(
+            versions,
+            {plugin: minor_bump(versions_before[plugin]) for plugin in versions_before},
+        )
 
     def test_hook_change_bumps_plugins_that_package_hook(self) -> None:
         versions_before = json.loads((self.repo / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
