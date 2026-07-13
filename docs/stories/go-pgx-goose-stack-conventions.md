@@ -5,7 +5,7 @@ slug: go-pgx-goose-stack-conventions
 status: active
 authority: observed
 change_resistance: low
-tests_applicable: true
+tests_applicable: false
 locked_sections:
   - Intent
 ---

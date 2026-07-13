@@ -5,7 +5,7 @@ slug: maintain-web-demo-sync-after-change
 status: active
 authority: observed
 change_resistance: medium
-tests_applicable: true
+tests_applicable: false
 locked_sections:
   - Intent
 ---

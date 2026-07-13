@@ -16,6 +16,9 @@ installable plugin bundles from them.
   install time by `install/_codex-installer-lib.sh`
 - `catalog/hooks/` contains the canonical platform-peer hook sources; the
   top-level `hooks/` directory holds only hook docs, references, and experiments
+- `docs/stories/` holds storystore intent stories — the authoritative
+  behavioral-fidelity record for bento skills; keep them in sync with skill
+  behavior and regenerate `INDEX.md` when stories change
 
 ## Issue tracking
 

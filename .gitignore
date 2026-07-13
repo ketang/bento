@@ -3,3 +3,4 @@ __pycache__/
 .beads/embeddeddolt/
 .launch-work/
 .worktrees/
+docs/stories/drift-todo.md
