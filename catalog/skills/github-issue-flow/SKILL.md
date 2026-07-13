@@ -72,7 +72,11 @@ Required before `gh issue close <id>`:
    The push is confirmed only when the two values match exactly. If the remote
    SHA differs or `git ls-remote` returns nothing for the branch, the landing
    is not yet published — refuse to close until the integration branch is pushed.
-4. Only then run `gh issue close <id>`.
+4. Only then run:
+
+   ```bash
+   gh issue close <id> -c "<merge-sha> landed on <integration-branch>"
+   ```
 
 If the ancestry check fails, do not close. Direct the user to land the branch
 first. Do not close on cleanup evidence alone. The rule applies even when the
@@ -123,5 +127,5 @@ gh issue edit <id> --add-label <label>
 gh issue edit <id> --remove-label <label>
 gh issue edit <id> --add-assignee <user>
 gh issue edit <id> --remove-assignee <user>
-gh issue close <id>
+gh issue close <id> -c "<merge-sha> landed on <integration-branch>"
 ```
