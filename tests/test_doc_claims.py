@@ -77,9 +77,13 @@ class ThinkAboutRepoPathsExist(unittest.TestCase):
 
     def test_path_bullets_resolve_on_disk(self) -> None:
         body = section(read("AGENTS.md"), "How to think about the repo")
-        # The path-bearing tokens in this section are exactly the
-        # backtick-quoted spans that name a filesystem path (contain a slash).
-        paths = [tok for tok in backticked(body) if "/" in tok]
+        # A path-bearing token names a filesystem path: it contains a slash
+        # AND its first segment matches an actual top-level repo entry. This
+        # excludes non-path slash notation (e.g. "create/update", "true/false")
+        # that would otherwise misfire as a "nonexistent path".
+        candidates = [tok for tok in backticked(body) if "/" in tok]
+        top_level = {p.name for p in REPO_ROOT.iterdir()}
+        paths = [tok for tok in candidates if tok.split("/", 1)[0] in top_level]
         self.assertTrue(paths, "no path bullets extracted; section shape changed")
         missing = [p for p in paths if not (REPO_ROOT / p.rstrip("/")).exists()]
         self.assertEqual(
@@ -168,9 +172,13 @@ class VersionBumpGitAddPathsExist(unittest.TestCase):
     """(d) Every pathspec in version-bump.md's documented `git add` line exists."""
 
     def test_documented_git_add_pathspecs_resolve(self) -> None:
-        text = read(".claude/skills/version-bump.md")
+        # Scoped to Step 6 so an earlier illustrative `git add` example
+        # elsewhere in the doc can't silently become the one under test.
+        text = section(
+            read(".claude/skills/version-bump.md"), "Step 6 — Act on the classification"
+        )
         m = re.search(r"^\s*git add (.+)$", text, re.MULTILINE)
-        self.assertIsNotNone(m, "no `git add` line found in version-bump.md")
+        self.assertIsNotNone(m, "no `git add` line found in version-bump.md Step 6")
         pathspecs = m.group(1).split()
         self.assertTrue(pathspecs, "git add line has no pathspecs")
         missing = [p for p in pathspecs if not (REPO_ROOT / p.rstrip("/")).exists()]
