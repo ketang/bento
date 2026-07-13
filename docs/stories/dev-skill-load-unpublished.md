@@ -5,7 +5,7 @@ slug: dev-skill-load-unpublished
 status: active
 authority: observed
 change_resistance: low
-tests_applicable: true
+tests_applicable: false
 locked_sections:
   - Intent
 ---
