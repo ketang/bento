@@ -45,6 +45,10 @@ duplicates of bugs that were fixed once and regressed.
    is its step id (`stepId`, or the `failedSteps` ids) plus a failure signature
    (`dedupeKey` or the normalized failure text) — never the human-readable
    title alone. Titles drift between runs; step ids and signatures do not.
+   `stepId`/`failedSteps`/`dedupeKey` are Recommended, not Required — if a
+   queue entry omits all three, fall back to the required `step` field plus
+   the normalized `message` text as the identity, and note in the filed issue
+   that the match is lower-confidence than a `stepId`/`dedupeKey` match.
 
 2. **Search ALL tracker issues, open and closed.** Match the queued failure
    against every issue with the same failure identity regardless of status —

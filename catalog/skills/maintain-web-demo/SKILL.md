@@ -48,16 +48,12 @@ Demos installed before the queue-matching lifecycle was defined often carry an
 outdated `AGENTS.md` contract that tells agents to match queued failures only
 against open or in-progress issues. That contract re-files duplicates when a
 closed bug regresses. When maintaining such a demo, update the installed
-contract to match the warning-queue tracker lifecycle in
-`references/generate-web-demo-contract.md`:
-
-- match queued failures by failure identity (step id + signature), not title
-- search ALL issues, open and closed
-- reopen a matching closed issue on recurrence instead of filing a new one
-- require a pasted passing run over the affected step ids before closing
+contract to match the warning-queue tracker lifecycle documented in
+`references/generate-web-demo-contract.md`'s "Warning-queue tracker lifecycle"
+section.
 
 Look for stale contract phrasing such as "existing open or in-progress bug" and
-replace it with the reopen-on-recurrence and pasted-passing-run rules.
+replace it with the rules from that section.
 
 ## References
 
