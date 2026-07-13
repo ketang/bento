@@ -1,0 +1,10 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "scripts/bentobug-report.py --note \"<note>\" --target \"<target>\" --target-resolution <explicit|inferred> --cwd \"<cwd>\" --branch \"<branch>\" --worktree \"<worktree>\" --context \"<context>\"",
+      "script": "scripts/bentobug-report.py",
+      "subcommand": null
+    }
+  ]
+}

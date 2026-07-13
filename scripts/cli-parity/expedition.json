@@ -1,0 +1,34 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "expedition/scripts/expedition.py bootstrap --expedition <name> --worktree <path>",
+      "script": "scripts/expedition.py",
+      "subcommand": "bootstrap"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "expedition/scripts/expedition.py start-task --expedition <name> --slug <slug> [--kind task|experiment|perf-experiment]",
+      "script": "scripts/expedition.py",
+      "subcommand": "start-task"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "expedition/scripts/expedition.py close-task --expedition <name> [--branch <name>] --outcome kept|failed-experiment --summary <text>",
+      "script": "scripts/expedition.py",
+      "subcommand": "close-task"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "expedition/scripts/expedition.py verify --expedition <name>",
+      "script": "scripts/expedition.py",
+      "subcommand": "verify"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "expedition/scripts/expedition.py finish --expedition <name>",
+      "script": "scripts/expedition.py",
+      "subcommand": "finish"
+    }
+  ]
+}

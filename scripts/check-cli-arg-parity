@@ -1,0 +1,311 @@
+#!/usr/bin/env python3
+"""Assert documented CLI invocations satisfy their scripts' required arguments.
+
+Every skill helper is a subprocess CLI whose usage is documented in prose
+(``SKILL.md`` / ``references/*.md``). Nothing checked that the documented
+invocation actually carried every flag the script's ``argparse`` parser marks
+``required=True``. That gap shipped a real defect: expedition/SKILL.md
+documented ``close-task`` without the parser-required ``--summary``, so an agent
+copying the line got an ``argparse`` error.
+
+This linter closes that gap. For each documented invocation listed in a per-skill
+manifest under ``scripts/cli-parity/<skill>.json`` it:
+
+1. confirms the documented command text still appears in the cited doc
+   (normalized substring — guards manifest-vs-prose drift), and
+2. statically introspects the named script + subcommand's ``argparse`` parser
+   and asserts every ``required=True`` option flag appears in that command.
+
+Introspection is AST-based (no import, no execution), so it works whether the
+parser is built in ``build_parser()``, ``main()``, or at module level, and it
+tracks per-subcommand ``add_parser(...)`` receivers. A required argument passed
+a non-literal ``required=`` value is treated as *not* statically required (the
+corpus uses ``required=True`` literals); tighten here if that changes.
+
+The public helpers (``required_option_flags``, ``check_invocation``,
+``check_manifest``, ``check_tree``) are import-safe and take explicit roots so
+tests can point them at fixtures.
+"""
+
+from __future__ import annotations
+
+import argparse
+import ast
+import json
+import re
+import sys
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_SKILLS_ROOT = ROOT_DIR / "catalog" / "skills"
+DEFAULT_MANIFESTS_ROOT = ROOT_DIR / "scripts" / "cli-parity"
+
+
+# --------------------------------------------------------------------------- #
+# argparse introspection (static, AST-based)
+# --------------------------------------------------------------------------- #
+
+def _str_constant(node: ast.AST) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
+
+
+def _is_true_constant(node: ast.AST) -> bool:
+    return isinstance(node, ast.Constant) and node.value is True
+
+
+def _call_attr(node: ast.AST) -> str | None:
+    """Return the attribute name for a ``x.method(...)`` call, else None."""
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        return node.func.attr
+    return None
+
+
+def _receiver_name(call: ast.Call) -> str | None:
+    """Return ``x`` for a ``x.method(...)`` call where ``x`` is a plain name."""
+    func = call.func
+    if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
+        return func.value.id
+    return None
+
+
+def _option_strings(call: ast.Call) -> list[str]:
+    """Positional string args that look like option flags (``-x`` / ``--long``)."""
+    flags: list[str] = []
+    for arg in call.args:
+        value = _str_constant(arg)
+        if value is not None and value.startswith("-"):
+            flags.append(value)
+    return flags
+
+
+def _is_required(call: ast.Call) -> bool:
+    for kw in call.keywords:
+        if kw.arg == "required" and _is_true_constant(kw.value):
+            return True
+    return False
+
+
+def _iter_ordered_statements(module: ast.Module):
+    """Yield statements across the module in source order.
+
+    Parsers may be built at module level or inside ``build_parser``/``main``;
+    a flat, lineno-ordered walk of every statement lets us simulate the
+    ``add_parser`` / ``add_argument`` sequence regardless of where it lives.
+    """
+    statements: list[ast.stmt] = []
+    for node in ast.walk(module):
+        if isinstance(node, ast.stmt):
+            statements.append(node)
+    statements.sort(key=lambda n: (getattr(n, "lineno", 0), getattr(n, "col_offset", 0)))
+    return statements
+
+
+def required_option_flags(script_path: Path, subcommand: str | None) -> list[list[str]]:
+    """Return the option-flag sets that are ``required=True`` for ``subcommand``.
+
+    Each element is the list of option strings for one required argument (e.g.
+    ``["--summary"]`` or ``["-o", "--output"]``); parity is satisfied when any
+    one of them appears in the documented command. ``subcommand=None`` targets
+    arguments added to the top-level ``ArgumentParser``.
+    """
+    source = script_path.read_text(encoding="utf-8")
+    module = ast.parse(source, filename=str(script_path))
+
+    # var name -> kind: ("parser", None) | ("subparsers", None) | ("subcommand", name)
+    var_kind: dict[str, tuple[str, str | None]] = {}
+    subparsers_vars: set[str] = set()
+    # required flags grouped by target subcommand (None => top-level parser)
+    required: dict[str | None, list[list[str]]] = {}
+
+    for stmt in _iter_ordered_statements(module):
+        # Assignments that (re)bind a var to a parser/subparsers/subcommand.
+        if isinstance(stmt, ast.Assign) and len(stmt.targets) == 1 \
+                and isinstance(stmt.targets[0], ast.Name) \
+                and isinstance(stmt.value, ast.Call):
+            target = stmt.targets[0].id
+            call = stmt.value
+            attr = _call_attr(call)
+            func = call.func
+            if (isinstance(func, ast.Name) and func.id == "ArgumentParser") or \
+               (isinstance(func, ast.Attribute) and func.attr == "ArgumentParser"):
+                var_kind[target] = ("parser", None)
+            elif attr == "add_subparsers":
+                var_kind[target] = ("subparsers", None)
+                subparsers_vars.add(target)
+            elif attr == "add_parser" and _receiver_name(call) in subparsers_vars:
+                name = _str_constant(call.args[0]) if call.args else None
+                var_kind[target] = ("subcommand", name)
+            else:
+                # Reassignment to something we don't track clears the binding.
+                var_kind.pop(target, None)
+            continue
+
+        # Bare ``x.add_argument(...)`` calls.
+        call = stmt.value if isinstance(stmt, ast.Expr) else None
+        if isinstance(call, ast.Call) and _call_attr(call) == "add_argument":
+            if not _is_required(call):
+                continue
+            receiver = _receiver_name(call)
+            kind = var_kind.get(receiver) if receiver else None
+            if kind is None:
+                bucket: str | None = None
+            elif kind[0] == "parser":
+                bucket = None
+            elif kind[0] == "subcommand":
+                bucket = kind[1]
+            else:
+                continue
+            flags = _option_strings(call)
+            if flags:
+                required.setdefault(bucket, []).append(flags)
+
+    return required.get(subcommand, [])
+
+
+# --------------------------------------------------------------------------- #
+# manifest checking
+# --------------------------------------------------------------------------- #
+
+def _normalize_command(text: str) -> str:
+    """Collapse a possibly multi-line shell command to a single spaced string.
+
+    Joins backslash-newline continuations and reduces every whitespace run to a
+    single space so a command wrapped across lines in a fenced block matches the
+    manifest's single-line form.
+    """
+    text = re.sub(r"\\\s*\n", " ", text)
+    return re.sub(r"\s+", " ", text).strip()
+
+
+def _command_tokens(command: str) -> set[str]:
+    return set(_normalize_command(command).split(" "))
+
+
+def check_invocation(
+    entry: dict, manifest_label: str, skills_root: Path
+) -> list[str]:
+    """Return human-readable problems for one manifest invocation entry."""
+    problems: list[str] = []
+    where = f"{manifest_label}"
+
+    skill = entry.get("skill")
+    doc_rel = entry.get("doc")
+    command = entry.get("command")
+    script_rel = entry.get("script")
+    subcommand = entry.get("subcommand")
+
+    missing = [k for k in ("skill", "doc", "command", "script")
+               if not entry.get(k)]
+    if missing:
+        return [f"{where}: invocation missing required field(s): {', '.join(missing)}"]
+
+    skill_root = skills_root / skill
+    entry_id = f"{where}[{skill}:{subcommand or command[:40]}]"
+
+    # 1. drift guard: the documented command must appear in the cited doc.
+    doc_path = skill_root / doc_rel
+    if not doc_path.is_file():
+        problems.append(f"{entry_id}: doc not found: {doc_path}")
+    else:
+        doc_norm = _normalize_command(doc_path.read_text(encoding="utf-8"))
+        if _normalize_command(command) not in doc_norm:
+            problems.append(
+                f"{entry_id}: documented command not found in {doc_rel} "
+                f"(manifest drifted from prose?)"
+            )
+
+    # 2. parity: every required flag must appear in the documented command.
+    script_path = skill_root / script_rel
+    if not script_path.is_file():
+        problems.append(f"{entry_id}: script not found: {script_path}")
+        return problems
+
+    try:
+        required = required_option_flags(script_path, subcommand)
+    except SyntaxError as exc:
+        problems.append(f"{entry_id}: could not parse {script_rel}: {exc}")
+        return problems
+
+    tokens = _command_tokens(command)
+    for flag_set in required:
+        if not any(flag in tokens for flag in flag_set):
+            shown = " / ".join(flag_set)
+            sub = f" {subcommand}" if subcommand else ""
+            problems.append(
+                f"{entry_id}: documented command omits required flag "
+                f"`{shown}` for {script_rel}{sub}"
+            )
+    return problems
+
+
+def check_manifest(manifest_path: Path, skills_root: Path) -> list[str]:
+    """Check every invocation in a single per-skill manifest file."""
+    label = manifest_path.name
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        return [f"{label}: invalid JSON: {exc}"]
+    if not isinstance(data, dict) or not isinstance(data.get("invocations"), list):
+        return [f"{label}: manifest must be an object with an 'invocations' list"]
+
+    default_skill = manifest_path.stem
+    problems: list[str] = []
+    for entry in data["invocations"]:
+        if not isinstance(entry, dict):
+            problems.append(f"{label}: each invocation must be an object")
+            continue
+        entry = {"skill": default_skill, **entry}
+        problems.extend(check_invocation(entry, label, skills_root))
+    return problems
+
+
+def check_tree(
+    manifests_root: Path = DEFAULT_MANIFESTS_ROOT,
+    skills_root: Path = DEFAULT_SKILLS_ROOT,
+) -> list[str]:
+    """Check every ``*.json`` manifest under ``manifests_root``."""
+    if not manifests_root.is_dir():
+        return []
+    problems: list[str] = []
+    for manifest in sorted(manifests_root.glob("*.json")):
+        problems.extend(check_manifest(manifest, skills_root))
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--manifests-root",
+        type=Path,
+        default=DEFAULT_MANIFESTS_ROOT,
+        help="directory of per-skill manifests (default: scripts/cli-parity)",
+    )
+    parser.add_argument(
+        "--skills-root",
+        type=Path,
+        default=DEFAULT_SKILLS_ROOT,
+        help="directory containing skill sources (default: catalog/skills)",
+    )
+    args = parser.parse_args(argv)
+
+    problems = check_tree(args.manifests_root, args.skills_root)
+    if problems:
+        print("check-cli-arg-parity: documented CLI usage is out of sync:",
+              file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        print(
+            "Add the missing flag to the documented command, or fix the manifest.",
+            file=sys.stderr,
+        )
+        return 1
+    print("check-cli-arg-parity: all documented CLI invocations satisfy their "
+          "required arguments.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
