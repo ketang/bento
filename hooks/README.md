@@ -61,5 +61,14 @@ common mistake of using `exit 1` when you meant `exit 2` — see
 ## Hook execution environment
 
 For working directory, environment variable inheritance, stdin shape, stdout
-handling, TTY status, and common invalid assumptions — see
-[`references/hook-environment.md`](references/hook-environment.md).
+handling, TTY status, and common invalid assumptions:
+
+- Claude Code: [`references/hook-environment.md`](references/hook-environment.md)
+- Codex CLI (differs materially — workspace cwd, injected vars, sandbox gates
+  hook writes): [`references/codex-hook-environment.md`](references/codex-hook-environment.md)
+
+The runtime environment above applies to **agent-runtime hooks** only. Bento
+also has two lifecycle-extension mechanisms confusingly also called "hooks"
+(hook scripts and hook skills for `launch-work`/`land-work`) whose environments
+are entirely different. See
+[`references/hook-taxonomy.md`](references/hook-taxonomy.md) to tell them apart.
