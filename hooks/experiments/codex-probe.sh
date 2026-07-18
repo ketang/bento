@@ -5,7 +5,9 @@ render() {
   echo "--- raw stdin payload ---"; echo "$PAYLOAD"
   echo "PWD=$PWD"; echo "HOME=$HOME"
   echo "CUSTOM_PROBE_VAR=${CUSTOM_PROBE_VAR:-<UNSET>}"
-  echo "--- codex/agent injected vars ---"; env | grep -iE '^(CODEX|AI_AGENT|CLAUDECODE)' | sort
+  echo "--- codex/agent injected vars ---"
+  env | grep -iE '^(CODEX|AI_AGENT|CLAUDECODE)' | sort \
+    | sed -E 's/^([A-Z_]*(KEY|TOKEN|SECRET)[A-Z_]*)=.*/\1=<redacted>/i'
   echo "--- sample inherited user vars ---"; env | grep -iE '^(DOTFILES|NVM_DIR|SSH_AUTH_SOCK|TMUX)=' | sort
   echo "PATH=$PATH"
   [ -t 0 ] && echo "stdin: TTY" || echo "stdin: not a TTY"
