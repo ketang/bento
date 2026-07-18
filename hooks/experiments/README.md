@@ -238,6 +238,59 @@ Log written to `/tmp/hook-probe-stdout-stderr_on_block.txt`.
 
 ---
 
+## Experiment 4 — Codex CLI hook environment (real `codex exec` run)
+
+**Script:** `codex-probe.sh`
+**Runtime:** Codex CLI (`codex-cli 0.144.1`)
+**Captured evidence:** `codex-hook-capture-verified.txt`
+
+Unlike experiments 1–3 (Claude Code), this probe targets **Codex** and produced
+the evidence behind [`../references/codex-hook-environment.md`](../references/codex-hook-environment.md).
+
+**What it tests:** codex hook working directory, stdin payload shape per event,
+environment-variable inheritance (including transitive inheritance of an
+ancestor process's custom vars), codex-injected vars, login-shell/TTY status.
+
+**Steps:**
+
+1. Ensure `[features] hooks = true` in `~/.codex/config.toml`.
+2. Back up `~/.codex/hooks.json`, then add the probe to `SessionStart`,
+   `PreToolUse`, and `PostToolUse` (pass the output path inline so the script
+   knows where to write):
+
+```json
+{ "hooks": [ { "type": "command",
+  "command": "SP_OUT=/tmp/codex-probe-out.txt /PATH/TO/BENTO/hooks/experiments/codex-probe.sh" } ] }
+```
+
+3. Trigger a real run from a writable workspace:
+
+```bash
+export CUSTOM_PROBE_VAR=probe-value
+codex exec -c 'model_reasoning_effort="low"' "Run exactly this and nothing else: echo marker"
+```
+
+4. Read `/tmp/codex-probe-out.txt` and **restore the original `~/.codex/hooks.json`.**
+
+**Key things to look for** (see the committed capture for a full example):
+
+```
+"cwd":"<workspace>", "hook_event_name":"SessionStart", "permission_mode":"..."
+PWD=<workspace>          ← equals cwd, NOT $HOME (opposite of Claude)
+CUSTOM_PROBE_VAR=...     ← custom var inherited from the launching env
+CLAUDECODE=1             ← in the capture: transitively inherited from an
+AI_AGENT=claude-code_... ← ancestor Claude session that launched codex
+CODEX_API_KEY / CODEX_MANAGED_BY_NPM / CODEX_MANAGED_PACKAGE_ROOT  ← codex-injected
+login_shell: no          ← hook is not a login shell
+```
+
+**Sandbox caveat (observed):** under `--sandbox workspace-write`, hooks fire but
+their filesystem writes may not land — see the reference doc's *Sandbox
+Interaction* section. The committed capture came from a full-access
+(`permission_mode: bypassPermissions`) run.
+
+---
+
 ## Reading the original evidence
 
 The conclusions in `hook-environment.md` were reached before these scripts

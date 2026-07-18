@@ -1,8 +1,23 @@
-# Hook Execution Environment
+# Hook Execution Environment (Claude Code)
 
-Canonical reference for the runtime environment that Claude Code hooks execute
-in. Read this before writing a hook that depends on environment variables, file
-paths, shell features, or process capabilities.
+Canonical reference for the runtime environment that **Claude Code** hooks
+execute in. Read this before writing a hook that depends on environment
+variables, file paths, shell features, or process capabilities.
+
+> **Runtime scope.** This document describes Claude Code agent-runtime hooks.
+> Codex CLI hooks differ materially (working directory, injected vars, and
+> sandbox behavior) — see [`codex-hook-environment.md`](codex-hook-environment.md).
+> For the distinction between agent-runtime hooks and bento's
+> lifecycle-extension hook scripts / hook skills, see
+> [`hook-taxonomy.md`](hook-taxonomy.md).
+>
+> **Evidence status.** The Claude claims below were originally established from
+> direct in-session evidence (a `/proc/<pid>/environ` dump of a Bash-tool
+> subprocess, a live `SessionStart` env capture, and live hook-command variable
+> expansion) and are reproducible via the probe scripts in
+> [`../experiments/`](../experiments/README.md). The cross-runtime contrasts
+> with Codex were verified empirically in a real `codex exec` run — see
+> [`codex-hook-environment.md`](codex-hook-environment.md#how-this-was-verified).
 
 ## Working Directory
 
@@ -145,6 +160,8 @@ sandbox. Hooks can make outbound HTTP requests, connect to local sockets
 
 ## See Also
 
+- [`codex-hook-environment.md`](codex-hook-environment.md) — the Codex CLI runtime environment (differs materially)
+- [`hook-taxonomy.md`](hook-taxonomy.md) — agent-runtime hooks vs. bento lifecycle-extension hook scripts and hook skills
 - [`hook-contract.md`](hook-contract.md) — exit codes, JSON decision shapes, blocking vs. non-blocking semantics
 - [`../README.md`](../README.md) — hook layout and platform peer structure
 - [`../experiments/README.md`](../experiments/README.md) — runnable probe scripts with step-by-step reproduction instructions for every claim in this document
