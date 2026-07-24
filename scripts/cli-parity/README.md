@@ -37,3 +37,20 @@ Fields (per invocation):
 Not every skill needs a manifest — only those whose docs show invocations of a
 script that has `required=True` flags. Add an entry when you document a new
 required-flag invocation.
+
+## Coverage is enforced
+
+You do not have to remember the rule above: the checker's `check_coverage` gate
+scans every `catalog/skills/*/scripts/*.py` for `required=True` arguments and
+fails if a documented (sub)command carrying a required flag has no manifest
+entry here. So a new required-flag CLI with a documented invocation cannot
+silently escape the parity check — CI points you at the missing entry.
+
+Only *documented* (sub)commands are required to have coverage. An internal-only
+required-flag subcommand that no `SKILL.md` / `references/*.md` tells an agent to
+run carries no doc-drift risk and needs no manifest entry.
+
+Known blind spots (documented in the checker's module docstring): the gate does
+not catch doc prose *over-claiming* a flag as required when the parser does not,
+and the AST walker does not resolve `add_mutually_exclusive_group()` or a parser
+passed into a helper function. Both fail safe (under-report, never falsely fail).

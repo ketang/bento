@@ -22,9 +22,22 @@ tracks per-subcommand ``add_parser(...)`` receivers. A required argument passed
 a non-literal ``required=`` value is treated as *not* statically required (the
 corpus uses ``required=True`` literals); tighten here if that changes.
 
-The public helpers (``required_option_flags``, ``check_invocation``,
-``check_manifest``, ``check_tree``) are import-safe and take explicit roots so
-tests can point them at fixtures.
+Manifest coverage is itself convention-driven, so ``check_coverage`` closes the
+gap one level up: it scans every ``catalog/skills/*/scripts/*.py`` for
+``required=True`` arguments and flags any documented (sub)command that carries a
+required flag but has no manifest entry — otherwise a future required-flag CLI
+could ship with a documented invocation that silently escapes the parity check.
+
+Known blind spots (fail-safe, i.e. under-report rather than error): the reverse
+of parity — doc prose over-claiming a flag as "required" when the parser does
+not set ``required=True`` — is not checked; and the AST walker does not resolve
+``add_mutually_exclusive_group()`` or arguments added via a helper that receives
+the parser as a parameter, so a script built that way would under-report its
+required flags. No current catalog script uses either pattern.
+
+The public helpers (``required_flag_buckets``, ``required_option_flags``,
+``check_invocation``, ``check_manifest``, ``check_coverage``, ``check_tree``)
+are import-safe and take explicit roots so tests can point them at fixtures.
 """
 
 from __future__ import annotations
@@ -103,13 +116,14 @@ def _iter_ordered_statements(module: ast.Module):
     return statements
 
 
-def required_option_flags(script_path: Path, subcommand: str | None) -> list[list[str]]:
-    """Return the option-flag sets that are ``required=True`` for ``subcommand``.
+def required_flag_buckets(script_path: Path) -> dict[str | None, list[list[str]]]:
+    """Return every ``required=True`` option-flag set, grouped by subcommand.
 
-    Each element is the list of option strings for one required argument (e.g.
-    ``["--summary"]`` or ``["-o", "--output"]``); parity is satisfied when any
-    one of them appears in the documented command. ``subcommand=None`` targets
-    arguments added to the top-level ``ArgumentParser``.
+    The key is the argparse subcommand name, or ``None`` for arguments added to
+    the top-level ``ArgumentParser``. Each value is the list of required
+    arguments' option-string sets (see :func:`required_option_flags`). Buckets
+    with no required option flags are omitted, so the keys are exactly the
+    (sub)commands that carry at least one required flag.
     """
     source = script_path.read_text(encoding="utf-8")
     module = ast.parse(source, filename=str(script_path))
@@ -162,7 +176,18 @@ def required_option_flags(script_path: Path, subcommand: str | None) -> list[lis
             if flags:
                 required.setdefault(bucket, []).append(flags)
 
-    return required.get(subcommand, [])
+    return required
+
+
+def required_option_flags(script_path: Path, subcommand: str | None) -> list[list[str]]:
+    """Return the option-flag sets that are ``required=True`` for ``subcommand``.
+
+    Each element is the list of option strings for one required argument (e.g.
+    ``["--summary"]`` or ``["-o", "--output"]``); parity is satisfied when any
+    one of them appears in the documented command. ``subcommand=None`` targets
+    arguments added to the top-level ``ArgumentParser``.
+    """
+    return required_flag_buckets(script_path).get(subcommand, [])
 
 
 # --------------------------------------------------------------------------- #
@@ -262,16 +287,138 @@ def check_manifest(manifest_path: Path, skills_root: Path) -> list[str]:
     return problems
 
 
+# --------------------------------------------------------------------------- #
+# coverage completeness (guards the manifests themselves against gaps)
+# --------------------------------------------------------------------------- #
+
+def _covered_tuples(manifests_root: Path) -> set[tuple[str, str, str | None]]:
+    """Return ``(skill, script, subcommand)`` tuples any manifest already covers.
+
+    ``script`` is the skill-relative path as written in the manifest;
+    ``subcommand`` is ``None`` for a top-level invocation. Malformed manifests
+    are skipped here — :func:`check_manifest` reports their structural problems.
+    """
+    covered: set[tuple[str, str, str | None]] = set()
+    if not manifests_root.is_dir():
+        return covered
+    for manifest in sorted(manifests_root.glob("*.json")):
+        try:
+            data = json.loads(manifest.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        if not isinstance(data, dict) or not isinstance(data.get("invocations"), list):
+            continue
+        default_skill = manifest.stem
+        for entry in data["invocations"]:
+            if not isinstance(entry, dict):
+                continue
+            skill = entry.get("skill") or default_skill
+            script = entry.get("script")
+            if not script:
+                continue
+            covered.add((skill, script, entry.get("subcommand")))
+    return covered
+
+
+def _documented_invocations(doc_text: str, basename: str) -> tuple[bool, set[str]]:
+    """Detect whether ``basename`` is invoked in ``doc_text``.
+
+    Returns ``(mentioned, subcommands)``: ``mentioned`` is True if the script's
+    filename appears at all, and ``subcommands`` is the set of first bare tokens
+    following the filename on each occurrence (the documented subcommand names).
+    Backslash-newline continuations are joined first so a wrapped invocation is
+    read as one command line. This is a deliberately loose heuristic — its only
+    job is to decide whether a required-flag (sub)command is documented enough to
+    warrant a parity manifest, so an occasional stray token is harmless (it will
+    not match any real required-flag bucket).
+    """
+    joined = re.sub(r"\\\s*\n", " ", doc_text)
+    mentioned = False
+    subcommands: set[str] = set()
+    for match in re.finditer(re.escape(basename), joined):
+        mentioned = True
+        rest = joined[match.end():].split("\n", 1)[0]
+        for token in rest.split():
+            # Strip fenced-block / inline-code punctuation clinging to the token.
+            token = token.strip("`\"'")
+            if not token:
+                continue
+            if token.startswith("-"):
+                break  # a flag before any subcommand => top-level invocation
+            subcommands.add(token)
+            break
+    return mentioned, subcommands
+
+
+def check_coverage(
+    manifests_root: Path = DEFAULT_MANIFESTS_ROOT,
+    skills_root: Path = DEFAULT_SKILLS_ROOT,
+) -> list[str]:
+    """Flag documented required-flag CLIs that no manifest covers.
+
+    For every ``catalog/skills/<skill>/scripts/*.py`` that marks any argument
+    ``required=True``, this asserts that each documented (sub)command carrying a
+    required flag has a matching ``scripts/cli-parity/<skill>.json`` entry.
+    Without this, a future skill could add a required-flag script and document an
+    invocation of it while silently escaping the parity check — the same doc/arg
+    drift the checker exists to catch, one level up.
+
+    Only (sub)commands that are *documented* in the skill's ``.md`` files are
+    required to have coverage; an internal-only required-flag subcommand nobody
+    tells agents to run carries no doc-drift risk and is left alone.
+    """
+    if not skills_root.is_dir():
+        return []
+    covered = _covered_tuples(manifests_root)
+    problems: list[str] = []
+    for skill_dir in sorted(p for p in skills_root.iterdir() if p.is_dir()):
+        skill = skill_dir.name
+        scripts_dir = skill_dir / "scripts"
+        if not scripts_dir.is_dir():
+            continue
+        docs = sorted(skill_dir.rglob("*.md"))
+        doc_text = "\n".join(d.read_text(encoding="utf-8") for d in docs)
+        for script_path in sorted(scripts_dir.glob("*.py")):
+            try:
+                buckets = required_flag_buckets(script_path)
+            except SyntaxError as exc:
+                problems.append(f"{skill}: could not parse {script_path.name}: {exc}")
+                continue
+            if not buckets:
+                continue
+            script_rel = f"scripts/{script_path.name}"
+            mentioned, documented_subs = _documented_invocations(
+                doc_text, script_path.name
+            )
+            for subcommand in buckets:
+                is_documented = (
+                    subcommand in documented_subs
+                    if subcommand is not None
+                    else mentioned
+                )
+                if not is_documented:
+                    continue
+                if (skill, script_rel, subcommand) in covered:
+                    continue
+                sub = f" {subcommand}" if subcommand else ""
+                problems.append(
+                    f"{skill}: documented required-flag CLI `{script_rel}{sub}` "
+                    f"has no scripts/cli-parity/{skill}.json entry "
+                    f"(its documented usage would escape the parity check)"
+                )
+    return problems
+
+
 def check_tree(
     manifests_root: Path = DEFAULT_MANIFESTS_ROOT,
     skills_root: Path = DEFAULT_SKILLS_ROOT,
 ) -> list[str]:
-    """Check every ``*.json`` manifest under ``manifests_root``."""
-    if not manifests_root.is_dir():
-        return []
+    """Check every ``*.json`` manifest, then the coverage completeness gate."""
     problems: list[str] = []
-    for manifest in sorted(manifests_root.glob("*.json")):
-        problems.extend(check_manifest(manifest, skills_root))
+    if manifests_root.is_dir():
+        for manifest in sorted(manifests_root.glob("*.json")):
+            problems.extend(check_manifest(manifest, skills_root))
+    problems.extend(check_coverage(manifests_root, skills_root))
     return problems
 
 

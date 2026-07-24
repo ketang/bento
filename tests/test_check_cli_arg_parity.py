@@ -200,5 +200,124 @@ class ManifestFixtureTest(unittest.TestCase):
         self.assertEqual(self._check(), [])
 
 
+class RequiredFlagBucketsTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.script = Path(self._tmp.name) / "demo.py"
+        self.script.write_text(FIXTURE_SCRIPT, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_buckets_group_every_subcommand(self) -> None:
+        buckets = mod.required_flag_buckets(self.script)
+        self.assertEqual(
+            {k: sorted(f[0] for f in v) for k, v in buckets.items()},
+            {
+                "close-task": ["--expedition", "--outcome", "--summary"],
+                "verify": ["--expedition"],
+            },
+        )
+
+    def test_buckets_omit_flagless_subcommands(self) -> None:
+        # No top-level (None) required flags in the fixture => no None bucket.
+        self.assertNotIn(None, mod.required_flag_buckets(self.script))
+
+
+class CoverageTest(unittest.TestCase):
+    """The coverage gate: documented required-flag CLIs must have a manifest."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        base = Path(self._tmp.name)
+        self.skills = base / "catalog" / "skills"
+        self.skill = self.skills / "demo"
+        (self.skill / "scripts").mkdir(parents=True)
+        (self.skill / "scripts" / "demo.py").write_text(FIXTURE_SCRIPT, encoding="utf-8")
+        self.doc = self.skill / "SKILL.md"
+        self.manifests = base / "cli-parity"
+        self.manifests.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write_manifest(self, subcommands) -> None:
+        (self.manifests / "demo.json").write_text(
+            json.dumps(
+                {
+                    "invocations": [
+                        {
+                            "doc": "SKILL.md",
+                            "command": f"demo/scripts/demo.py {sub}",
+                            "script": "scripts/demo.py",
+                            "subcommand": sub,
+                        }
+                        for sub in subcommands
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+
+    def _coverage(self):
+        return mod.check_coverage(self.manifests, self.skills)
+
+    def test_documented_uncovered_subcommand_is_flagged(self) -> None:
+        # close-task is documented but no manifest exists at all.
+        self.doc.write_text(
+            "# Demo\n\n    demo/scripts/demo.py close-task --expedition x "
+            "--outcome kept --summary y\n",
+            encoding="utf-8",
+        )
+        problems = self._coverage()
+        self.assertTrue(
+            any("close-task" in p and "no scripts/cli-parity" in p for p in problems),
+            msg="\n".join(problems),
+        )
+
+    def test_covered_subcommand_passes(self) -> None:
+        self.doc.write_text(
+            "# Demo\n\n    demo/scripts/demo.py close-task --expedition x "
+            "--outcome kept --summary y\n",
+            encoding="utf-8",
+        )
+        self._write_manifest(["close-task"])
+        self.assertEqual(self._coverage(), [])
+
+    def test_undocumented_subcommand_is_not_flagged(self) -> None:
+        # verify carries a required flag but nothing documents it -> no risk.
+        self.doc.write_text(
+            "# Demo\n\n    demo/scripts/demo.py close-task --expedition x "
+            "--outcome kept --summary y\n",
+            encoding="utf-8",
+        )
+        self._write_manifest(["close-task"])
+        self.assertEqual(self._coverage(), [])
+
+    def test_partial_coverage_flags_only_the_gap(self) -> None:
+        # Both subcommands documented; only close-task has a manifest entry.
+        self.doc.write_text(
+            "# Demo\n\n"
+            "    demo/scripts/demo.py close-task --expedition x --outcome kept --summary y\n"
+            "    demo/scripts/demo.py verify --expedition x\n",
+            encoding="utf-8",
+        )
+        self._write_manifest(["close-task"])
+        problems = self._coverage()
+        self.assertTrue(any("verify" in p for p in problems), msg="\n".join(problems))
+        self.assertFalse(any("close-task" in p for p in problems), msg="\n".join(problems))
+
+    def test_documented_in_reference_file_counts(self) -> None:
+        # Invocation lives in references/*.md, not SKILL.md.
+        (self.skill / "references").mkdir()
+        (self.skill / "references" / "usage.md").write_text(
+            "    demo/scripts/demo.py close-task --expedition x --outcome kept --summary y\n",
+            encoding="utf-8",
+        )
+        self.doc.write_text("# Demo\n", encoding="utf-8")
+        problems = self._coverage()
+        self.assertTrue(any("close-task" in p for p in problems), msg="\n".join(problems))
+
+
 if __name__ == "__main__":
     unittest.main()
