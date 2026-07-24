@@ -79,11 +79,13 @@ This apply mode deletes:
 
 - local branches whose classification is `safe_to_delete`
 - linked worktrees attached to `merged_checked_out` branches when the worktree
-  is clean and its liveness verdict is `stale` or `unknown`, then deletes the
-  merged branch after the worktree removal succeeds
+  is clean and its liveness verdict is anything other than `confirmed_live`
+  (`stale`, `unknown`, `recently_active`, and `possibly_live` all qualify — the
+  branch is already landed, so recency reflects only the merging agent's own
+  activity), then deletes the merged branch after the worktree removal succeeds
 
-For merged, clean, stale-or-unknown linked worktrees, this helper apply mode is
-the approved automatic cleanup path.
+For merged, clean, not-`confirmed_live` linked worktrees, this helper apply mode
+is the approved automatic cleanup path.
 
 ### Routine post-landing cleanup for your own branch
 
@@ -99,10 +101,14 @@ git worktree remove <worktree-path>
 git branch -d <feature-branch>
 ```
 
-`land-work` step 10 prescribes this direct sequence. Closure's liveness gate
-treats a recently-active worktree (yours, just-used) as ineligible for
-automatic deletion, so handing your own just-landed branch to closure
-typically results in a `skipped_actions` entry rather than cleanup.
+`land-work` step 10 prescribes this direct sequence. Closure does not protect
+your own worktree via the recency gate — a `recently_active` or `possibly_live`
+`merged_checked_out` worktree is still eligible for automatic deletion. The
+gates that would skip your own just-landed worktree are `self_invocation`
+(closure was invoked from inside it), an uncommitted (dirty) working tree, or a
+`confirmed_live` process. If none of those hold, closure will remove the
+worktree and branch rather than record a `skipped_actions` entry — which is why
+routine own-branch cleanup belongs to `land-work`, not closure.
 
 Single-target apply mode is for stale, ambiguous, or other-agent leftovers —
 a worktree whose owner died, a branch whose merge state needs the helper's
@@ -237,8 +243,11 @@ case. All other verdicts are probabilistic.
 Outside the helper's explicit apply mode, treat `possibly_live`,
 `recently_active`, and `unknown` as review-driven: present the evidence and ask
 the user before manual cleanup. Inside
-`--apply delete-local-merged-branches`, `unknown` is eligible for automatic
-cleanup only when the branch is `merged_checked_out` and the worktree is clean.
+`--apply delete-local-merged-branches`, every verdict except `confirmed_live`
+(`stale`, `unknown`, `recently_active`, `possibly_live`) is eligible for
+automatic cleanup when the branch is `merged_checked_out` and the worktree is
+clean — for an already-landed branch, recency is only the merging agent's own
+activity, so it does not block removal.
 
 ### Recency Calculation
 
@@ -264,7 +273,7 @@ tracked file with uncommitted changes.  Untracked files are excluded.
 
 | Excuse | Counter-argument |
 |---|---|
-| "I just landed my own branch; closure can clean up the rest." | `land-work` owns routine cleanup for the active agent's just-landed branch. Closure is for other-agent or stale leftovers, and its self-invocation/liveness gates are expected to reject your own recent worktree. |
+| "I just landed my own branch; closure can clean up the rest." | `land-work` owns routine cleanup for the active agent's just-landed branch. Closure is for other-agent or stale leftovers. Do not rely on the liveness gate to protect your own worktree — `recently_active`/`possibly_live` do not block a `merged_checked_out` removal; only `self_invocation`, a dirty tree, or a `confirmed_live` process do. |
 | "The worktree has no live process, so it is safe to delete." | Absence of a live process is not proof of abandonment. An agent may be waiting for user input, and `possibly_live`, `recently_active`, and `unknown` findings remain review-driven outside the helper's explicit apply mode. |
 | "The branch is merged, so I can delete it manually." | Merged branches with linked worktrees still require ordered cleanup through the helper apply mode. Manual `git branch -d`/`-D` commands bypass the helper's classification, liveness, and worktree-order checks. |
 | "The tracker item looks done; I can close it during cleanup." | Closure gathers and presents landing evidence, then hands tracker mutation to the tracker workflow skill. Tracker items close only after verified landing on the integration branch. |

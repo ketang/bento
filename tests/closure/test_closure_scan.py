@@ -175,6 +175,59 @@ class ActiveSecondsElapsedTest(unittest.TestCase):
         self.assertEqual(self.mod.active_seconds_elapsed(last, now), 0.0)
 
 
+class WorktreeSafeToRemoveLivenessContractTest(unittest.TestCase):
+    """Guard WORKTREE_SAFE_TO_REMOVE_LIVENESS against the documented contract.
+
+    Contract (references/helper-output.md, SKILL.md): a clean
+    merged_checked_out worktree is eligible for automatic removal for every
+    liveness verdict EXCEPT confirmed_live. The docs previously claimed only
+    stale/unknown were eligible; this test locks the docs to the code so the
+    two cannot drift apart again (bento-kfau).
+    """
+
+    # Every verdict assess_liveness can emit.
+    ALL_VERDICTS = {
+        "confirmed_live",
+        "possibly_live",
+        "recently_active",
+        "stale",
+        "unknown",
+    }
+
+    def setUp(self):
+        self.mod = _load_module()
+
+    def test_safe_set_is_all_verdicts_except_confirmed_live(self):
+        self.assertEqual(
+            self.mod.WORKTREE_SAFE_TO_REMOVE_LIVENESS,
+            self.ALL_VERDICTS - {"confirmed_live"},
+        )
+
+    def test_confirmed_live_is_the_only_blocking_verdict(self):
+        self.assertNotIn("confirmed_live", self.mod.WORKTREE_SAFE_TO_REMOVE_LIVENESS)
+        for verdict in ("stale", "unknown", "recently_active", "possibly_live"):
+            self.assertIn(verdict, self.mod.WORKTREE_SAFE_TO_REMOVE_LIVENESS)
+
+    def test_removable_reason_matches_safe_set(self):
+        # A clean, non-self, attached worktree is removable iff its verdict is
+        # in the safe set. removable_merged_worktree_reason returns None when
+        # removal is allowed, a reason string when blocked.
+        current_checkout = Path("/does/not/match")
+        for verdict in self.ALL_VERDICTS:
+            worktree = {
+                "path": "/some/worktree",
+                "self_invocation": False,
+                "detached": False,
+                "working_tree_dirty": False,
+                "liveness": {"verdict": verdict},
+            }
+            reason = self.mod.removable_merged_worktree_reason(worktree, current_checkout)
+            if verdict in self.mod.WORKTREE_SAFE_TO_REMOVE_LIVENESS:
+                self.assertIsNone(reason, f"{verdict} should be removable")
+            else:
+                self.assertEqual(reason, f"worktree liveness is {verdict}")
+
+
 class MergedCheckedOutTest(unittest.TestCase):
     """Tests for the merged_checked_out branch classification."""
 

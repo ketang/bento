@@ -9,6 +9,7 @@
 | `merged_checked_out` | Merged into primary; still checked out in a worktree — worktree is a cleanup candidate |
 | `checked_out_in_worktree` | Not yet merged; checked out in a linked worktree — needs investigation |
 | `patch_equivalent_review` | No unique patches vs primary; not in a worktree |
+| `patch_equivalent_checked_out` | No unique patches vs primary; still checked out in a linked worktree — squash/rebase-landing leftover |
 | `review_required` | Unmerged work not in a worktree |
 
 ## Liveness Verdicts
@@ -30,9 +31,15 @@ case. All other verdicts are probabilistic.
 
 For manual cleanup outside the helper's apply mode, treat `possibly_live`,
 `recently_active`, and `unknown` as review-driven and ask the user before
-acting. The helper's `--apply delete-local-merged-branches` mode is narrower:
-it may automatically remove a clean linked worktree only when the branch is
-`merged_checked_out` and the liveness verdict is `stale` or `unknown`.
+acting. The helper's `--apply delete-local-merged-branches` mode applies a
+narrower rule that is deliberately more permissive on liveness: because a
+`merged_checked_out` branch is already landed on primary, timestamp-based
+recency only reflects the merging agent's own just-completed activity, not a
+competing live agent. The mode therefore removes a clean linked worktree for
+every liveness verdict except `confirmed_live` — that is, `stale`, `unknown`,
+`recently_active`, and `possibly_live` are all eligible. Only a live process
+detected in the worktree blocks removal on liveness grounds (see the apply-mode
+skip list below for the non-liveness gates).
 
 ## Self-Invocation Flag
 
@@ -60,23 +67,45 @@ Performs two kinds of cleanup:
 
 - delete `safe_to_delete` local branches immediately
 - remove a linked worktree for a `merged_checked_out` branch, then delete that
-  merged branch, but only when the worktree is clean and its
-  `liveness.verdict` is `stale` or `unknown`
-- example: `merged_checked_out` + clean worktree + `unknown` liveness verdict
-  is eligible for helper-driven removal in apply mode
+  merged branch, when the worktree is clean and its `liveness.verdict` is
+  anything other than `confirmed_live`
+- example: `merged_checked_out` + clean worktree + `unknown`, `stale`,
+  `recently_active`, or `possibly_live` liveness verdict is eligible for
+  helper-driven removal in apply mode
 
 This worktree-before-branch order matches the shared invariant in
 `../../land-work/references/workflow-invariants.md` and avoids leaving
 orphaned linked worktrees in detached `HEAD` state.
 
-If `self_invocation` is true, liveness is unavailable, the worktree is dirty,
-or the verdict is `confirmed_live`, `possibly_live`, or `recently_active`,
-the helper skips that worktree and leaves the branch in place.
+The helper skips a `merged_checked_out` worktree and leaves the branch in place
+when any of these gates fire (in this order):
+
+- `self_invocation` is true — use `land-work` for own-work cleanup, not closure
+- the worktree is the current checkout
+- the worktree is detached
+- the worktree has uncommitted changes (dirty tree)
+- an in-flight launch-work checkpoint is present (`checkpoint` set and not
+  `ready-to-land`)
+- liveness assessment is unavailable (e.g. `--no-liveness`)
+- the liveness verdict is `confirmed_live`
+
+Note that `possibly_live` and `recently_active` do **not** block removal here:
+for an already-merged branch the recency is the merging agent's own activity,
+so only a `confirmed_live` process is treated as a competing agent.
 
 ### `--apply delete-local-patch-equivalent-branches`
 
-Force-deletes local branches classified as `patch_equivalent_review` — branches
-with `unique_patch_count == 0` that are not checked out in any worktree.
+Force-deletes local branches with `unique_patch_count == 0` in both
+patch-equivalent classifications:
+
+- `patch_equivalent_review` — not checked out in any worktree; the branch is
+  force-deleted directly.
+- `patch_equivalent_checked_out` — still checked out in a linked worktree. The
+  helper first removes the worktree using the same safety gates as
+  `merged_checked_out` (self-invocation, current checkout, detached, dirty
+  tree, in-flight launch-work checkpoint, liveness unavailable, or
+  `confirmed_live` all block removal), then force-deletes the checked-out
+  branch. If any gate blocks the worktree, the branch is left in place.
 
 These branches were landed via rebase or squash merge, so they are not reachable
 ancestors of the primary branch and `git branch -d` would refuse them. The
