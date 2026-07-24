@@ -104,10 +104,14 @@ def run_cross(
     except (FileNotFoundError, ValueError) as exc:
         return EXIT_USAGE, f"cross-check: {exc}"
 
+    artifact_id = common.new_artifact_id()
+    artifact_digest = common.compute_digest(artifact_text)
     prompt = common.compose_prompt(
         prompt_path.read_text(encoding="utf-8"),
         artifact_text,
         artifact_type=artifact_type,
+        artifact_id=artifact_id,
+        artifact_digest=artifact_digest,
     )
 
     counterpart = common.counterpart_of(current_runtime)
@@ -159,11 +163,24 @@ def run_cross(
         if not verdict.strip():
             return EXIT_FALLBACK_REQUIRED, (
                 f"cross-check: {counterpart} produced no review text; use the "
-                f"same-runtime fallback."
+                f"same-runtime fallback.\n"
+                f"  runtime={current_runtime} counterpart={counterpart} "
+                f"artifact_sha256={artifact_digest} output=<none written>"
+            )
+
+        ok, reason, body = common.validate_identity(
+            verdict, expected_id=artifact_id, expected_digest=artifact_digest
+        )
+        if not ok:
+            return EXIT_FALLBACK_REQUIRED, (
+                f"cross-check: {counterpart} review failed identity validation "
+                f"({reason}); use the same-runtime fallback.\n"
+                f"  runtime={current_runtime} counterpart={counterpart} "
+                f"artifact_sha256={artifact_digest} output=<none written>"
             )
 
         target = _write_review(
-            verdict=verdict,
+            verdict=body,
             current_runtime=current_runtime,
             artifact_type=artifact_type,
             mode="cross",
@@ -171,6 +188,8 @@ def run_cross(
             scope=scope,
             truncated=truncated,
             now=now,
+            token=artifact_id[:8],
+            artifact_digest=artifact_digest,
         )
         body = target.read_text(encoding="utf-8")
         return EXIT_OK, f"{target}\n\n{body}"
@@ -189,6 +208,8 @@ def _write_review(
     scope: str | None,
     truncated: bool,
     now: datetime,
+    token: str | None = None,
+    artifact_digest: str | None = None,
 ) -> Path:
     rendered = common.render_review(
         verdict=verdict,
@@ -197,8 +218,11 @@ def _write_review(
         mode=mode,
         scope=scope,
         truncated=truncated,
+        artifact_digest=artifact_digest,
     )
-    target = common.output_path(slug=slug, now=now, tmp_root=common.tmp_root())
+    target = common.output_path(
+        slug=slug, now=now, tmp_root=common.tmp_root(), token=token
+    )
     target.parent.mkdir(parents=True, exist_ok=True)
     # Same slug within the same second must not clobber a prior review.
     if target.exists():

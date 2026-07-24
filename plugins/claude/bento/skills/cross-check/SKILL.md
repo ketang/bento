@@ -63,7 +63,10 @@ is **review-only** — it never edits code or applies fixes.
    On success it writes `/tmp/cross-check-<slug>-<ts>.md` and prints the path +
    the review inline. **Exit codes:** `0` success; `3` recursion-skip (do
    nothing); `4` **fallback required** — the cross run failed (nonzero exit,
-   empty output, or timeout), so perform the same-runtime fallback (step 4).
+   empty output, timeout, or a review that failed identity validation — the
+   reviewer must echo back an unguessable per-run id and the artifact's SHA-256,
+   so stale or misrouted responses are rejected), so perform the same-runtime
+   fallback (step 4).
    Use `--dry-run` to preview the exact counterpart command without running it.
    If you had to trim a large artifact to fit, add `--truncated` so the review
    file is marked as based on partial context.
@@ -106,6 +109,10 @@ per file):
   always honor it as a skip on entry.
 - A failed cross run falls back to the same-runtime reviewer; it does not block
   the workflow.
+- A cross review is only accepted when its identity block echoes this run's
+  unguessable id and the artifact's SHA-256. Missing/mismatched identity is a
+  fallback trigger, never a success — this is what prevents a stale or misrouted
+  reviewer response from being recorded as a valid review.
 - Label same-runtime fallback output as DEGRADED.
 
 ## Stop conditions
