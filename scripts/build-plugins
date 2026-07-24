@@ -2,6 +2,7 @@
 
 import json
 import fnmatch
+import hashlib
 import os
 import shutil
 import struct
@@ -17,6 +18,7 @@ CATALOG_DIR = ROOT_DIR / "catalog" / "skills"
 HOOKS_CATALOG_DIR = ROOT_DIR / "catalog" / "hooks"
 PLUGINS_DIR = ROOT_DIR / "plugins"
 CLAUDE_MARKETPLACE_FILE = ROOT_DIR / ".claude-plugin" / "marketplace.json"
+PLUGIN_VERSIONS_FILE = ROOT_DIR / "catalog" / "plugin-versions.json"
 OWNER_NAME = "Ketan Gangatirkar"
 OWNER_EMAIL = "ketan@gangatirkar.com"
 OWNER_URL = "https://github.com/ketang"
@@ -226,19 +228,22 @@ PLUGIN_DEFS = {
 }
 
 
-def plugin_versions_file() -> Path:
-    return ROOT_DIR / "catalog" / "plugin-versions.json"
-
-
 def json_dump(path: Path, payload: object) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2) + "\n", encoding="utf-8")
 
 
-def load_plugin_versions() -> dict[str, str]:
-    versions = json.loads(plugin_versions_file().read_text(encoding="utf-8"))
+def load_plugin_versions() -> dict[str, dict]:
+    """Load the plugin version map, normalizing to the current
+    ``{plugin: {"version": "x.y.z", "content_hash": "..."}}`` schema.
+
+    The legacy ``{plugin: "x.y.z"}`` schema (and any dict missing a
+    ``content_hash``) is accepted and yields a ``None`` content_hash, which the
+    builder treats as "hash unknown" and bumps once on the next build.
+    """
+    raw = json.loads(PLUGIN_VERSIONS_FILE.read_text(encoding="utf-8"))
     expected = set(PLUGIN_ORDER)
-    actual = set(versions)
+    actual = set(raw)
     missing = sorted(expected - actual)
     extra = sorted(actual - expected)
     if missing or extra:
@@ -247,12 +252,66 @@ def load_plugin_versions() -> dict[str, str]:
             details.append(f"missing versions for: {', '.join(missing)}")
         if extra:
             details.append(f"unexpected versions for: {', '.join(extra)}")
-        raise SystemExit(f"Invalid plugin version map in {plugin_versions_file()}: {'; '.join(details)}")
-    return versions
+        raise SystemExit(f"Invalid plugin version map in {PLUGIN_VERSIONS_FILE}: {'; '.join(details)}")
+    normalized: dict[str, dict] = {}
+    for plugin, value in raw.items():
+        if isinstance(value, str):
+            normalized[plugin] = {"version": value, "content_hash": None}
+        elif isinstance(value, dict) and isinstance(value.get("version"), str):
+            content_hash = value.get("content_hash")
+            if content_hash is not None and not isinstance(content_hash, str):
+                raise SystemExit(
+                    f"content_hash for {plugin!r} must be a string or null in {PLUGIN_VERSIONS_FILE}"
+                )
+            normalized[plugin] = {"version": value["version"], "content_hash": content_hash}
+        else:
+            raise SystemExit(f"Invalid version entry for {plugin!r} in {PLUGIN_VERSIONS_FILE}")
+    return normalized
 
 
-def plugin_version(plugin: str) -> str:
-    return load_plugin_versions()[plugin]
+def write_plugin_versions(versions: dict[str, dict]) -> None:
+    payload = {
+        plugin: {
+            "version": versions[plugin]["version"],
+            "content_hash": versions[plugin]["content_hash"],
+        }
+        for plugin in PLUGIN_ORDER
+    }
+    json_dump(PLUGIN_VERSIONS_FILE, payload)
+
+
+def bump_patch(version: str) -> str:
+    major, minor, patch = (int(part) for part in version.split("."))
+    return f"{major}.{minor}.{patch + 1}"
+
+
+def compute_plugin_content_hash(plugin: str, platforms: list[str]) -> str:
+    """SHA-256 over the sorted (relative-path, bytes) pairs of every generated
+    file for ``plugin`` across ``platforms``, excluding the version-bearing
+    plugin manifest (``.claude-plugin``/``.codex-plugin`` ``plugin.json``).
+
+    The key is the platform-prefixed path relative to the live ``PLUGINS_DIR``,
+    so the digest is stable across machines and checkouts: no absolute paths and
+    no mtimes leak in. Hashing the manifest would be circular because it embeds
+    the version this hash decides.
+    """
+    entries: list[tuple[str, bytes]] = []
+    for platform in platforms:
+        root = plugin_dir(plugin, platform)
+        for path in root.rglob("*"):
+            if not path.is_file():
+                continue
+            if path.name == "plugin.json" and path.parent.name in (".claude-plugin", ".codex-plugin"):
+                continue
+            entries.append((path.relative_to(PLUGINS_DIR).as_posix(), path.read_bytes()))
+    digest = hashlib.sha256()
+    for key, content in sorted(entries, key=lambda item: item[0]):
+        digest.update(key.encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(str(len(content)).encode("utf-8"))
+        digest.update(b"\0")
+        digest.update(content)
+    return digest.hexdigest()
 
 
 def ensure_skill_exists(skill: str) -> None:
@@ -518,23 +577,23 @@ def merge_hook_payload(merged_hooks: dict[str, list], payload: dict) -> None:
         merged_hooks.setdefault(event_name, []).extend(entries)
 
 
-def claude_manifest(plugin: str) -> dict:
+def claude_manifest(plugin: str, version: str) -> dict:
     metadata = PLUGIN_DEFS[plugin]
     return {
         "name": plugin,
         "description": metadata["description"],
-        "version": plugin_version(plugin),
+        "version": version,
         "author": {
             "name": OWNER_NAME,
         },
     }
 
 
-def codex_manifest(plugin: str) -> dict:
+def codex_manifest(plugin: str, version: str) -> dict:
     metadata = PLUGIN_DEFS[plugin]
     return {
         "name": plugin,
-        "version": plugin_version(plugin),
+        "version": version,
         "description": metadata["description"],
         "author": {
             "name": OWNER_NAME,
@@ -743,8 +802,13 @@ def plugin_has_content(plugin: str, platform: str) -> bool:
     )
 
 
-def build_plugin(plugin: str, platform: str) -> bool:
-    """Materialize <plugin> for <platform>. Returns True iff a dir was written."""
+def build_plugin_content(plugin: str, platform: str) -> bool:
+    """Materialize <plugin> for <platform> WITHOUT its version-bearing manifest.
+
+    The manifest is written separately (``write_plugin_manifest``) after the
+    content hash has decided the version, so the hash never depends on the
+    version it produces. Returns True iff a dir was written.
+    """
     if not plugin_has_content(plugin, platform):
         return False
     target = plugin_dir(plugin, platform)
@@ -758,9 +822,18 @@ def build_plugin(plugin: str, platform: str) -> bool:
         fetch_external_skills(plugin, platform)
     copy_hooks(plugin, platform)
     write_assets(plugin, platform)
-    manifest = claude_manifest(plugin) if platform == "claude" else codex_manifest(plugin)
-    json_dump(target / manifest_dir / "plugin.json", manifest)
     return True
+
+
+def write_plugin_manifest(plugin: str, platform: str, version: str) -> None:
+    target = plugin_dir(plugin, platform)
+    manifest_dir = ".claude-plugin" if platform == "claude" else ".codex-plugin"
+    manifest = (
+        claude_manifest(plugin, version)
+        if platform == "claude"
+        else codex_manifest(plugin, version)
+    )
+    json_dump(target / manifest_dir / "plugin.json", manifest)
 
 
 def write_codex_plugin_names(plugin_names: list[str]) -> None:
@@ -777,12 +850,12 @@ def write_codex_plugin_names(plugin_names: list[str]) -> None:
     )
 
 
-def write_claude_marketplace() -> None:
+def write_claude_marketplace(versions: dict[str, dict]) -> None:
     local_entries = [
         {
             "name": plugin,
             "description": PLUGIN_DEFS[plugin]["description"],
-            "version": plugin_version(plugin),
+            "version": versions[plugin]["version"],
             "source": f"./plugins/claude/{plugin}",
             "author": {
                 "name": OWNER_NAME,
@@ -836,13 +909,31 @@ def run_verify_commands() -> None:
 
 def build_repo(run_verification: bool = True) -> None:
     prune_generated_plugin_dirs()
+    versions = load_plugin_versions()
+    built_platforms: dict[str, list[str]] = {}
+    for plugin in PLUGIN_ORDER:
+        built_platforms[plugin] = [
+            platform for platform in PLATFORMS if build_plugin_content(plugin, platform)
+        ]
     built_codex: list[str] = []
     for plugin in PLUGIN_ORDER:
-        for platform in PLATFORMS:
-            built = build_plugin(plugin, platform)
-            if built and platform == "codex":
+        platforms = built_platforms[plugin]
+        if not platforms:
+            continue
+        content_hash = compute_plugin_content_hash(plugin, platforms)
+        entry = versions[plugin]
+        if entry["content_hash"] != content_hash:
+            # Content changed (or hash was never recorded): auto-bump the patch
+            # version. A manually raised major/minor in plugin-versions.json is
+            # preserved because only the patch component advances.
+            entry["version"] = bump_patch(entry["version"])
+            entry["content_hash"] = content_hash
+        for platform in platforms:
+            write_plugin_manifest(plugin, platform, entry["version"])
+            if platform == "codex":
                 built_codex.append(plugin)
-    write_claude_marketplace()
+    write_plugin_versions(versions)
+    write_claude_marketplace(versions)
     write_codex_plugin_names(built_codex)
     if run_verification:
         run_verify_commands()
@@ -877,14 +968,20 @@ def check_repo() -> int:
     fresh build of catalog/. Builds into a temp tree (no verification, so it does
     not recurse into the test suite) and never mutates the working tree.
     """
-    global PLUGINS_DIR, CLAUDE_MARKETPLACE_FILE
+    global PLUGINS_DIR, CLAUDE_MARKETPLACE_FILE, PLUGIN_VERSIONS_FILE
     committed_plugins = PLUGINS_DIR
     committed_marketplace = CLAUDE_MARKETPLACE_FILE
+    committed_versions = PLUGIN_VERSIONS_FILE
     problems: list[str] = []
     with tempfile.TemporaryDirectory() as tmp:
         tmp_root = Path(tmp)
         PLUGINS_DIR = tmp_root / "plugins"
         CLAUDE_MARKETPLACE_FILE = tmp_root / ".claude-plugin" / "marketplace.json"
+        # Build reads the committed versions/hashes but persists any auto-bump
+        # into the temp copy, so --check never mutates the real version file.
+        PLUGIN_VERSIONS_FILE = tmp_root / "catalog" / "plugin-versions.json"
+        PLUGIN_VERSIONS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        PLUGIN_VERSIONS_FILE.write_bytes(committed_versions.read_bytes())
         try:
             build_repo(run_verification=False)
             fresh_plugins = PLUGINS_DIR
@@ -898,6 +995,7 @@ def check_repo() -> int:
         finally:
             PLUGINS_DIR = committed_plugins
             CLAUDE_MARKETPLACE_FILE = committed_marketplace
+            PLUGIN_VERSIONS_FILE = committed_versions
     if problems:
         print(
             "build-plugins --check: committed artifacts do not match a fresh build:",

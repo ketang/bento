@@ -38,6 +38,7 @@ class BuildPluginsTest(unittest.TestCase):
         self.module.HOOKS_CATALOG_DIR = self.root / "catalog" / "hooks"
         self.module.PLUGINS_DIR = self.root / "plugins"
         self.module.CLAUDE_MARKETPLACE_FILE = self.root / ".claude-plugin" / "marketplace.json"
+        self.module.PLUGIN_VERSIONS_FILE = self.root / "catalog" / "plugin-versions.json"
         self.module.EXTERNAL_SKILLS = {}
 
     def tearDown(self) -> None:
@@ -94,7 +95,7 @@ class BuildPluginsTest(unittest.TestCase):
 
         versions = json.loads((REPO_ROOT / "catalog" / "plugin-versions.json").read_text(encoding="utf-8"))
         codex_manifest = json.loads((codex_bento / ".codex-plugin" / "plugin.json").read_text(encoding="utf-8"))
-        self.assertEqual(codex_manifest["version"], versions["bento"])
+        self.assertEqual(codex_manifest["version"], versions["bento"]["version"])
         self.assertEqual(codex_manifest["skills"], "./skills/")
         self.assertEqual(codex_manifest["hooks"], "./hooks/hooks.json")
         self.assertEqual(codex_manifest["interface"]["displayName"], "Bento")
@@ -112,7 +113,7 @@ class BuildPluginsTest(unittest.TestCase):
         claude_marketplace = json.loads((self.root / ".claude-plugin" / "marketplace.json").read_text(encoding="utf-8"))
         plugins_by_name = {p["name"]: p for p in claude_marketplace["plugins"]}
         self.assertIn("trackers", plugins_by_name)
-        self.assertEqual(plugins_by_name["trackers"]["version"], versions["trackers"])
+        self.assertEqual(plugins_by_name["trackers"]["version"], versions["trackers"]["version"])
         self.assertEqual(plugins_by_name["stacks"]["source"], "./plugins/claude/stacks")
         self.assertIn("session-id", plugins_by_name)
 
@@ -763,6 +764,122 @@ class BuildPluginsTest(unittest.TestCase):
         self.build_repo()
         codex_path = self.root / "plugins" / "codex" / "bento" / "skills" / "dev-skill"
         self.assertFalse(codex_path.exists(), "dev-skill must not appear in codex bento plugin")
+
+    def _read_versions(self) -> dict:
+        return json.loads(
+            (self.root / "catalog" / "plugin-versions.json").read_text(encoding="utf-8")
+        )
+
+    def _write_versions(self, mapping: dict) -> None:
+        (self.root / "catalog" / "plugin-versions.json").write_text(
+            json.dumps(mapping, indent=2) + "\n", encoding="utf-8"
+        )
+
+    def test_legacy_schema_migrates_and_first_build_bumps_all_once(self) -> None:
+        legacy = {
+            "bento": "1.0.0",
+            "trackers": "1.0.0",
+            "stacks": "1.0.0",
+            "session-id": "1.0.0",
+            "hygiene": "1.0.0",
+        }
+        self._write_versions(legacy)
+
+        self.build_repo()
+        after_first = self._read_versions()
+        for plugin in legacy:
+            self.assertEqual(after_first[plugin]["version"], "1.0.1", plugin)
+            content_hash = after_first[plugin]["content_hash"]
+            self.assertIsInstance(content_hash, str)
+            self.assertEqual(len(content_hash), 64, plugin)
+
+        # Re-running with byte-identical content must not bump again.
+        self.build_repo()
+        self.assertEqual(self._read_versions(), after_first)
+
+    def test_content_change_auto_bumps_only_affected_plugin_patch(self) -> None:
+        self.build_repo()
+        before = self._read_versions()
+
+        skill = self.root / "catalog" / "skills" / "closure" / "SKILL.md"
+        skill.write_text(skill.read_text(encoding="utf-8") + "\nMeaningful change.\n", encoding="utf-8")
+
+        self.build_repo()
+        after = self._read_versions()
+
+        # closure is bundled only in the bento plugin.
+        self.assertEqual(
+            after["bento"]["version"],
+            self.module.bump_patch(before["bento"]["version"]),
+        )
+        self.assertNotEqual(after["bento"]["content_hash"], before["bento"]["content_hash"])
+        for other in ("trackers", "stacks", "session-id", "hygiene"):
+            self.assertEqual(after[other]["version"], before[other]["version"], other)
+            self.assertEqual(after[other]["content_hash"], before[other]["content_hash"], other)
+
+    def test_manual_minor_override_preserved_when_content_unchanged(self) -> None:
+        self.build_repo()
+        settled = self._read_versions()
+
+        overridden = {plugin: dict(entry) for plugin, entry in settled.items()}
+        overridden["bento"]["version"] = "9.9.0"
+        self._write_versions(overridden)
+
+        self.build_repo()
+        after = self._read_versions()
+
+        self.assertEqual(after["bento"]["version"], "9.9.0")
+        manifest = json.loads(
+            (self.root / "plugins" / "claude" / "bento" / ".claude-plugin" / "plugin.json").read_text(
+                encoding="utf-8"
+            )
+        )
+        self.assertEqual(manifest["version"], "9.9.0")
+
+    def test_manual_major_preserved_when_content_changes_only_patch_advances(self) -> None:
+        self.build_repo()
+        settled = self._read_versions()
+
+        overridden = {plugin: dict(entry) for plugin, entry in settled.items()}
+        overridden["bento"]["version"] = "2.0.0"
+        self._write_versions(overridden)
+
+        skill = self.root / "catalog" / "skills" / "closure" / "SKILL.md"
+        skill.write_text(skill.read_text(encoding="utf-8") + "\nchange\n", encoding="utf-8")
+
+        self.build_repo()
+        after = self._read_versions()
+
+        # The manual major/minor survives; only the patch component advances.
+        self.assertEqual(after["bento"]["version"], "2.0.1")
+
+    def test_content_hash_stable_across_runs(self) -> None:
+        self.build_repo()
+        first = self._read_versions()
+        self.build_repo()
+        second = self._read_versions()
+        self.assertEqual(
+            {p: first[p]["content_hash"] for p in first},
+            {p: second[p]["content_hash"] for p in second},
+        )
+
+    def test_check_mode_detects_content_change_without_rebuild(self) -> None:
+        with self.maybe_skip_assets(enabled=False):
+            self.module.build_repo(run_verification=False)
+            settled = self._read_versions()
+
+            # Catalog content drifts but the committed plugins/ tree and version
+            # file are not regenerated — the CI "forgot to rebuild" scenario.
+            skill = self.root / "catalog" / "skills" / "closure" / "SKILL.md"
+            skill.write_text(skill.read_text(encoding="utf-8") + "\ndrifted\n", encoding="utf-8")
+
+            stderr = io.StringIO()
+            with contextlib.redirect_stderr(stderr):
+                rc = self.module.check_repo()
+
+        self.assertEqual(rc, 1)
+        # --check must never mutate the real version file.
+        self.assertEqual(self._read_versions(), settled)
 
     def test_check_mode_passes_when_committed_tree_matches_fresh_build(self) -> None:
         with self.maybe_skip_assets(enabled=False):

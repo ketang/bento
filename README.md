@@ -209,22 +209,18 @@ when you do not want it copied into generated plugins.
 Run:
 
 ```bash
-scripts/bump-plugin-versions
 scripts/build-plugins
 ```
 
-Use `scripts/bump-plugin-versions` when preparing a shipped plugin update. It
-diffs the current tree against the most recent commit that changed
-`catalog/plugin-versions.json`, bumps only the affected plugin versions, and
-ignores generated outputs such as `plugins/` and marketplace manifests.
-
-Then `scripts/build-plugins`:
+`scripts/build-plugins`:
 
 - materializes generated plugin directories under `plugins/`
 - composes generated skill payloads from shared `SKILL.md` plus the target
   platform overlay when present
 - copies lifecycle hooks from platform-peer sources under
   `catalog/hooks/<hook-name>/<platform>/`
+- auto-bumps each plugin's **patch** version when its generated output changes,
+  keyed on a SHA-256 content hash recorded in `catalog/plugin-versions.json`
 - writes each plugin's `.claude-plugin/plugin.json`
 - writes each plugin's `.codex-plugin/plugin.json`
 - generates Codex-facing assets under each plugin's `assets/`
@@ -296,15 +292,24 @@ separate Codex UI behavior.
 Generated marketplace manifests are automatic; do not edit
 `.claude-plugin/marketplace.json` by hand.
 
-Plugin versions live in `catalog/plugin-versions.json`. Treat that file as the
-release boundary for plugin artifacts: the bump script compares the current tree
-to the last commit that updated those versions and advances only the plugins
-whose canonical shipped inputs changed.
+Plugin versions live in `catalog/plugin-versions.json` as a
+`{version, content_hash}` entry per plugin. `scripts/build-plugins` owns this
+file: on each run it hashes every plugin's generated output (skills, hooks,
+assets — everything except the version-bearing manifest) and auto-bumps the
+**patch** version whenever the hash changes, leaving it untouched otherwise. No
+manual step is needed for patch releases.
 
-If you increment a plugin version, do not stop at `catalog/plugin-versions.json`.
-The surfaced Claude and Codex versions come from the generated artifacts, so you
-must run `scripts/build-plugins` and commit the regenerated manifests together
-with the version file update.
+Minor and major bumps remain manual: edit the plugin's `version` field in
+`catalog/plugin-versions.json`, then run `scripts/build-plugins`. When content is
+otherwise unchanged the build keeps your version verbatim; when content also
+changed, only the patch component advances on top of your manual major/minor, so
+the higher components you set are never lowered. See
+[`.claude/skills/version-bump.md`](.claude/skills/version-bump.md) for the
+minor/major decision rules.
+
+Whichever path, the surfaced Claude and Codex versions come from the generated
+artifacts, so always run `scripts/build-plugins` and commit the regenerated
+`plugins/` and `.claude-plugin/marketplace.json` together with the version file.
 
 ## Hooks
 
