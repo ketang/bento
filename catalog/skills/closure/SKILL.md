@@ -72,8 +72,11 @@ closure/scripts/closure-scan.py --apply delete-local-merged-branches
 
 This deletes `safe_to_delete` branches and removes clean `merged_checked_out`
 worktrees before deleting their branch — the approved automatic cleanup path.
-See `closure/references/helper-output.md` for the full liveness, dirty-tree, and
-self-invocation gates and skip conditions.
+Removal is gated on liveness, not recency: every verdict except `confirmed_live`
+(`stale`, `unknown`, `recently_active`, `possibly_live`) is eligible, since for
+an already-landed branch recency reflects only the merging agent's own
+activity. See `closure/references/helper-output.md` for the full liveness,
+dirty-tree, and self-invocation gates and skip conditions.
 
 ### Single-Target Mode
 
@@ -163,9 +166,12 @@ liveness signal; every other verdict is probabilistic.
 
 Outside the helper's explicit apply mode, treat `possibly_live`,
 `recently_active`, and `unknown` as review-driven: present the evidence and ask
-before manual cleanup. Inside `--apply delete-local-merged-branches`, `unknown`
-is eligible for automatic cleanup only when the branch is `merged_checked_out`
-and the worktree is clean.
+the user before manual cleanup. Inside `--apply delete-local-merged-branches`,
+every verdict except `confirmed_live` (`stale`, `unknown`, `recently_active`,
+`possibly_live`) is eligible for automatic cleanup when the branch is
+`merged_checked_out` and the worktree is clean — for an already-landed branch,
+recency is only the merging agent's own activity, so it does not block
+removal.
 
 ## Usage
 
@@ -180,7 +186,7 @@ and the worktree is clean.
 
 | Excuse | Counter-argument |
 |---|---|
-| "I just landed my own branch; closure can clean up the rest." | `land-work` owns routine cleanup for the active agent's just-landed branch. Closure is for other-agent or stale leftovers, and its self-invocation/liveness gates are expected to reject your own recent worktree. |
+| "I just landed my own branch; closure can clean up the rest." | `land-work` owns routine cleanup for the active agent's just-landed branch. Closure is for other-agent or stale leftovers. Do not rely on the liveness gate to protect your own worktree — `recently_active`/`possibly_live` do not block a `merged_checked_out` removal; only `self_invocation`, a dirty tree, or a `confirmed_live` process do. |
 | "The worktree has no live process, so it is safe to delete." | Absence of a live process is not proof of abandonment. An agent may be waiting for user input, and `possibly_live`, `recently_active`, and `unknown` findings remain review-driven outside the helper's explicit apply mode. |
 | "The branch is merged, so I can delete it manually during this closure pass." | In a closure GC pass, merged other-agent branches with linked worktrees require ordered cleanup through the helper apply mode; manual `git branch -d`/`-D` here bypasses the helper's classification, liveness, and worktree-order checks. Your own just-landed branch is `land-work` step 10's direct manual cleanup, not a closure pass. |
 | "The tracker item looks done; I can close it during cleanup." | Closure gathers and presents landing evidence, then hands tracker mutation to the tracker workflow skill. Tracker items close only after verified landing on the integration branch. |
