@@ -63,6 +63,24 @@ def main():
 '''
 
 
+# A CLI with BOTH a required top-level flag and a required subcommand flag —
+# no current catalog script mixes the two, so this exercises that interaction.
+FIXTURE_MIXED = '''\
+import argparse
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="mixed")
+    parser.add_argument("--config", required=True)
+    sub = parser.add_subparsers(dest="command")
+
+    p = sub.add_parser("run")
+    p.add_argument("--target", required=True)
+
+    return parser
+'''
+
+
 class RealCorpusTest(unittest.TestCase):
     """The canonical catalog must stay clean; this is the regression guard."""
 
@@ -317,6 +335,151 @@ class CoverageTest(unittest.TestCase):
         self.doc.write_text("# Demo\n", encoding="utf-8")
         problems = self._coverage()
         self.assertTrue(any("close-task" in p for p in problems), msg="\n".join(problems))
+
+
+class CoverageInvocationHeuristicTest(unittest.TestCase):
+    """Guards that only real invocations — not bare mentions — trigger the gate."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.base = Path(self._tmp.name)
+        self.skills = self.base / "catalog" / "skills"
+        self.skill = self.skills / "demo"
+        (self.skill / "scripts").mkdir(parents=True)
+        self.doc = self.skill / "SKILL.md"
+        self.manifests = self.base / "cli-parity"
+        self.manifests.mkdir(parents=True)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write_script(self, name: str, source: str) -> None:
+        (self.skill / "scripts" / name).write_text(source, encoding="utf-8")
+
+    def _coverage(self):
+        return mod.check_coverage(self.manifests, self.skills)
+
+    def test_top_level_bare_mention_is_not_flagged(self) -> None:
+        # The Important review finding: a prose mention of a top-level-only
+        # required-flag script (no invocation) must NOT be treated as documented.
+        self._write_script("report.py", FIXTURE_SINGLE)
+        self.doc.write_text(
+            "# Demo\n\nThe report writer (`report.py`) performs best-effort "
+            "telemetry.\n",
+            encoding="utf-8",
+        )
+        self.assertEqual(self._coverage(), [])
+
+    def test_top_level_real_invocation_is_flagged(self) -> None:
+        self._write_script("report.py", FIXTURE_SINGLE)
+        self.doc.write_text(
+            "# Demo\n\n    demo/scripts/report.py --note hello\n", encoding="utf-8"
+        )
+        problems = self._coverage()
+        self.assertTrue(
+            any("report.py" in p and "no scripts/cli-parity" in p for p in problems),
+            msg="\n".join(problems),
+        )
+
+    def test_basename_collision_respects_word_boundary(self) -> None:
+        # A mention of a different script sharing the suffix must not match.
+        self._write_script("report.py", FIXTURE_SINGLE)
+        self.doc.write_text(
+            "# Demo\n\n    demo/scripts/run-report.py --other x\n", encoding="utf-8"
+        )
+        self.assertEqual(self._coverage(), [])
+
+    def test_mixed_top_level_and_subcommand_partial_coverage(self) -> None:
+        self._write_script("mixed.py", FIXTURE_MIXED)
+        self.doc.write_text(
+            "# Demo\n\n"
+            "    demo/scripts/mixed.py --config c\n"
+            "    demo/scripts/mixed.py run --target t\n",
+            encoding="utf-8",
+        )
+        # Manifest covers only the top-level invocation; `run` is the gap.
+        (self.manifests / "demo.json").write_text(
+            json.dumps(
+                {
+                    "invocations": [
+                        {
+                            "doc": "SKILL.md",
+                            "command": "demo/scripts/mixed.py --config c",
+                            "script": "scripts/mixed.py",
+                            "subcommand": None,
+                        }
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        problems = self._coverage()
+        self.assertTrue(any("run" in p for p in problems), msg="\n".join(problems))
+        # Top-level (None) bucket is covered => no bare-script-path finding.
+        self.assertFalse(
+            any(p.rstrip().endswith("scripts/mixed.py`") for p in problems),
+            msg="\n".join(problems),
+        )
+
+    def test_mixed_both_documented_fully_covered_passes(self) -> None:
+        self._write_script("mixed.py", FIXTURE_MIXED)
+        self.doc.write_text(
+            "# Demo\n\n"
+            "    demo/scripts/mixed.py --config c\n"
+            "    demo/scripts/mixed.py run --target t\n",
+            encoding="utf-8",
+        )
+        (self.manifests / "demo.json").write_text(
+            json.dumps(
+                {
+                    "invocations": [
+                        {
+                            "doc": "SKILL.md",
+                            "command": "demo/scripts/mixed.py --config c",
+                            "script": "scripts/mixed.py",
+                            "subcommand": None,
+                        },
+                        {
+                            "doc": "SKILL.md",
+                            "command": "demo/scripts/mixed.py run --target t",
+                            "script": "scripts/mixed.py",
+                            "subcommand": "run",
+                        },
+                    ]
+                }
+            ),
+            encoding="utf-8",
+        )
+        self.assertEqual(self._coverage(), [])
+
+
+class DocumentedInvocationsUnitTest(unittest.TestCase):
+    def test_bare_mention_not_invoked(self) -> None:
+        invoked, subs = mod._documented_invocations(
+            "see report.py for details.", "report.py"
+        )
+        self.assertFalse(invoked)
+        self.assertEqual(subs, set())
+
+    def test_flag_after_name_is_invoked(self) -> None:
+        invoked, subs = mod._documented_invocations(
+            "report.py --note x", "report.py"
+        )
+        self.assertTrue(invoked)
+        self.assertEqual(subs, set())
+
+    def test_subcommand_before_flag_captured(self) -> None:
+        invoked, subs = mod._documented_invocations(
+            "demo.py close-task --summary y", "demo.py"
+        )
+        self.assertTrue(invoked)
+        self.assertEqual(subs, {"close-task"})
+
+    def test_word_boundary_prevents_suffix_match(self) -> None:
+        invoked, _ = mod._documented_invocations(
+            "run-report.py --note x", "report.py"
+        )
+        self.assertFalse(invoked)
 
 
 if __name__ == "__main__":

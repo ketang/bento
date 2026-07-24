@@ -321,33 +321,42 @@ def _covered_tuples(manifests_root: Path) -> set[tuple[str, str, str | None]]:
 
 
 def _documented_invocations(doc_text: str, basename: str) -> tuple[bool, set[str]]:
-    """Detect whether ``basename`` is invoked in ``doc_text``.
+    """Detect real invocations of ``basename`` in ``doc_text``.
 
-    Returns ``(mentioned, subcommands)``: ``mentioned`` is True if the script's
-    filename appears at all, and ``subcommands`` is the set of first bare tokens
-    following the filename on each occurrence (the documented subcommand names).
-    Backslash-newline continuations are joined first so a wrapped invocation is
-    read as one command line. This is a deliberately loose heuristic — its only
-    job is to decide whether a required-flag (sub)command is documented enough to
-    warrant a parity manifest, so an occasional stray token is harmless (it will
-    not match any real required-flag bucket).
+    Returns ``(invoked, subcommands)``: ``invoked`` is True if the script's
+    filename appears *as a command* — followed on the same (backslash-joined)
+    line by at least one ``-``/``--`` flag token — and ``subcommands`` is the set
+    of first bare tokens preceding that flag on each such line (the documented
+    subcommand names). A bare prose mention of the filename with no flag after it
+    (e.g. ``the report writer (`report.py`) ...``) is deliberately *not* counted:
+    the gate must under-report, never over-report, so a mention that isn't an
+    invocation cannot force a spurious manifest entry.
+
+    Requiring a flag is sound because every bucket this gate cares about has at
+    least one ``required=True`` *option* flag (positional-only requireds never
+    reach a bucket), so a genuine documented invocation of such a (sub)command
+    always carries a flag on its command line.
+
+    The filename is matched on identifier boundaries (``(?<![\\w-]) ... (?![\\w-])``)
+    so ``run-demo.py`` does not spuriously match ``demo.py``.
     """
     joined = re.sub(r"\\\s*\n", " ", doc_text)
-    mentioned = False
+    pattern = re.compile(r"(?<![\w-])" + re.escape(basename) + r"(?![\w-])")
+    invoked = False
     subcommands: set[str] = set()
-    for match in re.finditer(re.escape(basename), joined):
-        mentioned = True
+    for match in pattern.finditer(joined):
         rest = joined[match.end():].split("\n", 1)[0]
-        for token in rest.split():
-            # Strip fenced-block / inline-code punctuation clinging to the token.
-            token = token.strip("`\"'")
-            if not token:
-                continue
+        tokens = [t.strip("`\"'") for t in rest.split()]
+        tokens = [t for t in tokens if t]
+        if not any(t.startswith("-") for t in tokens):
+            continue  # a textual mention, not a command invocation
+        invoked = True
+        for token in tokens:
             if token.startswith("-"):
-                break  # a flag before any subcommand => top-level invocation
+                break  # reached the first flag => no subcommand on this line
             subcommands.add(token)
             break
-    return mentioned, subcommands
+    return invoked, subcommands
 
 
 def check_coverage(
@@ -387,14 +396,14 @@ def check_coverage(
             if not buckets:
                 continue
             script_rel = f"scripts/{script_path.name}"
-            mentioned, documented_subs = _documented_invocations(
+            invoked, documented_subs = _documented_invocations(
                 doc_text, script_path.name
             )
             for subcommand in buckets:
                 is_documented = (
                     subcommand in documented_subs
                     if subcommand is not None
-                    else mentioned
+                    else invoked
                 )
                 if not is_documented:
                     continue
