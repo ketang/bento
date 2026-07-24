@@ -172,10 +172,10 @@ class VersionBumpGitAddPathsExist(unittest.TestCase):
     """(d) Every pathspec in version-bump.md's documented `git add` line exists."""
 
     def test_documented_git_add_pathspecs_resolve(self) -> None:
-        # Scoped to Step 6 so an earlier illustrative `git add` example
-        # elsewhere in the doc can't silently become the one under test.
+        # Scoped to the manual bump section so an earlier illustrative `git add`
+        # example elsewhere in the doc can't silently become the one under test.
         text = section(
-            read(".claude/skills/version-bump.md"), "Step 6 — Act on the classification"
+            read(".claude/skills/version-bump.md"), "Apply a manual minor/major bump"
         )
         m = re.search(r"^\s*git add (.+)$", text, re.MULTILINE)
         self.assertIsNotNone(m, "no `git add` line found in version-bump.md Step 6")
