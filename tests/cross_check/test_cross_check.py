@@ -116,6 +116,19 @@ class ComposeAndRenderTest(unittest.TestCase):
         self.assertIn(common.ARTIFACT_CLOSE, out)
         self.assertIn("DIFF BODY", out)
         self.assertIn("data to critique", out)
+        # No identity id/digest → no identity block requested.
+        self.assertNotIn(common.IDENTITY_OPEN, out)
+
+    def test_compose_embeds_identity_when_supplied(self) -> None:
+        out = common.compose_prompt(
+            "INSTRUCTIONS", "DIFF BODY", artifact_type="code",
+            artifact_id="abc123", artifact_digest="d" * 64,
+        )
+        self.assertIn(common.IDENTITY_OPEN, out)
+        self.assertIn(common.IDENTITY_CLOSE, out)
+        self.assertIn("artifact_id: abc123", out)
+        self.assertIn(f"artifact_sha256: {'d' * 64}", out)
+        self.assertIn("VERBATIM", out)
 
     def test_render_cross_mode(self) -> None:
         body = common.render_review(
@@ -146,6 +159,87 @@ class ComposeAndRenderTest(unittest.TestCase):
             slug="my/slug", now=datetime(2026, 1, 2, 3, 4, 5), tmp_root=Path("/tmp")
         )
         self.assertEqual(path.name, "cross-check-my-slug-20260102-030405.md")
+
+    def test_output_path_token_makes_filename_unique(self) -> None:
+        now = datetime(2026, 1, 2, 3, 4, 5)
+        a = common.output_path(slug="s", now=now, tmp_root=Path("/tmp"), token="aaaa")
+        b = common.output_path(slug="s", now=now, tmp_root=Path("/tmp"), token="bbbb")
+        self.assertNotEqual(a, b)
+        self.assertEqual(a.name, "cross-check-s-20260102-030405-aaaa.md")
+
+    def test_render_includes_artifact_digest_header(self) -> None:
+        body = common.render_review(
+            verdict="ok", current_runtime="claude", artifact_type="plan",
+            mode="cross", artifact_digest="e" * 64,
+        )
+        self.assertIn(f"Artifact SHA-256:** {'e' * 64}", body)
+
+
+class IdentityValidationTest(unittest.TestCase):
+    ID = "a" * 32
+    DIGEST = "b" * 64
+
+    def _block(self, artifact_id: str, digest: str) -> str:
+        return (
+            f"{common.IDENTITY_OPEN}\n"
+            f"artifact_id: {artifact_id}\n"
+            f"artifact_sha256: {digest}\n"
+            f"{common.IDENTITY_CLOSE}"
+        )
+
+    def test_valid_identity_accepted_and_block_stripped(self) -> None:
+        verdict = f"Real findings here.\n\n{self._block(self.ID, self.DIGEST)}\n"
+        ok, reason, body = common.validate_identity(
+            verdict, expected_id=self.ID, expected_digest=self.DIGEST
+        )
+        self.assertTrue(ok, msg=reason)
+        self.assertEqual(reason, "")
+        self.assertEqual(body, "Real findings here.")
+        self.assertNotIn(common.IDENTITY_OPEN, body)
+
+    def test_missing_block_rejected(self) -> None:
+        ok, reason, _ = common.validate_identity(
+            "Some stale answer about git status.",
+            expected_id=self.ID, expected_digest=self.DIGEST,
+        )
+        self.assertFalse(ok)
+        self.assertIn("omitted", reason)
+
+    def test_wrong_id_rejected(self) -> None:
+        verdict = f"Findings.\n{self._block('f' * 32, self.DIGEST)}"
+        ok, reason, _ = common.validate_identity(
+            verdict, expected_id=self.ID, expected_digest=self.DIGEST
+        )
+        self.assertFalse(ok)
+        self.assertIn("id mismatch", reason)
+
+    def test_wrong_digest_rejected(self) -> None:
+        verdict = f"Findings.\n{self._block(self.ID, 'c' * 64)}"
+        ok, reason, _ = common.validate_identity(
+            verdict, expected_id=self.ID, expected_digest=self.DIGEST
+        )
+        self.assertFalse(ok)
+        self.assertIn("digest mismatch", reason)
+
+    def test_identity_only_no_findings_rejected(self) -> None:
+        verdict = f"{self._block(self.ID, self.DIGEST)}\n"
+        ok, reason, _ = common.validate_identity(
+            verdict, expected_id=self.ID, expected_digest=self.DIGEST
+        )
+        self.assertFalse(ok)
+        self.assertIn("no findings", reason)
+
+    def test_digest_matches_computed(self) -> None:
+        text = "PLAN CONTENT"
+        self.assertEqual(
+            common.compute_digest(text),
+            __import__("hashlib").sha256(text.encode()).hexdigest(),
+        )
+
+    def test_new_artifact_id_unguessable_and_unique(self) -> None:
+        a, b = common.new_artifact_id(), common.new_artifact_id()
+        self.assertNotEqual(a, b)
+        self.assertGreaterEqual(len(a), 16)
 
 
 class DetectAssessTest(unittest.TestCase):
@@ -304,6 +398,33 @@ class RunCrossIntegrationTest(unittest.TestCase):
         stub.write_text("#!/usr/bin/env python3\n" + body, encoding="utf-8")
         stub.chmod(0o755)
 
+    # Reads the prompt on stdin and extracts this run's identity id + digest so a
+    # compliant reviewer stub can echo them back. `_PARSE` leaves `aid`/`sha` set.
+    _PARSE = (
+        "import re, sys\n"
+        "p = sys.stdin.read()\n"
+        "aid = re.search(r'artifact_id:\\s*(\\S+)', p).group(1)\n"
+        "sha = re.search(r'artifact_sha256:\\s*(\\S+)', p).group(1)\n"
+    )
+
+    @staticmethod
+    def _identity(aid_expr: str = "aid", sha_expr: str = "sha") -> str:
+        return (
+            "'\\n\\n<<<CROSS_CHECK_IDENTITY>>>\\n"
+            "artifact_id: ' + %s + '\\n"
+            "artifact_sha256: ' + %s + '\\n"
+            "<<<END_CROSS_CHECK_IDENTITY>>>\\n'" % (aid_expr, sha_expr)
+        )
+
+    def _codex_stub(self, verdict: str, aid_expr: str = "aid", sha_expr: str = "sha") -> str:
+        return (
+            self._PARSE
+            + "argv = sys.argv\n"
+            + f"open(argv[argv.index('-o') + 1], 'w').write('{verdict}' + "
+            + self._identity(aid_expr, sha_expr)
+            + ")\nsys.exit(0)\n"
+        )
+
     def _run(self, runtime: str) -> subprocess.CompletedProcess[str]:
         env = _clean_env(
             PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
@@ -322,12 +443,9 @@ class RunCrossIntegrationTest(unittest.TestCase):
         # current=claude → counterpart=codex. Stub writes verdict to -o file and
         # asserts CROSS_CHECK_ACTIVE was exported into its environment.
         self._install_stub("codex", (
-            "import os, sys\n"
+            "import os\n"
             "assert os.environ.get('CROSS_CHECK_ACTIVE') == '1', 'recursion env not set'\n"
-            "argv = sys.argv\n"
-            "out = argv[argv.index('-o') + 1]\n"
-            "open(out, 'w').write('VERDICT: looks fine')\n"
-            "sys.exit(0)\n"
+            + self._codex_stub("VERDICT: looks fine")
         ))
         proc = self._run("claude")
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
@@ -336,16 +454,49 @@ class RunCrossIntegrationTest(unittest.TestCase):
         text = files[0].read_text(encoding="utf-8")
         self.assertIn("VERDICT: looks fine", text)
         self.assertIn("codex (independent runtime)", text)
+        # The identity block is protocol scaffolding, stripped from the file; the
+        # verified digest is recorded in the header instead.
+        self.assertNotIn(common.IDENTITY_OPEN, text)
+        self.assertIn("Artifact SHA-256:", text)
 
     def test_codex_success_cleans_up_last_message_temp_file(self) -> None:
-        self._install_stub("codex", (
-            "import sys\nargv = sys.argv\n"
-            "open(argv[argv.index('-o') + 1], 'w').write('VERDICT')\nsys.exit(0)\n"
-        ))
+        self._install_stub("codex", self._codex_stub("VERDICT"))
         proc = self._run("claude")
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
         leftover = list(self.systmp.glob("cross-check-last-*"))
         self.assertEqual(leftover, [], f"temp -o files not cleaned: {leftover}")
+
+    def test_stale_codex_output_rejected_as_fallback(self) -> None:
+        # Simulates the filed bug: a stale/unrelated response whose identity does
+        # not match this run (wrong id). Must exit fallback-required, not success.
+        self._install_stub("codex", self._codex_stub(
+            "I do not have a shell tool; send me git log.",
+            aid_expr="'deadbeef' * 4",  # wrong, unguessable-length but not ours
+        ))
+        proc = self._run("claude")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("identity", proc.stderr.lower())
+        self.assertEqual(list(self.out.glob("cross-check-demo-*.md")), [])
+
+    def test_mismatched_digest_codex_output_rejected(self) -> None:
+        # Correct id echoed but a digest for a different artifact → reject.
+        self._install_stub("codex", self._codex_stub(
+            "Review of some other artifact.", sha_expr="'0' * 64",
+        ))
+        proc = self._run("claude")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("digest mismatch", proc.stderr.lower())
+
+    def test_missing_identity_block_rejected(self) -> None:
+        # A reviewer that never echoes the identity block (e.g. cached plain text).
+        self._install_stub("codex", (
+            "import sys\nargv = sys.argv\n"
+            "open(argv[argv.index('-o') + 1], 'w').write('bare answer, no identity')\n"
+            "sys.exit(0)\n"
+        ))
+        proc = self._run("claude")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("identity", proc.stderr.lower())
 
     def test_claude_null_result_requests_fallback(self) -> None:
         # A null/non-string "result" must behave like empty output, not crash.
@@ -358,12 +509,14 @@ class RunCrossIntegrationTest(unittest.TestCase):
         self.assertNotIn("Traceback", proc.stderr)
 
     def test_claude_success_parses_json_result(self) -> None:
-        # current=codex → counterpart=claude. Stub prints JSON result on stdout.
+        # current=codex → counterpart=claude. Stub prints JSON result on stdout,
+        # echoing this run's identity so validation accepts it.
         self._install_stub("claude", (
-            "import json, sys\n"
-            "sys.stdin.read()\n"
-            "print(json.dumps({'result': 'VERDICT: from claude'}))\n"
-            "sys.exit(0)\n"
+            "import json\n"
+            + self._PARSE
+            + "result = 'VERDICT: from claude' + "
+            + self._identity()
+            + "\nprint(json.dumps({'result': result}))\nsys.exit(0)\n"
         ))
         proc = self._run("codex")
         self.assertEqual(proc.returncode, 0, msg=proc.stderr)
