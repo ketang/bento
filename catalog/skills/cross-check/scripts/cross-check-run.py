@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import secrets
 import subprocess
 import sys
 import tempfile
@@ -105,7 +106,9 @@ def run_cross(
         return EXIT_USAGE, f"cross-check: {exc}"
 
     artifact_id = common.new_artifact_id()
-    artifact_digest = common.compute_digest(artifact_text)
+    # Digest the exact text compose_prompt embeds (rstripped), so the recorded
+    # digest matches what the reviewer actually saw between the fences.
+    artifact_digest = common.compute_digest(artifact_text.rstrip())
     prompt = common.compose_prompt(
         prompt_path.read_text(encoding="utf-8"),
         artifact_text,
@@ -220,8 +223,10 @@ def _write_review(
         truncated=truncated,
         artifact_digest=artifact_digest,
     )
+    # Every write gets a per-call token, cross or render-only/degraded, so
+    # concurrent runs sharing a slug cannot land in the same second's file.
     target = common.output_path(
-        slug=slug, now=now, tmp_root=common.tmp_root(), token=token
+        slug=slug, now=now, tmp_root=common.tmp_root(), token=token or secrets.token_hex(4)
     )
     target.parent.mkdir(parents=True, exist_ok=True)
     # Same slug within the same second must not clobber a prior review.

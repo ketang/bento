@@ -353,6 +353,22 @@ class WriteReviewCollisionTest(unittest.TestCase):
         self.assertTrue(first.is_file() and second.is_file())
         self.assertEqual(len(list(self.out.glob("cross-check-dup-*.md"))), 2)
 
+    def test_no_explicit_token_still_gets_random_suffix(self) -> None:
+        # The render-only/degraded fallback path never passes token=; it must
+        # still get a per-call random token, not just the exists()-retry
+        # numeric suffix, or two concurrent fallback writers can race.
+        now = datetime(2026, 1, 2, 3, 4, 5)
+        kwargs = dict(
+            verdict="x", current_runtime="claude", artifact_type="plan",
+            mode="degraded", slug="notoken", scope=None, truncated=False, now=now,
+        )
+        first = run._write_review(**kwargs)
+        second = run._write_review(**kwargs)
+        self.assertNotEqual(first.name, second.name)
+        self.assertRegex(
+            first.name, r"^cross-check-notoken-\d{8}-\d{6}-[0-9a-f]{8}\.md$"
+        )
+
 
 class RunArtifactErrorTest(unittest.TestCase):
     def _run(self, *extra: str) -> subprocess.CompletedProcess[str]:
@@ -425,7 +441,7 @@ class RunCrossIntegrationTest(unittest.TestCase):
             + ")\nsys.exit(0)\n"
         )
 
-    def _run(self, runtime: str) -> subprocess.CompletedProcess[str]:
+    def _run(self, runtime: str, artifact_text: str = "PLAN CONTENT") -> subprocess.CompletedProcess[str]:
         env = _clean_env(
             PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
             CROSS_CHECK_TMP_ROOT=str(self.out),
@@ -435,7 +451,7 @@ class RunCrossIntegrationTest(unittest.TestCase):
         return subprocess.run(
             [str(RUN), "--current-runtime", runtime, "--artifact-type", "plan",
              "--slug", "demo"],
-            input="PLAN CONTENT", capture_output=True, text=True, check=False,
+            input=artifact_text, capture_output=True, text=True, check=False,
             cwd=str(self.cwd), env=env,
         )
 
@@ -537,6 +553,20 @@ class RunCrossIntegrationTest(unittest.TestCase):
         ))
         proc = self._run("claude")
         self.assertEqual(proc.returncode, 4)
+
+    def test_recorded_digest_matches_rstripped_artifact_text(self) -> None:
+        # The digest embedded in the prompt (and recorded in the header) must
+        # match what compose_prompt actually delimits, which is rstripped —
+        # otherwise trailing whitespace makes the "digest proves what was
+        # reviewed" guarantee false.
+        self._install_stub("codex", self._codex_stub("VERDICT"))
+        proc = self._run("claude", artifact_text="PLAN CONTENT\n\n   \n")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        files = list(self.out.glob("cross-check-demo-*.md"))
+        self.assertEqual(len(files), 1)
+        text = files[0].read_text(encoding="utf-8")
+        expected = __import__("hashlib").sha256(b"PLAN CONTENT").hexdigest()
+        self.assertIn(f"Artifact SHA-256:** {expected}", text)
 
     def test_recursion_guard_skips(self) -> None:
         self._install_stub("codex", "import sys\nsys.exit(0)\n")
