@@ -45,12 +45,32 @@ def recursion_active(env: dict | None = None) -> bool:
     return env.get(RECURSION_ENV, "").strip().lower() not in ("", "0", "false", "no")
 
 
+# Env markers an active agent session sets. Single source of truth: callers that
+# only need "am I inside any agent session" (tests/e2e_utils.py) use
+# in_agent_session() rather than re-sniffing these names.
+CLAUDE_SESSION_ENV_VARS = ("CLAUDE_SESSION_ID", "CLAUDECODE")
+CODEX_SESSION_ENV_VARS = ("CODEX_THREAD_ID",)
+
+
+def _any_set(env: dict, names: tuple[str, ...]) -> bool:
+    return any(env.get(name) for name in names)
+
+
+def in_agent_session(env: dict | None = None) -> bool:
+    """True if any Claude Code or Codex session marker is set.
+
+    Unlike infer_current_runtime(), this does not care which runtime is active
+    and stays True when both marker families are present."""
+    env = os.environ if env is None else env
+    return _any_set(env, CLAUDE_SESSION_ENV_VARS) or _any_set(env, CODEX_SESSION_ENV_VARS)
+
+
 def infer_current_runtime(env: dict | None = None) -> str | None:
     """Fail-closed cross-check only. The overlay should pass --current-runtime;
     this env sniff is a fallback and returns None when ambiguous."""
     env = os.environ if env is None else env
-    is_codex = bool(env.get("CODEX_THREAD_ID"))
-    is_claude = bool(env.get("CLAUDE_SESSION_ID") or env.get("CLAUDECODE"))
+    is_codex = _any_set(env, CODEX_SESSION_ENV_VARS)
+    is_claude = _any_set(env, CLAUDE_SESSION_ENV_VARS)
     if is_codex and not is_claude:
         return "codex"
     if is_claude and not is_codex:
