@@ -110,3 +110,119 @@ class DiscoveryTest(unittest.TestCase):
                 [p.name for p in result.files],
                 ["10-repo.sh", "10-user.sh"],
             )
+
+
+class VerifierDiscoveryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self.tmp.name)
+        self.repo = self.root / "repo"
+        self.repo.mkdir()
+
+    def tearDown(self) -> None:
+        self.tmp.cleanup()
+
+    def _write_manifest(self, root: Path, payload) -> Path:
+        path = root / ".agent-plugins/bento/bento/land-work/verifier.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if isinstance(payload, str):
+            path.write_text(payload, encoding="utf-8")
+        else:
+            import json
+
+            path.write_text(json.dumps(payload), encoding="utf-8")
+        return path
+
+    def test_absent_manifest_is_not_an_error(self) -> None:
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertIsNone(result.manifest)
+        self.assertIsNone(result.manifest_path)
+        self.assertEqual(result.errors, [])
+        # searched_paths reports where a config could be created, repo-local first
+        self.assertTrue(str(result.searched_paths[0]).endswith(
+            ".agent-plugins/bento/bento/land-work/verifier.json"
+        ))
+
+    def test_valid_manifest_parsed(self) -> None:
+        self._write_manifest(self.repo, {
+            "schema_version": 1,
+            "command": ["./verify.sh", "--json"],
+            "verified_noop": [{"path": "docs/gen.json", "reason": "generated"}],
+        })
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertEqual(result.errors, [])
+        self.assertIsNotNone(result.manifest)
+        self.assertEqual(result.manifest.command, ["./verify.sh", "--json"])
+        self.assertEqual(
+            result.manifest.verified_noop,
+            [{"path": "docs/gen.json", "reason": "generated"}],
+        )
+
+    def test_repo_local_wins_whole_over_xdg(self) -> None:
+        user = self.root / "userhome"
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(user / ".config")}):
+            self._write_manifest(self.repo, {
+                "schema_version": 1,
+                "command": ["./repo.sh"],
+                "verified_noop": [],
+            })
+            xdg_manifest = (
+                user / ".config/agent-plugins/bento/bento/land-work/verifier.json"
+            )
+            xdg_manifest.parent.mkdir(parents=True, exist_ok=True)
+            import json
+
+            xdg_manifest.write_text(json.dumps({
+                "schema_version": 1,
+                "command": ["./xdg.sh"],
+                "verified_noop": [{"path": "a", "reason": "b"}],
+            }), encoding="utf-8")
+            result = lifecycle_extensions.discover_verifier(self.repo)
+            # First existing manifest wins as a whole — no merge of exemptions.
+            self.assertEqual(result.manifest.command, ["./repo.sh"])
+            self.assertEqual(result.manifest.verified_noop, [])
+
+    def test_xdg_used_when_no_repo_local(self) -> None:
+        user = self.root / "userhome"
+        with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(user / ".config")}):
+            xdg_manifest = (
+                user / ".config/agent-plugins/bento/bento/land-work/verifier.json"
+            )
+            xdg_manifest.parent.mkdir(parents=True, exist_ok=True)
+            import json
+
+            xdg_manifest.write_text(json.dumps({
+                "schema_version": 1,
+                "command": ["./xdg.sh"],
+            }), encoding="utf-8")
+            result = lifecycle_extensions.discover_verifier(self.repo)
+            self.assertIsNotNone(result.manifest)
+            self.assertEqual(result.manifest.command, ["./xdg.sh"])
+
+    def test_invalid_json_reports_error(self) -> None:
+        self._write_manifest(self.repo, "{ not json")
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertIsNone(result.manifest)
+        self.assertTrue(any("not valid JSON" in e for e in result.errors))
+
+    def test_wrong_schema_version_reports_error(self) -> None:
+        self._write_manifest(self.repo, {"schema_version": 2, "command": ["./x"]})
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertIsNone(result.manifest)
+        self.assertTrue(any("schema_version" in e for e in result.errors))
+
+    def test_empty_command_reports_error(self) -> None:
+        self._write_manifest(self.repo, {"schema_version": 1, "command": []})
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertIsNone(result.manifest)
+        self.assertTrue(any("command" in e for e in result.errors))
+
+    def test_verified_noop_entry_shape_validated(self) -> None:
+        self._write_manifest(self.repo, {
+            "schema_version": 1,
+            "command": ["./x"],
+            "verified_noop": [{"path": "", "reason": "r"}],
+        })
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertIsNone(result.manifest)
+        self.assertTrue(any("verified_noop" in e for e in result.errors))
