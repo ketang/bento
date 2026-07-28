@@ -248,6 +248,21 @@ class LandWorkVerifierTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertTrue(any("no verifier manifest" in e for e in payload["errors"]))
 
+    def test_manifest_present_empty_diff_short_circuits_without_running_command(self) -> None:
+        # base == head, no staged/unstaged/untracked changes: nothing to verify,
+        # so the configured command must never run. NONZERO_VERIFIER always
+        # fails, so a nonzero result here would prove it ran anyway.
+        self.install_verifier(NONZERO_VERIFIER)
+        self.write_manifest(command=[str(self.verifier_path)])
+        self.head_sha = self.base_sha
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["relevant_paths"], [])
+        self.assertEqual(payload["exemptions"], [])
+        self.assertEqual(payload["errors"], [])
+
     def test_invalid_schema_version_fails(self) -> None:
         path = self.repo / ".agent-plugins/bento/bento/land-work/verifier.json"
         path.parent.mkdir(parents=True, exist_ok=True)

@@ -221,6 +221,17 @@ def main() -> int:
     manifest = discovery.manifest
     diagnostics["verifier_command"] = list(manifest.command)
 
+    if not union:
+        # Nothing relevant would land; there is nothing to verify, so do not
+        # pay for or risk failing on a verifier command run.
+        diagnostics["relevant_paths"] = []
+        diagnostics["exemptions"] = []
+        diagnostics["ok"] = True
+        diagnostics["errors"] = []
+        json.dump(diagnostics, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0
+
     # ---- Validate and normalize exemptions against this candidate. --------- #
     normalized_exemptions: set[str] = set()
     exemption_errors: list[str] = []
