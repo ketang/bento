@@ -47,6 +47,14 @@ class CommonMappingTest(unittest.TestCase):
         )
         self.assertIsNone(common.infer_current_runtime({}))
 
+    def test_in_agent_session(self) -> None:
+        for marker in ("CODEX_THREAD_ID", "CLAUDE_SESSION_ID", "CLAUDECODE"):
+            self.assertTrue(common.in_agent_session({marker: "x"}), msg=marker)
+        # Ambiguous for infer_current_runtime, still an agent session here.
+        self.assertTrue(common.in_agent_session({"CODEX_THREAD_ID": "x", "CLAUDECODE": "1"}))
+        self.assertFalse(common.in_agent_session({}))
+        self.assertFalse(common.in_agent_session({"CLAUDECODE": ""}))
+
 
 class BuildCommandTest(unittest.TestCase):
     def test_codex_command_is_read_only_and_has_no_approval_flag(self) -> None:
