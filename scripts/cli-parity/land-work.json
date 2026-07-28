@@ -1,0 +1,10 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "land-work/scripts/land-work-run-verifier.py --repo-root <repo-root> --candidate <preview-dir> --base-sha <leased-sha> --head-sha <feature-head-sha> --runtime <runtime>",
+      "script": "scripts/land-work-run-verifier.py",
+      "subcommand": null
+    }
+  ]
+}

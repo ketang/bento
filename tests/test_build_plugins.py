@@ -69,6 +69,7 @@ class BuildPluginsTest(unittest.TestCase):
             claude_bento / "skills" / "generate-audit" / "scripts" / "audit-discover.py",
             claude_bento / "skills" / "land-work" / "scripts" / "land-work-create-preview.py",
             claude_bento / "skills" / "land-work" / "scripts" / "land-work-prepare.py",
+            claude_bento / "skills" / "land-work" / "scripts" / "land-work-run-verifier.py",
             claude_bento / "skills" / "land-work" / "scripts" / "land-work-verify-landing.py",
             claude_bento / "skills" / "land-work" / "scripts" / "land-work-verify-lease.py",
             claude_bento / "skills" / "launch-work" / "scripts" / "launch-work-bootstrap.py",
@@ -531,6 +532,29 @@ class BuildPluginsTest(unittest.TestCase):
             self.assertIn("--cleanup --preview-dir", normalized, path)
             self.assertIn("on every exit path", normalized, path)
             self.assertIn("/tmp/land-work-preview-*", normalized, path)
+
+    def test_land_work_project_verifier_helper_and_contract_are_packaged(self) -> None:
+        # bento-pnrl: the deterministic project-verifier gate ships as a helper
+        # in both generated plugins, and land-work/SKILL.md documents running it
+        # against the exact merge preview before lease verification or merge.
+        self.build_repo()
+
+        for platform in ("claude", "codex"):
+            skills_dir = self.root / "plugins" / platform / "bento" / "skills" / "land-work"
+            helper = skills_dir / "scripts" / "land-work-run-verifier.py"
+            self.assertTrue(helper.exists(), helper)
+            self.assertTrue(os.access(helper, os.X_OK), helper)
+
+            normalized = re.sub(r"\s+", " ", (skills_dir / "SKILL.md").read_text(encoding="utf-8"))
+            self.assertIn("land-work-run-verifier.py", normalized, platform)
+            self.assertIn("exits 0 on the exact merge preview", normalized, platform)
+
+            contract = skills_dir / "references" / "project-verifier.md"
+            self.assertTrue(contract.exists(), contract)
+            contract_text = contract.read_text(encoding="utf-8")
+            self.assertIn("verifier.json", contract_text, platform)
+            self.assertIn("verified_noop", contract_text, platform)
+            self.assertIn("selected_checks", contract_text, platform)
 
     def test_workflow_hook_contract_is_documented_without_tool_specific_names(self) -> None:
         self.build_repo()

@@ -38,6 +38,11 @@ state checks that should not rely on ad hoc prose reconstruction:
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
   once verification finishes)
+- `land-work/scripts/land-work-run-verifier.py` to run the repo's configured
+  project verifier against the exact merge preview and fail closed unless every
+  landed path is covered. It never equates a zero-check verifier result with
+  verified evidence: a real diff with no matching selected check stops the
+  landing. See `references/project-verifier.md` for the manifest contract.
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
@@ -223,6 +228,25 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 land-work/scripts/land-work-create-preview.py --base-ref <sha>
 ```
 
+   - run the project verifier against that exact preview, using the preview
+     directory the previous helper reported as the candidate. Run this after
+     preview creation and before the lease re-check and merge:
+
+```bash
+land-work/scripts/land-work-run-verifier.py \
+  --repo-root <repo-root> \
+  --candidate <preview-dir> \
+  --base-sha <leased-sha> \
+  --head-sha <feature-head-sha> \
+  --runtime <runtime>
+```
+
+     A nonzero exit stops the landing: the verifier has a nonempty relevant
+     diff that no passed selected check covers, the manifest is missing or
+     invalid, or the verifier command failed, timed out, or returned an
+     unusable result. Do not proceed to the lease check or merge; remove the
+     preview worktree (the cleanup command below) before stopping. Exit 0 means
+     every landed path is covered or exactly exempted.
    - satisfy the gate requirement (step 6a) against that exact preview only; do
      not reuse pre-rebase or pre-conflict results
    - re-check the lease with:
@@ -363,6 +387,10 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 - Do not close the issue before the verified merge succeeds.
 - Do not merge unless the discovered gate suite passes on the exact candidate
   (step 6a) or a waiver is recorded; never claim green when no suite was found.
+- Do not merge unless `land-work-run-verifier.py` exits 0 on the exact merge
+  preview. A verifier that returns zero selected checks against a real diff is a
+  landing failure, not verified evidence. A generic `pre` hook's exit 0 never
+  substitutes for it.
 - Do not land onto a primary branch that is already red on a discovered gate.
 - Do not close without gate evidence in the note — commands and exit statuses,
   not the bare claim that tests pass.
@@ -405,6 +433,7 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 | "The landing is done; the preview worktree under /tmp is harmless to leave." | Preview worktrees are registered git worktrees, not loose temp files. Left behind, they accumulate across landings and make every later `git worktree` probe slower or crash-prone. Remove the preview on every exit path; closure is not your janitor for worktrees you created this run. |
 | "The change is small and I ran the tests locally earlier, so gates are fine." | Earlier or partial runs are not evidence for the exact candidate, and "small" does not exempt a change from the repo's gates. |
 | "The primary branch was already red, but my branch didn't break it." | Landing on a red base hides which change is responsible and lets breakage linger. Halt on a pre-existing red base. |
+| "The project verifier exited 0, so the candidate is verified." | Exit 0 alone is not evidence. A verifier can select zero checks for a real diff and still exit 0. `land-work-run-verifier.py` fails closed unless every landed path is covered by a passed selected check or an exact exemption. |
 
 ## Tracker Handoff
 

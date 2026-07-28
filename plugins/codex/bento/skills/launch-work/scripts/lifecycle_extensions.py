@@ -14,6 +14,7 @@ hook-skills.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -120,6 +121,143 @@ def discover(
         combined.files.extend(result.files)
         combined.warnings.extend(result.warnings)
     return combined
+
+
+# --------------------------------------------------------------------------- #
+# Project verifier manifest discovery (land-work)
+# --------------------------------------------------------------------------- #
+
+VERIFIER_MANIFEST_NAME = "verifier.json"
+VERIFIER_SCHEMA_VERSION = 1
+
+
+@dataclass
+class VerifierManifest:
+    manifest_path: Path
+    command: list[str]
+    verified_noop: list[dict] = field(default_factory=list)
+
+
+@dataclass
+class VerifierDiscovery:
+    """Result of locating the land-work verifier manifest.
+
+    `manifest` is populated only when a manifest exists AND passes shape
+    validation. `manifest_path` records the first existing manifest (even if it
+    later fails validation). `searched_paths` is the ordered candidate list, so
+    a caller with no manifest can report the exact config path to create.
+    `errors` holds shape/parse problems; an absent manifest is NOT an error
+    here — the caller decides whether absence is fatal for a given diff.
+    """
+
+    manifest: Optional[VerifierManifest] = None
+    manifest_path: Optional[Path] = None
+    searched_paths: list[Path] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
+
+
+def verifier_manifest_paths(repo_root: Path) -> list[Path]:
+    """Ordered candidate manifest paths, repo-local first then the XDG root."""
+    return [
+        root / "land-work" / VERIFIER_MANIFEST_NAME
+        for root in _candidate_roots(repo_root)
+    ]
+
+
+def _validate_verifier_shape(raw: object, manifest_path: Path) -> list[str]:
+    """Structural (candidate-independent) validation of a parsed manifest.
+
+    Path-relative checks (absolute/.., globs, existence, dedup) depend on the
+    candidate worktree and live in the land-work-run-verifier helper.
+    """
+    errors: list[str] = []
+    if not isinstance(raw, dict):
+        return [f"verifier manifest must be a JSON object: {manifest_path}"]
+
+    if raw.get("schema_version") != VERIFIER_SCHEMA_VERSION:
+        errors.append(
+            f"verifier manifest schema_version must be {VERIFIER_SCHEMA_VERSION}: "
+            f"{manifest_path}"
+        )
+
+    command = raw.get("command")
+    if (
+        not isinstance(command, list)
+        or not command
+        or not all(isinstance(item, str) and item for item in command)
+    ):
+        errors.append(
+            f"verifier manifest command must be a nonempty argv array of "
+            f"nonempty strings: {manifest_path}"
+        )
+
+    verified_noop = raw.get("verified_noop", [])
+    if not isinstance(verified_noop, list):
+        errors.append(
+            f"verifier manifest verified_noop must be a list: {manifest_path}"
+        )
+    else:
+        for index, entry in enumerate(verified_noop):
+            if not isinstance(entry, dict):
+                errors.append(
+                    f"verified_noop[{index}] must be an object: {manifest_path}"
+                )
+                continue
+            path_value = entry.get("path")
+            reason_value = entry.get("reason")
+            if not isinstance(path_value, str) or not path_value:
+                errors.append(
+                    f"verified_noop[{index}].path must be a nonempty string: "
+                    f"{manifest_path}"
+                )
+            if not isinstance(reason_value, str) or not reason_value:
+                errors.append(
+                    f"verified_noop[{index}].reason must be a nonempty string: "
+                    f"{manifest_path}"
+                )
+    return errors
+
+
+def discover_verifier(repo_root: Path) -> VerifierDiscovery:
+    """Locate the land-work verifier manifest across the candidate-root chain.
+
+    The first existing manifest wins as a whole — repo-local overrides the XDG
+    root. Commands and exemptions are never merged across roots.
+    """
+    searched = verifier_manifest_paths(repo_root)
+    discovery = VerifierDiscovery(searched_paths=searched)
+
+    chosen: Optional[Path] = None
+    for candidate in searched:
+        if candidate.is_file():
+            chosen = candidate
+            break
+    if chosen is None:
+        return discovery
+
+    discovery.manifest_path = chosen
+    try:
+        raw = json.loads(chosen.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        discovery.errors.append(
+            f"verifier manifest is not valid JSON: {chosen}: {exc}"
+        )
+        return discovery
+
+    shape_errors = _validate_verifier_shape(raw, chosen)
+    if shape_errors:
+        discovery.errors.extend(shape_errors)
+        return discovery
+
+    discovery.manifest = VerifierManifest(
+        manifest_path=chosen,
+        command=list(raw["command"]),
+        verified_noop=[
+            {"path": entry["path"], "reason": entry["reason"]}
+            for entry in raw.get("verified_noop", [])
+        ],
+    )
+    return discovery
 
 
 HUMAN_HANDOFF_EXIT = 75
