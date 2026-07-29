@@ -130,6 +130,45 @@ class LaunchWorkScriptsTest(unittest.TestCase):
             payload["ignore_coverage_advisories"],
         )
 
+    def test_bootstrap_strips_major_version_suffix_from_go_module_path(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-go-v2"
+        (self.repo / "go.mod").write_text("module example.com/acme/widgetd/v2\n\ngo 1.22\n", encoding="utf-8")
+        git(self.repo, "add", "go.mod")
+        git(self.repo, "commit", "-m", "add go module")
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertIn(
+            "widgetd (Go build output) is not covered by .gitignore",
+            payload["ignore_coverage_advisories"],
+        )
+        self.assertNotIn(
+            "v2 (Go build output) is not covered by .gitignore",
+            payload["ignore_coverage_advisories"],
+        )
+
+    def test_bootstrap_uses_cmd_dirs_instead_of_module_tail_for_cmd_layout(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-go-cmd"
+        (self.repo / "go.mod").write_text("module example.com/acme/widgetd\n\ngo 1.22\n", encoding="utf-8")
+        for binary in ("widgetctl", "widgetsrv"):
+            cmd_pkg = self.repo / "cmd" / binary
+            cmd_pkg.mkdir(parents=True)
+            (cmd_pkg / "main.go").write_text("package main\n", encoding="utf-8")
+        git(self.repo, "add", "go.mod", "cmd")
+        git(self.repo, "commit", "-m", "add go module")
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(
+            payload["ignore_coverage_advisories"],
+            [
+                "widgetctl (Go build output) is not covered by .gitignore",
+                "widgetsrv (Go build output) is not covered by .gitignore",
+            ],
+        )
+
     def test_bootstrap_is_quiet_when_go_binary_is_ignored(self) -> None:
         target_worktree = Path(self.temp_dir.name) / "feature-go-clean"
         (self.repo / "go.mod").write_text("module example.com/acme/widgetd\n\ngo 1.22\n", encoding="utf-8")
@@ -142,7 +181,7 @@ class LaunchWorkScriptsTest(unittest.TestCase):
 
         self.assertEqual(payload["ignore_coverage_advisories"], [])
 
-    def test_bootstrap_does_not_flag_node_modules_or_tracked_dist(self) -> None:
+    def test_bootstrap_does_not_flag_a_tracked_dist_directory(self) -> None:
         target_worktree = Path(self.temp_dir.name) / "feature-node"
         (self.repo / "package.json").write_text('{"name": "acme"}\n', encoding="utf-8")
         dist = self.repo / "dist"
@@ -155,7 +194,6 @@ class LaunchWorkScriptsTest(unittest.TestCase):
         payload = json.loads(result.stdout)
 
         self.assertEqual(payload["ignore_coverage_advisories"], [])
-        self.assertNotIn("node_modules", json.dumps(payload["ignore_coverage_advisories"]))
 
     def test_bootstrap_clean_repo_reports_no_hygiene_advisories(self) -> None:
         target_worktree = Path(self.temp_dir.name) / "feature-clean"

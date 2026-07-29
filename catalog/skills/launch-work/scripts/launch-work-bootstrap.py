@@ -47,20 +47,35 @@ def is_tracked(root: Path, candidate: str) -> bool:
 
 
 def go_binary_names(root: Path) -> list[str]:
-    names: list[str] = []
-    go_mod = root / "go.mod"
-    if go_mod.is_file():
-        for line in go_mod.read_text(encoding="utf-8", errors="replace").splitlines():
-            line = line.strip()
-            if line.startswith("module "):
-                module_path = line.removeprefix("module ").strip()
-                if module_path:
-                    names.append(module_path.rstrip("/").rsplit("/", 1)[-1])
-                break
+    # A cmd/ layout names its binaries after the cmd/ subdirs and usually has no
+    # root main package, so the module tail would be a binary that never exists.
     cmd_dir = root / "cmd"
     if cmd_dir.is_dir():
-        names.extend(sorted(child.name for child in cmd_dir.iterdir() if child.is_dir()))
-    return list(dict.fromkeys(name for name in names if name and not name.startswith(".")))
+        names = sorted(child.name for child in cmd_dir.iterdir() if child.is_dir())
+        if names:
+            return [name for name in names if not name.startswith(".")]
+
+    go_mod = root / "go.mod"
+    if not go_mod.is_file():
+        return []
+    for line in go_mod.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line.startswith("module "):
+            continue
+        module_path = line.removeprefix("module ").strip().rstrip("/")
+        if not module_path:
+            break
+        segments = module_path.split("/")
+        # Go drops the /vN major-version suffix when naming the build output.
+        if len(segments) > 1 and _is_major_version_segment(segments[-1]):
+            segments.pop()
+        name = segments[-1]
+        return [name] if name and not name.startswith(".") else []
+    return []
+
+
+def _is_major_version_segment(segment: str) -> bool:
+    return segment.startswith("v") and segment[1:].isdigit() and int(segment[1:]) >= 2
 
 
 def build_output_candidates(root: Path) -> list[tuple[str, str]]:
