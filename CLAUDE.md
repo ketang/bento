@@ -55,10 +55,12 @@ bd close <id>         # Complete work
 - If push fails, resolve and retry until it succeeds
 <!-- END BEADS INTEGRATION -->
 
-### TodoWrite carve-out
+## TodoWrite Carve-Out
 
-The Beads rule above ("do NOT use TodoWrite") has exactly one exception: use
-TodoWrite only when a third-party skill explicitly instructs it, and only for
-that skill's in-session step checklist. TodoWrite is never the tracker for bugs,
-follow-ups, or work items; anything that must survive the session is a `bd`
-issue before session end. A long task list is not a reason to skip `bd`.
+Amends the "do NOT use TodoWrite" rule under **Beads Issue Tracker → Rules**
+above. Exactly one exception: when a third-party skill instructs you to track
+its steps — whether it says "TodoWrite", "todos", "task list", or "checklist" —
+use TodoWrite for that skill's in-session step checklist only. TodoWrite is
+never the tracker for bugs, follow-ups, or work items; anything that must
+survive the session is a `bd` issue before session end. A long task list is not
+a reason to skip `bd`.
