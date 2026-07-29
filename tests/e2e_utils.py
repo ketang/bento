@@ -18,9 +18,15 @@ import time
 import unittest
 from pathlib import Path
 
+from tests.script_test_utils import load_module
+
 
 ZOLEM_STARTUP_TIMEOUT_SECONDS = 10
-FIXTURES_BASE = Path(__file__).resolve().parent / "fixtures"
+TESTS_DIR = Path(__file__).resolve().parent
+FIXTURES_BASE = TESTS_DIR / "fixtures"
+_CROSS_CHECK_COMMON = load_module(
+    TESTS_DIR.parent / "catalog" / "skills" / "cross-check" / "scripts" / "cross_check_common.py"
+)
 
 
 def _have(cmd: str) -> bool:
@@ -31,17 +37,13 @@ def _have(cmd: str) -> bool:
 def _nested_in_agent_session() -> bool:
     """True if running inside an active Claude Code or Codex agent session.
 
-    Same env markers catalog/skills/cross-check/scripts/cross_check_common.py
-    uses to detect the current runtime. Spawning a nested claude/codex CLI
-    from inside an already-running agent session inherits that session's auth
-    state and fails with schema/auth conflicts unrelated to zolem or the CLI
-    being correctly installed, so these tests must not attempt it.
+    Delegates to cross_check_common.in_agent_session() so the session env
+    markers are defined in exactly one place. Spawning a nested claude/codex
+    CLI from inside an already-running agent session inherits that session's
+    auth state and fails with schema/auth conflicts unrelated to zolem or the
+    CLI being correctly installed, so these tests must not attempt it.
     """
-    return bool(
-        os.environ.get("CLAUDECODE")
-        or os.environ.get("CLAUDE_SESSION_ID")
-        or os.environ.get("CODEX_THREAD_ID")
-    )
+    return _CROSS_CHECK_COMMON.in_agent_session()
 
 
 class E2ETestCase(unittest.TestCase):
