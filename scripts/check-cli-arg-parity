@@ -12,9 +12,16 @@ This linter closes that gap. For each documented invocation listed in a per-skil
 manifest under ``scripts/cli-parity/<skill>.json`` it:
 
 1. confirms the documented command text still appears in the cited doc
-   (normalized substring — guards manifest-vs-prose drift), and
+   (normalized substring — guards manifest-vs-prose drift),
 2. statically introspects the named script + subcommand's ``argparse`` parser
-   and asserts every ``required=True`` option flag appears in that command.
+   and asserts every ``required=True`` option flag appears in that command
+   (under-claiming: the doc omits a flag the parser demands), and
+3. scans the cited doc for ``--flag (required)`` prose annotations and asserts
+   the parser really marks that flag ``required=True`` (over-claiming: the doc
+   calls a flag required when ``argparse`` does not). A flag that is
+   ``required=True`` in *any* of the script's parsers satisfies the check, so a
+   flag that is required on one subcommand and optional on another is not
+   reported.
 
 Introspection is AST-based (no import, no execution), so it works whether the
 parser is built in ``build_parser()``, ``main()``, or at module level, and it
@@ -22,9 +29,19 @@ tracks per-subcommand ``add_parser(...)`` receivers. A required argument passed
 a non-literal ``required=`` value is treated as *not* statically required (the
 corpus uses ``required=True`` literals); tighten here if that changes.
 
-The public helpers (``required_option_flags``, ``check_invocation``,
-``check_manifest``, ``check_tree``) are import-safe and take explicit roots so
-tests can point them at fixtures.
+``add_argument_group(...)`` is modeled: it is a ``--help``-only container, so it
+inherits the bucket of the parser that created it. Patterns the module-scope
+walker genuinely cannot model — ``add_mutually_exclusive_group()`` (which means
+"exactly one of these", not per-flag requiredness) and ``add_argument`` calls
+made on a function *parameter* (a helper that receives the parser) — raise
+``UnsupportedParserPatternError`` rather than being silently skipped. A silent
+skip would under-report required flags and let the very drift this linter exists
+to catch pass green. If such a pattern is introduced, extend the walker to model
+it instead of loosening the error.
+
+The public helpers (``required_option_flags``, ``parser_options``,
+``check_invocation``, ``check_manifest``, ``check_tree``) are import-safe and
+take explicit roots so tests can point them at fixtures.
 """
 
 from __future__ import annotations
@@ -40,6 +57,23 @@ from pathlib import Path
 ROOT_DIR = Path(__file__).resolve().parents[1]
 DEFAULT_SKILLS_ROOT = ROOT_DIR / "catalog" / "skills"
 DEFAULT_MANIFESTS_ROOT = ROOT_DIR / "scripts" / "cli-parity"
+
+# Parser-container factories whose results this walker does not model.
+# ``add_argument_group`` is modeled instead (it is a --help-only container whose
+# arguments belong to the parser that created it); a mutually exclusive group
+# expresses "exactly one of these", which the per-flag model cannot represent.
+UNMODELED_GROUP_CALLS = ("add_mutually_exclusive_group",)
+
+# Prose annotation the over-claim check reads, e.g. "`--target` (required)".
+DOC_REQUIRED_RE = re.compile(r"`?(--[A-Za-z0-9][A-Za-z0-9_-]*)`?\s*\(required\)")
+
+
+class UnsupportedParserPatternError(RuntimeError):
+    """A script builds its parser in a way the AST walker cannot model.
+
+    Raised instead of silently skipping, because a skip under-reports required
+    flags and turns this linter green on exactly the drift it guards against.
+    """
 
 
 # --------------------------------------------------------------------------- #
@@ -103,22 +137,109 @@ def _iter_ordered_statements(module: ast.Module):
     return statements
 
 
-def required_option_flags(script_path: Path, subcommand: str | None) -> list[list[str]]:
-    """Return the option-flag sets that are ``required=True`` for ``subcommand``.
+_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
 
-    Each element is the list of option strings for one required argument (e.g.
-    ``["--summary"]`` or ``["-o", "--output"]``); parity is satisfied when any
-    one of them appears in the documented command. ``subcommand=None`` targets
-    arguments added to the top-level ``ArgumentParser``.
+
+def _walk_own_scope(node: ast.AST):
+    """Yield nodes under ``node`` without descending into a nested scope.
+
+    Assignments inside a nested ``def``/``lambda``/``class`` bind that scope's
+    name, not this function's parameter, so they must not count as a rebind.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _NESTED_SCOPES):
+            continue
+        yield child
+        yield from _walk_own_scope(child)
+
+
+def _rebind_lines(node: ast.AST, params: set[str]) -> dict[str, int]:
+    """First line at which each parameter is rebound in this function's scope."""
+    lines: dict[str, int] = {}
+    for sub in _walk_own_scope(node):
+        if not isinstance(sub, ast.Assign):
+            continue
+        for target in sub.targets:
+            if isinstance(target, ast.Name) and target.id in params:
+                lineno = getattr(sub, "lineno", 0)
+                if target.id not in lines or lineno < lines[target.id]:
+                    lines[target.id] = lineno
+    return lines
+
+
+def _function_parameter_receivers(module: ast.Module) -> list[str]:
+    """Describe ``add_argument`` calls made on a function's own parameter.
+
+    A helper such as ``def add_common(parser): parser.add_argument(...)`` builds
+    part of a parser the module-scope walker cannot attribute to any bucket. The
+    caller turns these into a hard error.
+
+    A parameter counts as rebound — and so is left to the normal assignment walk
+    — only when the reassignment happens **in this function's own scope** and
+    **before** the ``add_argument`` call. A later rebind, or one inside a nested
+    ``def``, does not retroactively make an earlier call safe.
+    """
+    found: list[str] = []
+    for node in ast.walk(module):
+        if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        spec = node.args
+        params = {
+            a.arg
+            for a in (*spec.posonlyargs, *spec.args, *spec.kwonlyargs)
+        }
+        if spec.vararg:
+            params.add(spec.vararg.arg)
+        if spec.kwarg:
+            params.add(spec.kwarg.arg)
+        if not params:
+            continue
+        rebound_at = _rebind_lines(node, params)
+        for sub in ast.walk(node):
+            if not (isinstance(sub, ast.Call) and _call_attr(sub) == "add_argument"):
+                continue
+            receiver = _receiver_name(sub)
+            if receiver not in params:
+                continue
+            rebind = rebound_at.get(receiver)
+            if rebind is not None and rebind < getattr(sub, "lineno", 0):
+                continue
+            found.append(
+                f"line {sub.lineno}: add_argument on function parameter "
+                f"`{receiver}` in {node.name}()"
+            )
+    return found
+
+
+def parser_options(script_path: Path) -> dict[str | None, list[tuple[list[str], bool]]]:
+    """Return every option-flag set the script's parsers declare, by bucket.
+
+    Keys are subcommand names (``None`` => the top-level ``ArgumentParser``);
+    values are ``(option_strings, is_required)`` pairs in source order.
+
+    Raises ``UnsupportedParserPatternError`` when the script uses a
+    parser-construction pattern this walker cannot model.
     """
     source = script_path.read_text(encoding="utf-8")
     module = ast.parse(source, filename=str(script_path))
 
+    unmodeled = [
+        f"line {node.lineno}: unmodeled parser container `{_call_attr(node)}()`"
+        for node in ast.walk(module)
+        if isinstance(node, ast.Call) and _call_attr(node) in UNMODELED_GROUP_CALLS
+    ]
+    unmodeled.extend(_function_parameter_receivers(module))
+    if unmodeled:
+        raise UnsupportedParserPatternError(
+            f"{script_path.name}: parser construction not modeled by the AST "
+            f"walker: {'; '.join(sorted(unmodeled))}"
+        )
+
     # var name -> kind: ("parser", None) | ("subparsers", None) | ("subcommand", name)
     var_kind: dict[str, tuple[str, str | None]] = {}
     subparsers_vars: set[str] = set()
-    # required flags grouped by target subcommand (None => top-level parser)
-    required: dict[str | None, list[list[str]]] = {}
+    # option specs grouped by target subcommand (None => top-level parser)
+    options: dict[str | None, list[tuple[list[str], bool]]] = {}
 
     for stmt in _iter_ordered_statements(module):
         # Assignments that (re)bind a var to a parser/subparsers/subcommand.
@@ -135,6 +256,10 @@ def required_option_flags(script_path: Path, subcommand: str | None) -> list[lis
             elif attr == "add_subparsers":
                 var_kind[target] = ("subparsers", None)
                 subparsers_vars.add(target)
+            elif attr == "add_argument_group" and _receiver_name(call) in var_kind:
+                # A --help-only container: its arguments belong to the parser
+                # that created it, so the group inherits that parser's bucket.
+                var_kind[target] = var_kind[_receiver_name(call)]
             elif attr == "add_parser" and _receiver_name(call) in subparsers_vars:
                 name = _str_constant(call.args[0]) if call.args else None
                 var_kind[target] = ("subcommand", name)
@@ -146,8 +271,6 @@ def required_option_flags(script_path: Path, subcommand: str | None) -> list[lis
         # Bare ``x.add_argument(...)`` calls.
         call = stmt.value if isinstance(stmt, ast.Expr) else None
         if isinstance(call, ast.Call) and _call_attr(call) == "add_argument":
-            if not _is_required(call):
-                continue
             receiver = _receiver_name(call)
             kind = var_kind.get(receiver) if receiver else None
             if kind is None:
@@ -160,9 +283,42 @@ def required_option_flags(script_path: Path, subcommand: str | None) -> list[lis
                 continue
             flags = _option_strings(call)
             if flags:
-                required.setdefault(bucket, []).append(flags)
+                options.setdefault(bucket, []).append((flags, _is_required(call)))
 
-    return required.get(subcommand, [])
+    return options
+
+
+def required_option_flags(script_path: Path, subcommand: str | None) -> list[list[str]]:
+    """Return the option-flag sets that are ``required=True`` for ``subcommand``.
+
+    Each element is the list of option strings for one required argument (e.g.
+    ``["--summary"]`` or ``["-o", "--output"]``); parity is satisfied when any
+    one of them appears in the documented command. ``subcommand=None`` targets
+    arguments added to the top-level ``ArgumentParser``.
+    """
+    options = parser_options(script_path)
+    return [flags for flags, required in options.get(subcommand, []) if required]
+
+
+def overclaimed_flags(script_path: Path, doc_text: str) -> list[str]:
+    """Return flags the doc annotates ``(required)`` that no parser requires.
+
+    A flag is only reported when the script declares it somewhere *and* marks it
+    ``required=True`` nowhere — so a flag that is required on one subcommand and
+    optional on another is left alone, and flags belonging to some other script
+    documented in the same file are ignored.
+    """
+    options = parser_options(script_path)
+    known: set[str] = set()
+    required: set[str] = set()
+    for specs in options.values():
+        for flags, is_required in specs:
+            known.update(flags)
+            if is_required:
+                required.update(flags)
+
+    claimed = dict.fromkeys(DOC_REQUIRED_RE.findall(doc_text))
+    return [flag for flag in claimed if flag in known and flag not in required]
 
 
 # --------------------------------------------------------------------------- #
@@ -207,10 +363,12 @@ def check_invocation(
 
     # 1. drift guard: the documented command must appear in the cited doc.
     doc_path = skill_root / doc_rel
+    doc_text: str | None = None
     if not doc_path.is_file():
         problems.append(f"{entry_id}: doc not found: {doc_path}")
     else:
-        doc_norm = _normalize_command(doc_path.read_text(encoding="utf-8"))
+        doc_text = doc_path.read_text(encoding="utf-8")
+        doc_norm = _normalize_command(doc_text)
         if _normalize_command(command) not in doc_norm:
             problems.append(
                 f"{entry_id}: documented command not found in {doc_rel} "
@@ -228,6 +386,12 @@ def check_invocation(
     except SyntaxError as exc:
         problems.append(f"{entry_id}: could not parse {script_rel}: {exc}")
         return problems
+    except UnsupportedParserPatternError as exc:
+        problems.append(
+            f"{entry_id}: {exc} — extend the walker in check-cli-arg-parity "
+            f"to model this pattern; it cannot be checked as written"
+        )
+        return problems
 
     tokens = _command_tokens(command)
     for flag_set in required:
@@ -237,6 +401,15 @@ def check_invocation(
             problems.append(
                 f"{entry_id}: documented command omits required flag "
                 f"`{shown}` for {script_rel}{sub}"
+            )
+
+    # 3. over-claim guard: prose must not call a flag required that the parser
+    #    treats as optional.
+    if doc_text is not None:
+        for flag in overclaimed_flags(script_path, doc_text):
+            problems.append(
+                f"{entry_id}: {doc_rel} annotates `{flag}` as (required) but "
+                f"{script_rel} never marks it required=True"
             )
     return problems
 
@@ -298,7 +471,8 @@ def main(argv: list[str] | None = None) -> int:
         for problem in problems:
             print(f"  {problem}", file=sys.stderr)
         print(
-            "Add the missing flag to the documented command, or fix the manifest.",
+            "Add the missing flag to the documented command, drop an inaccurate "
+            "(required) annotation, or fix the manifest.",
             file=sys.stderr,
         )
         return 1
