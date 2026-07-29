@@ -49,6 +49,13 @@ of launching work that benefit from repeatable checks:
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script.
 
+The bootstrap helper also reports repo-hygiene advisories for the primary
+checkout in `untracked_advisories` (untracked paths not covered by
+`.gitignore`) and `ignore_coverage_advisories` (build-output paths the detected
+project type usually produces but `.gitignore` misses). Both are warning-only
+and never block; surface them once at launch instead of silently normalizing
+pre-existing junk.
+
 Use the bootstrap helper in dry-run mode first. Add `--apply` only after the
 target branch and worktree path are confirmed correct.
 

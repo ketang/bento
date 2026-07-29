@@ -87,6 +87,93 @@ class LaunchWorkScriptsTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("target branch already exists locally: feature/test", payload["errors"])
 
+    def test_bootstrap_reports_untracked_debt_in_primary_checkout(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-junk"
+        (self.repo / "scratch.log").write_text("junk\n", encoding="utf-8")
+        (self.repo / "notes").mkdir()
+        (self.repo / "notes" / "todo.txt").write_text("junk\n", encoding="utf-8")
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertIn("scratch.log", payload["untracked_advisories"])
+        self.assertIn("notes/", payload["untracked_advisories"])
+        self.assertTrue(
+            any("untracked path(s) not covered by .gitignore" in warning for warning in payload["warnings"])
+        )
+
+    def test_bootstrap_ignores_gitignored_paths_in_untracked_advisories(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-ignored"
+        (self.repo / ".gitignore").write_text("*.log\n", encoding="utf-8")
+        git(self.repo, "add", ".gitignore")
+        git(self.repo, "commit", "-m", "add gitignore")
+        (self.repo / "scratch.log").write_text("junk\n", encoding="utf-8")
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["untracked_advisories"], [])
+
+    def test_bootstrap_warns_when_go_binary_is_not_ignored(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-go"
+        (self.repo / "go.mod").write_text("module example.com/acme/widgetd\n\ngo 1.22\n", encoding="utf-8")
+        git(self.repo, "add", "go.mod")
+        git(self.repo, "commit", "-m", "add go module")
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertIn(
+            "widgetd (Go build output) is not covered by .gitignore",
+            payload["ignore_coverage_advisories"],
+        )
+
+    def test_bootstrap_is_quiet_when_go_binary_is_ignored(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-go-clean"
+        (self.repo / "go.mod").write_text("module example.com/acme/widgetd\n\ngo 1.22\n", encoding="utf-8")
+        (self.repo / ".gitignore").write_text("/widgetd\n", encoding="utf-8")
+        git(self.repo, "add", "go.mod", ".gitignore")
+        git(self.repo, "commit", "-m", "add go module")
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["ignore_coverage_advisories"], [])
+
+    def test_bootstrap_does_not_flag_node_modules_or_tracked_dist(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-node"
+        (self.repo / "package.json").write_text('{"name": "acme"}\n', encoding="utf-8")
+        dist = self.repo / "dist"
+        dist.mkdir()
+        (dist / "vendored.js").write_text("// checked in\n", encoding="utf-8")
+        git(self.repo, "add", "package.json", "dist/vendored.js")
+        git(self.repo, "commit", "-m", "add package")
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["ignore_coverage_advisories"], [])
+        self.assertNotIn("node_modules", json.dumps(payload["ignore_coverage_advisories"]))
+
+    def test_bootstrap_clean_repo_reports_no_hygiene_advisories(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-clean"
+
+        result = self.run_bootstrap("--branch", "feature/test", "--worktree", str(target_worktree))
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(payload["untracked_advisories"], [])
+        self.assertEqual(payload["ignore_coverage_advisories"], [])
+        self.assertEqual(
+            [
+                warning
+                for warning in payload["warnings"]
+                if "untracked" in warning or "gitignore coverage" in warning
+            ],
+            [],
+        )
+
     def test_verify_rejects_primary_checkout_when_linked_worktree_is_required(self) -> None:
         result = self.run_verify("--require-linked-worktree", cwd=self.repo, check=False)
         payload = json.loads(result.stdout)
