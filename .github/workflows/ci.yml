@@ -110,3 +110,6 @@ jobs:
 
       - name: Check documented CLI argument parity
         run: scripts/check-cli-arg-parity
+
+      - name: Check for unanchored temporal claims
+        run: scripts/check-temporal-claims
