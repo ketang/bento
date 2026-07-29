@@ -139,6 +139,53 @@ class IntrospectionTest(unittest.TestCase):
         self.assertEqual(close[("--summary",)], True)
 
 
+class OverclaimTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+        self.script = self.root / "demo.py"
+        # --expedition is required on both subcommands; --branch on neither.
+        self.script.write_text(FIXTURE_SCRIPT, encoding="utf-8")
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def test_flag_required_nowhere_is_reported(self) -> None:
+        doc = "- `--branch` (required) names the branch.\n"
+        self.assertEqual(mod.overclaimed_flags(self.script, doc), ["--branch"])
+
+    def test_flag_required_on_one_subcommand_only_is_not_reported(self) -> None:
+        # --summary is required=True on close-task and absent from verify; the
+        # "required by ANY parser" merge must keep this quiet.
+        doc = "- `--summary` (required) carries the summary.\n"
+        self.assertEqual(mod.overclaimed_flags(self.script, doc), [])
+
+    def test_mixed_required_and_optional_same_flag(self) -> None:
+        mixed = self.root / "mixed.py"
+        mixed.write_text(
+            "import argparse\n\n\n"
+            "def build_parser():\n"
+            "    parser = argparse.ArgumentParser()\n"
+            '    sub = parser.add_subparsers(dest="command")\n'
+            '    a = sub.add_parser("a")\n'
+            '    a.add_argument("--name", required=True)\n'
+            '    b = sub.add_parser("b")\n'
+            '    b.add_argument("--name")\n'
+            "    return parser\n",
+            encoding="utf-8",
+        )
+        doc = "- `--name` (required) identifies the thing.\n"
+        self.assertEqual(mod.overclaimed_flags(mixed, doc), [])
+
+    def test_unknown_flag_is_not_reported(self) -> None:
+        doc = "- `--elsewhere` (required) belongs to another tool.\n"
+        self.assertEqual(mod.overclaimed_flags(self.script, doc), [])
+
+    def test_annotation_without_backticks_is_read(self) -> None:
+        doc = "Pass --branch (required) when landing.\n"
+        self.assertEqual(mod.overclaimed_flags(self.script, doc), ["--branch"])
+
+
 class UnsupportedPatternTest(unittest.TestCase):
     """Unmodeled parser construction must fail loudly, never silently skip."""
 
@@ -165,6 +212,54 @@ class UnsupportedPatternTest(unittest.TestCase):
         with self.assertRaises(mod.UnsupportedParserPatternError) as ctx:
             mod.required_option_flags(path, None)
         self.assertIn("add_mutually_exclusive_group", str(ctx.exception))
+
+    def test_later_rebind_does_not_exempt_earlier_use(self) -> None:
+        # --secret is added to the caller-supplied parser BEFORE the unrelated
+        # local rebind; the rebind must not retroactively make it safe, or
+        # --secret is silently misattributed to the script's own parser.
+        path = self._write(
+            "import argparse\n\n\n"
+            "def build(argv):\n"
+            '    argv.add_argument("--secret", required=True)\n'
+            "    argv = argparse.ArgumentParser()\n"
+            '    argv.add_argument("--note", required=True)\n'
+            "    return argv\n"
+        )
+        with self.assertRaises(mod.UnsupportedParserPatternError) as ctx:
+            mod.required_option_flags(path, None)
+        self.assertIn("function parameter", str(ctx.exception))
+
+    def test_nested_scope_rebind_does_not_exempt(self) -> None:
+        # The reassignment lives in an inner function's own scope, so it never
+        # rebinds the outer parameter.
+        path = self._write(
+            "import argparse\n\n\n"
+            "def build(parser):\n"
+            "    def inner():\n"
+            '        parser = "unrelated"\n'
+            "        return parser\n"
+            '    parser.add_argument("--secret", required=True)\n'
+            "    return parser\n"
+        )
+        with self.assertRaises(mod.UnsupportedParserPatternError):
+            mod.required_option_flags(path, None)
+
+    def test_argument_group_inherits_parser_bucket(self) -> None:
+        # --help-only container: modeled, not an error.
+        path = self._write(
+            "import argparse\n\n\n"
+            "def build_parser():\n"
+            '    parser = argparse.ArgumentParser(prog="demo")\n'
+            "    sub = parser.add_subparsers(dest=\"command\")\n"
+            '    p = sub.add_parser("run")\n'
+            '    group = p.add_argument_group("io")\n'
+            '    group.add_argument("--out", required=True)\n'
+            "    return parser\n"
+        )
+        self.assertEqual(
+            [f[0] for f in mod.required_option_flags(path, "run")], ["--out"]
+        )
+        self.assertEqual(mod.required_option_flags(path, None), [])
 
     def test_rebound_parameter_is_not_flagged(self) -> None:
         path = self._write(

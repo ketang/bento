@@ -29,13 +29,15 @@ tracks per-subcommand ``add_parser(...)`` receivers. A required argument passed
 a non-literal ``required=`` value is treated as *not* statically required (the
 corpus uses ``required=True`` literals); tighten here if that changes.
 
-Parser-construction patterns the module-scope walker cannot model —
-``add_mutually_exclusive_group()`` / ``add_argument_group()`` containers, and
-``add_argument`` calls made on a function *parameter* (a helper that receives
-the parser) — raise ``UnsupportedParserPatternError`` rather than being silently
-skipped. A silent skip would under-report required flags and let the very drift
-this linter exists to catch pass green. If such a pattern is introduced, extend
-the walker to model it instead of loosening the error.
+``add_argument_group(...)`` is modeled: it is a ``--help``-only container, so it
+inherits the bucket of the parser that created it. Patterns the module-scope
+walker genuinely cannot model — ``add_mutually_exclusive_group()`` (which means
+"exactly one of these", not per-flag requiredness) and ``add_argument`` calls
+made on a function *parameter* (a helper that receives the parser) — raise
+``UnsupportedParserPatternError`` rather than being silently skipped. A silent
+skip would under-report required flags and let the very drift this linter exists
+to catch pass green. If such a pattern is introduced, extend the walker to model
+it instead of loosening the error.
 
 The public helpers (``required_option_flags``, ``parser_options``,
 ``check_invocation``, ``check_manifest``, ``check_tree``) are import-safe and
@@ -57,7 +59,10 @@ DEFAULT_SKILLS_ROOT = ROOT_DIR / "catalog" / "skills"
 DEFAULT_MANIFESTS_ROOT = ROOT_DIR / "scripts" / "cli-parity"
 
 # Parser-container factories whose results this walker does not model.
-UNMODELED_GROUP_CALLS = ("add_mutually_exclusive_group", "add_argument_group")
+# ``add_argument_group`` is modeled instead (it is a --help-only container whose
+# arguments belong to the parser that created it); a mutually exclusive group
+# expresses "exactly one of these", which the per-flag model cannot represent.
+UNMODELED_GROUP_CALLS = ("add_mutually_exclusive_group",)
 
 # Prose annotation the over-claim check reads, e.g. "`--target` (required)".
 DOC_REQUIRED_RE = re.compile(r"`?(--[A-Za-z0-9][A-Za-z0-9_-]*)`?\s*\(required\)")
@@ -132,12 +137,47 @@ def _iter_ordered_statements(module: ast.Module):
     return statements
 
 
+_NESTED_SCOPES = (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda, ast.ClassDef)
+
+
+def _walk_own_scope(node: ast.AST):
+    """Yield nodes under ``node`` without descending into a nested scope.
+
+    Assignments inside a nested ``def``/``lambda``/``class`` bind that scope's
+    name, not this function's parameter, so they must not count as a rebind.
+    """
+    for child in ast.iter_child_nodes(node):
+        if isinstance(child, _NESTED_SCOPES):
+            continue
+        yield child
+        yield from _walk_own_scope(child)
+
+
+def _rebind_lines(node: ast.AST, params: set[str]) -> dict[str, int]:
+    """First line at which each parameter is rebound in this function's scope."""
+    lines: dict[str, int] = {}
+    for sub in _walk_own_scope(node):
+        if not isinstance(sub, ast.Assign):
+            continue
+        for target in sub.targets:
+            if isinstance(target, ast.Name) and target.id in params:
+                lineno = getattr(sub, "lineno", 0)
+                if target.id not in lines or lineno < lines[target.id]:
+                    lines[target.id] = lineno
+    return lines
+
+
 def _function_parameter_receivers(module: ast.Module) -> list[str]:
     """Describe ``add_argument`` calls made on a function's own parameter.
 
     A helper such as ``def add_common(parser): parser.add_argument(...)`` builds
     part of a parser the module-scope walker cannot attribute to any bucket. The
     caller turns these into a hard error.
+
+    A parameter counts as rebound — and so is left to the normal assignment walk
+    — only when the reassignment happens **in this function's own scope** and
+    **before** the ``add_argument`` call. A later rebind, or one inside a nested
+    ``def``, does not retroactively make an earlier call safe.
     """
     found: list[str] = []
     for node in ast.walk(module):
@@ -154,23 +194,20 @@ def _function_parameter_receivers(module: ast.Module) -> list[str]:
             params.add(spec.kwarg.arg)
         if not params:
             continue
-        # A parameter reassigned inside the body is no longer the caller's
-        # parser, so it is tracked by the normal assignment walk instead.
-        rebound = {
-            target.id
-            for sub in ast.walk(node)
-            if isinstance(sub, ast.Assign)
-            for target in sub.targets
-            if isinstance(target, ast.Name)
-        }
+        rebound_at = _rebind_lines(node, params)
         for sub in ast.walk(node):
-            if isinstance(sub, ast.Call) and _call_attr(sub) == "add_argument":
-                receiver = _receiver_name(sub)
-                if receiver in params and receiver not in rebound:
-                    found.append(
-                        f"line {sub.lineno}: add_argument on function parameter "
-                        f"`{receiver}` in {node.name}()"
-                    )
+            if not (isinstance(sub, ast.Call) and _call_attr(sub) == "add_argument"):
+                continue
+            receiver = _receiver_name(sub)
+            if receiver not in params:
+                continue
+            rebind = rebound_at.get(receiver)
+            if rebind is not None and rebind < getattr(sub, "lineno", 0):
+                continue
+            found.append(
+                f"line {sub.lineno}: add_argument on function parameter "
+                f"`{receiver}` in {node.name}()"
+            )
     return found
 
 
@@ -219,6 +256,10 @@ def parser_options(script_path: Path) -> dict[str | None, list[tuple[list[str], 
             elif attr == "add_subparsers":
                 var_kind[target] = ("subparsers", None)
                 subparsers_vars.add(target)
+            elif attr == "add_argument_group" and _receiver_name(call) in var_kind:
+                # A --help-only container: its arguments belong to the parser
+                # that created it, so the group inherits that parser's bucket.
+                var_kind[target] = var_kind[_receiver_name(call)]
             elif attr == "add_parser" and _receiver_name(call) in subparsers_vars:
                 name = _str_constant(call.args[0]) if call.args else None
                 var_kind[target] = ("subcommand", name)
