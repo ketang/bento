@@ -97,8 +97,10 @@ and tell them this is not a bento bug.
      --context "<context>"
    ```
 
-   - `--note` (required) and `--target` (required) carry the verbatim note
-     and the resolved component.
+   - `--note` (required) and `--target` carry the verbatim note and the
+     resolved component. Always pass both: the script rejects an empty
+     `--note`, and exits non-zero with `missing target` when `--target` is
+     absent or empty.
    - `--target-resolution` is `explicit` when the user named the target and
      `inferred` when resolved from context; it defaults to `explicit`.
    - Omit `--cwd`, `--branch`, `--worktree`, and `--context` when the value

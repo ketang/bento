@@ -63,6 +63,36 @@ def main():
 '''
 
 
+# Parser built via a helper that receives the parser as a parameter — the
+# module-scope walker cannot attribute these arguments to any bucket.
+FIXTURE_HELPER_PARAM = '''\
+import argparse
+
+
+def add_common(parser):
+    parser.add_argument("--config", required=True)
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="demo")
+    add_common(parser)
+    return parser
+'''
+
+# Parser using a mutually exclusive group container.
+FIXTURE_MUTEX_GROUP = '''\
+import argparse
+
+
+def build_parser():
+    parser = argparse.ArgumentParser(prog="demo")
+    group = parser.add_mutually_exclusive_group(required=True)
+    group.add_argument("--from-file")
+    group.add_argument("--from-stdin", action="store_true")
+    return parser
+'''
+
+
 class RealCorpusTest(unittest.TestCase):
     """The canonical catalog must stay clean; this is the regression guard."""
 
@@ -100,6 +130,51 @@ class IntrospectionTest(unittest.TestCase):
         single = self.root / "report.py"
         single.write_text(FIXTURE_SINGLE, encoding="utf-8")
         flags = mod.required_option_flags(single, None)
+        self.assertEqual([f[0] for f in flags], ["--note"])
+
+    def test_optional_flags_are_still_collected(self) -> None:
+        options = mod.parser_options(self.script)
+        close = dict((tuple(f), req) for f, req in options["close-task"])
+        self.assertEqual(close[("--branch",)], False)
+        self.assertEqual(close[("--summary",)], True)
+
+
+class UnsupportedPatternTest(unittest.TestCase):
+    """Unmodeled parser construction must fail loudly, never silently skip."""
+
+    def setUp(self) -> None:
+        self._tmp = tempfile.TemporaryDirectory()
+        self.root = Path(self._tmp.name)
+
+    def tearDown(self) -> None:
+        self._tmp.cleanup()
+
+    def _write(self, source: str) -> Path:
+        path = self.root / "demo.py"
+        path.write_text(source, encoding="utf-8")
+        return path
+
+    def test_helper_function_parameter_raises(self) -> None:
+        path = self._write(FIXTURE_HELPER_PARAM)
+        with self.assertRaises(mod.UnsupportedParserPatternError) as ctx:
+            mod.required_option_flags(path, None)
+        self.assertIn("function parameter", str(ctx.exception))
+
+    def test_mutually_exclusive_group_raises(self) -> None:
+        path = self._write(FIXTURE_MUTEX_GROUP)
+        with self.assertRaises(mod.UnsupportedParserPatternError) as ctx:
+            mod.required_option_flags(path, None)
+        self.assertIn("add_mutually_exclusive_group", str(ctx.exception))
+
+    def test_rebound_parameter_is_not_flagged(self) -> None:
+        path = self._write(
+            "import argparse\n\n\n"
+            "def build(argv):\n"
+            "    argv = argparse.ArgumentParser()\n"
+            '    argv.add_argument("--note", required=True)\n'
+            "    return argv\n"
+        )
+        flags = mod.required_option_flags(path, None)
         self.assertEqual([f[0] for f in flags], ["--note"])
 
 
@@ -178,6 +253,57 @@ class ManifestFixtureTest(unittest.TestCase):
         problems = self._check()
         self.assertTrue(
             any("not found in SKILL.md" in p for p in problems),
+            msg="\n".join(problems),
+        )
+
+    def test_doc_overclaiming_required_is_caught(self) -> None:
+        # --branch is optional in the parser but annotated "(required)" in prose.
+        command = (
+            "demo/scripts/demo.py close-task --expedition <name> "
+            "--outcome kept --summary <text>"
+        )
+        self._write_doc(command)
+        with self.doc.open("a", encoding="utf-8") as fh:
+            fh.write("\n- `--branch` (required) names the branch.\n")
+        self._write_manifest(command)
+        problems = self._check()
+        self.assertTrue(
+            any("--branch" in p and "(required)" in p for p in problems),
+            msg="\n".join(problems),
+        )
+
+    def test_doc_annotation_matching_parser_passes(self) -> None:
+        command = (
+            "demo/scripts/demo.py close-task --expedition <name> "
+            "--outcome kept --summary <text>"
+        )
+        self._write_doc(command)
+        with self.doc.open("a", encoding="utf-8") as fh:
+            fh.write("\n- `--summary` (required) carries the summary.\n")
+        self._write_manifest(command)
+        self.assertEqual(self._check(), [])
+
+    def test_unknown_flag_annotation_is_ignored(self) -> None:
+        # A flag from some other script documented in the same file.
+        command = (
+            "demo/scripts/demo.py close-task --expedition <name> "
+            "--outcome kept --summary <text>"
+        )
+        self._write_doc(command)
+        with self.doc.open("a", encoding="utf-8") as fh:
+            fh.write("\n- `--elsewhere` (required) belongs to another tool.\n")
+        self._write_manifest(command)
+        self.assertEqual(self._check(), [])
+
+    def test_unsupported_parser_pattern_surfaces_as_problem(self) -> None:
+        script = self.skills / "demo" / "scripts" / "demo.py"
+        script.write_text(FIXTURE_MUTEX_GROUP, encoding="utf-8")
+        command = "demo/scripts/demo.py close-task"
+        self._write_doc(command)
+        self._write_manifest(command)
+        problems = self._check()
+        self.assertTrue(
+            any("add_mutually_exclusive_group" in p for p in problems),
             msg="\n".join(problems),
         )
 
