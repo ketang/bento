@@ -1,0 +1,221 @@
+#!/usr/bin/env python3
+"""Lint unanchored temporal claims in canonical skill sources (bento-5zg).
+
+Skill prose sometimes promises a future state of the repo -- "persistence ships
+in a follow-up", "for now the captured block is the artifact", "not yet
+implemented". Those claims decay silently: bentobug's step 5 told users
+persistence was still coming for weeks after the report writer had shipped,
+because nothing tied the sentence to the work that would falsify it.
+
+A temporal claim is acceptable when it is *anchored*: the line (or the line
+immediately above it) names a tracker issue, so closing that issue surfaces the
+prose that must change. This linter flags unanchored claims under
+``catalog/skills/``.
+
+Anchors, either on the offending line or on the nearest preceding non-blank
+line:
+
+* a tracker issue ID -- ``bento-5zg``, ``bento-96ua.2``
+* an inline suppression with a reason -- ``<!-- temporal-claim-ok: <why> -->``
+
+Suppression is inline by design: a central exception list would grow without
+anyone reading it, while an inline marker sits where the reviewer is already
+looking.
+
+The patterns are deliberately narrow. The bare words "follow-up" and "not yet"
+appear throughout the catalog in non-claim senses ("follow-up items", "not yet
+tested", "not yet marked ready") -- flagging those would make the linter a
+false-positive generator that reviewers learn to ignore. Only the shapes that
+actually promise a future repo state are matched; see ``PATTERNS``.
+
+Wired into ``scripts/build-plugins`` (verification step) and exercised by
+``tests/test_check_temporal_claims.py``.
+
+The public helpers (``check_text``, ``check_markdown_file``, ``check_tree``)
+are import-safe and take explicit roots so tests can point them at fixtures.
+"""
+
+from __future__ import annotations
+
+import argparse
+import re
+import sys
+from pathlib import Path
+
+
+ROOT_DIR = Path(__file__).resolve().parents[1]
+DEFAULT_SKILLS_ROOT = ROOT_DIR / "catalog" / "skills"
+
+DEFAULT_ISSUE_PREFIX = "bento"
+
+# Words naming a state the repo either has or lacks. Used by the "not yet
+# <state>" and "will be <state>" shapes, which are claims about shipped
+# functionality rather than about a runtime condition the agent evaluates
+# ("not yet published", "not yet tested", "not yet marked ready").
+_SHIP_STATE = (
+    r"(?:implemented|supported|available|shipped|landed|wired|built|written"
+    r"|added|automated|hooked\s+up|in\s+place|exists?|done)"
+)
+
+# (label, compiled pattern). Every pattern is case-insensitive.
+PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    # "for now the captured block is the artifact" -- always a temporal claim.
+    ("for now", re.compile(r"\bfor\s+now\b", re.IGNORECASE)),
+    ("coming soon", re.compile(r"\bcoming\s+soon\b", re.IGNORECASE)),
+    # "persistence ships in a follow-up" / "a follow-up will add it".
+    (
+        "deferred to a follow-up",
+        re.compile(r"\b(?:in|as|via)\s+an?\s+follow[-\s]?up\b", re.IGNORECASE),
+    ),
+    (
+        "deferred to a follow-up",
+        re.compile(
+            r"\bfollow[-\s]?ups?\s+(?:will|ships?|lands?|adds?)\b", re.IGNORECASE
+        ),
+    ),
+    # "not yet implemented" -- a claim about what the repo ships.
+    ("not yet shipped", re.compile(rf"\bnot\s+yet\s+{_SHIP_STATE}\b", re.IGNORECASE)),
+    # "will be added" and its siblings.
+    ("promised future work", re.compile(rf"\bwill\s+be\s+{_SHIP_STATE}\b", re.IGNORECASE)),
+]
+
+# ``<!-- temporal-claim-ok: this is example text the agent should emit -->``.
+# The reason is required: a bare marker carries no evidence for the next reader.
+_SUPPRESSION_RE = re.compile(
+    r"<!--\s*temporal-claim-ok:\s*(?P<reason>[^>]*?)\s*-->", re.IGNORECASE
+)
+
+
+def _issue_id_re(issue_prefix: str) -> re.Pattern[str]:
+    """Tracker IDs such as ``bento-5zg`` and dotted sub-IDs ``bento-96ua.2``."""
+    return re.compile(rf"\b{re.escape(issue_prefix)}-[a-z0-9]{{2,}}(?:\.\d+)*\b")
+
+
+def _is_anchored(line: str, issue_re: re.Pattern[str]) -> bool:
+    if issue_re.search(line):
+        return True
+    match = _SUPPRESSION_RE.search(line)
+    return bool(match and match.group("reason").strip())
+
+
+def _flatten(lines: list[str]) -> tuple[str, list[int]]:
+    """Join soft-wrapped prose so a claim split across lines still matches.
+
+    Markdown in this repo wraps at ~79 columns, so the original bentobug claim
+    read ``for\\n   now``. Line-at-a-time matching would miss it. Lines within a
+    paragraph are joined with a single space; a blank line becomes ``\\x00``,
+    which no pattern can match across, so two adjacent paragraphs cannot be
+    spliced into a phantom claim. The returned map gives the 1-based source
+    line for every offset in the flattened text.
+    """
+    flat: list[str] = []
+    line_of: list[int] = []
+    for number, line in enumerate(lines, start=1):
+        stripped = line.strip()
+        if not stripped:
+            flat.append("\x00")
+            line_of.append(number)
+            continue
+        flat.append(stripped)
+        line_of.extend([number] * len(stripped))
+        flat.append(" ")
+        line_of.append(number)
+    return "".join(flat), line_of
+
+
+def check_text(
+    text: str,
+    label: str = "<text>",
+    issue_prefix: str = DEFAULT_ISSUE_PREFIX,
+) -> list[str]:
+    """Return human-readable problems for one markdown document."""
+    issue_re = _issue_id_re(issue_prefix)
+    lines = text.splitlines()
+    flat, line_of = _flatten(lines)
+
+    problems: list[str] = []
+    seen: set[tuple[int, str, str]] = set()
+    for claim_label, pattern in PATTERNS:
+        for match in pattern.finditer(flat):
+            start_line = line_of[match.start()]
+            end_line = line_of[match.end() - 1]
+            # The anchor may sit anywhere on the claim's own lines, or on the
+            # nearest non-blank line above it (an annotation of its own).
+            context = [lines[n - 1] for n in range(start_line, end_line + 1)]
+            previous = next(
+                (lines[j] for j in range(start_line - 2, -1, -1) if lines[j].strip()),
+                "",
+            )
+            context.append(previous)
+            if any(_is_anchored(line, issue_re) for line in context):
+                continue
+            matched = " ".join(match.group(0).split())
+            key = (start_line, claim_label, matched)
+            if key in seen:
+                continue
+            seen.add(key)
+            problems.append(
+                f"{label}:{start_line}: unanchored temporal claim "
+                f"({claim_label}): {matched!r}"
+            )
+    return sorted(problems, key=lambda p: int(p.split(":")[1]))
+
+
+def check_markdown_file(
+    md_file: Path,
+    skills_root: Path,
+    issue_prefix: str = DEFAULT_ISSUE_PREFIX,
+) -> list[str]:
+    try:
+        label = str(md_file.relative_to(skills_root.parent))
+    except ValueError:
+        label = str(md_file)
+    return check_text(
+        md_file.read_text(encoding="utf-8"), label=label, issue_prefix=issue_prefix
+    )
+
+
+def check_tree(
+    skills_root: Path = DEFAULT_SKILLS_ROOT,
+    issue_prefix: str = DEFAULT_ISSUE_PREFIX,
+) -> list[str]:
+    """Check every markdown file under ``skills_root``."""
+    problems: list[str] = []
+    for md_file in sorted(skills_root.rglob("*.md")):
+        problems.extend(check_markdown_file(md_file, skills_root, issue_prefix))
+    return problems
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument(
+        "--skills-root",
+        type=Path,
+        default=DEFAULT_SKILLS_ROOT,
+        help="directory containing skill sources (default: catalog/skills)",
+    )
+    parser.add_argument(
+        "--issue-prefix",
+        default=DEFAULT_ISSUE_PREFIX,
+        help="tracker ID prefix that anchors a claim (default: bento)",
+    )
+    args = parser.parse_args(argv)
+
+    problems = check_tree(args.skills_root, args.issue_prefix)
+    if problems:
+        print("check-temporal-claims: unanchored temporal claims:", file=sys.stderr)
+        for problem in problems:
+            print(f"  {problem}", file=sys.stderr)
+        print(
+            "Anchor each claim with a tracker ID (e.g. bento-5zg) on the same or "
+            "preceding line, delete the claim if it is already stale, or mark a "
+            "non-claim with <!-- temporal-claim-ok: <reason> -->.",
+            file=sys.stderr,
+        )
+        return 1
+    print("check-temporal-claims: no unanchored temporal claims.")
+    return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
