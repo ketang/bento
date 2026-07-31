@@ -66,3 +66,15 @@ drift:
 If a script needs one of these, extend the walker in
 [`scripts/check-cli-arg-parity`](../check-cli-arg-parity) to model it — do not
 loosen the error.
+
+## Coverage is enforced
+
+You do not have to remember the rule above: the checker's `check_coverage` gate
+scans every `catalog/skills/*/scripts/*.py` for `required=True` arguments and
+fails if a documented (sub)command carrying a required flag has no manifest
+entry here. So a new required-flag CLI with a documented invocation cannot
+silently escape the parity check — CI points you at the missing entry.
+
+Only *documented* (sub)commands are required to have coverage. An internal-only
+required-flag subcommand that no `SKILL.md` / `references/*.md` tells an agent to
+run carries no doc-drift risk and needs no manifest entry.
