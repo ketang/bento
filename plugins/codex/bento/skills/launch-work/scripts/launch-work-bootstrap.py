@@ -9,6 +9,8 @@ from pathlib import Path
 
 from git_state import detect_checkout_root, detect_primary_branch, git, parse_worktrees, primary_checkout_root
 
+UNTRACKED_ADVISORY_LIMIT = 10
+
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser()
@@ -17,6 +19,117 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-branch", help="branch to branch from; defaults to detected primary branch")
     parser.add_argument("--apply", action="store_true", help="create the branch and linked worktree")
     return parser.parse_args()
+
+
+def untracked_advisories(root: Path) -> list[str]:
+    """Untracked, non-ignored paths already present in the primary checkout."""
+    result = git("status", "--porcelain", "--untracked-files=normal", cwd=root, check=False)
+    if result.returncode != 0:
+        return []
+    paths: list[str] = []
+    for line in result.stdout.splitlines():
+        if not line.startswith("?? "):
+            continue
+        entry = line[3:].strip()
+        if entry.startswith('"') and entry.endswith('"'):
+            entry = entry[1:-1]
+        paths.append(entry)
+    return paths
+
+
+def is_ignored(root: Path, candidate: str) -> bool:
+    return git("check-ignore", "-q", "--", candidate, cwd=root, check=False).returncode == 0
+
+
+def is_tracked(root: Path, candidate: str) -> bool:
+    result = git("ls-files", "--", candidate, cwd=root, check=False)
+    return result.returncode == 0 and bool(result.stdout.strip())
+
+
+def go_binary_names(root: Path) -> list[str]:
+    # A cmd/ layout names its binaries after the cmd/ subdirs and usually has no
+    # root main package, so the module tail would be a binary that never exists.
+    cmd_dir = root / "cmd"
+    if cmd_dir.is_dir():
+        names = sorted(child.name for child in cmd_dir.iterdir() if child.is_dir())
+        if names:
+            return [name for name in names if not name.startswith(".")]
+
+    go_mod = root / "go.mod"
+    if not go_mod.is_file():
+        return []
+    for line in go_mod.read_text(encoding="utf-8", errors="replace").splitlines():
+        line = line.strip()
+        if not line.startswith("module "):
+            continue
+        module_path = line.removeprefix("module ").strip().rstrip("/")
+        if not module_path:
+            break
+        segments = module_path.split("/")
+        # Go drops the /vN major-version suffix when naming the build output.
+        if len(segments) > 1 and _is_major_version_segment(segments[-1]):
+            segments.pop()
+        name = segments[-1]
+        return [name] if name and not name.startswith(".") else []
+    return []
+
+
+def _is_major_version_segment(segment: str) -> bool:
+    return segment.startswith("v") and segment[1:].isdigit() and int(segment[1:]) >= 2
+
+
+def build_output_candidates(root: Path) -> list[tuple[str, str]]:
+    """(path, reason) pairs of build outputs that a project of this type usually produces."""
+    candidates: list[tuple[str, str]] = []
+
+    if (root / "go.mod").is_file():
+        for name in go_binary_names(root):
+            candidates.append((name, "Go build output"))
+
+    if (root / "package.json").is_file():
+        candidates.append(("dist", "JavaScript/TypeScript build output"))
+
+    if (root / "Cargo.toml").is_file():
+        candidates.append(("target", "Rust build output"))
+
+    if (root / "pyproject.toml").is_file() or (root / "setup.py").is_file():
+        candidates.append(("__pycache__", "Python bytecode cache"))
+        candidates.append(("dist", "Python build output"))
+
+    deduped: dict[str, str] = {}
+    for path, reason in candidates:
+        deduped.setdefault(path, reason)
+    return list(deduped.items())
+
+
+def ignore_coverage_advisories(root: Path) -> list[str]:
+    """Build-output paths this project type usually needs ignored but that .gitignore misses."""
+    advisories: list[str] = []
+    for candidate, reason in build_output_candidates(root):
+        if is_ignored(root, candidate) or is_tracked(root, candidate):
+            continue
+        advisories.append(f"{candidate} ({reason}) is not covered by .gitignore")
+    return advisories
+
+
+def hygiene_advisories(root: Path) -> tuple[list[str], list[str], list[str]]:
+    """Return (untracked paths, ignore-coverage advisories, human-readable warnings)."""
+    untracked = untracked_advisories(root)
+    ignore_gaps = ignore_coverage_advisories(root)
+    warnings: list[str] = []
+
+    if untracked:
+        shown = untracked[:UNTRACKED_ADVISORY_LIMIT]
+        summary = ", ".join(shown)
+        if len(untracked) > len(shown):
+            summary += f", +{len(untracked) - len(shown)} more"
+        warnings.append(
+            f"primary checkout has {len(untracked)} untracked path(s) not covered by .gitignore: {summary}"
+        )
+    for gap in ignore_gaps:
+        warnings.append(f"gitignore coverage: {gap}")
+
+    return untracked, ignore_gaps, warnings
 
 
 def evaluate(args: argparse.Namespace, cwd: Path) -> dict[str, object]:
@@ -43,9 +156,13 @@ def evaluate(args: argparse.Namespace, cwd: Path) -> dict[str, object]:
     if str(target_worktree) in {str(worktree["path"]) for worktree in worktrees}:
         errors.append(f"target worktree path is already registered: {target_worktree}")
 
+    primary_root = primary_checkout_root(checkout_root)
+    untracked, ignore_gaps, hygiene_warnings = hygiene_advisories(primary_root)
+    warnings = warnings + hygiene_warnings
+
     return {
         "checkout_root": str(checkout_root),
-        "primary_checkout_root": str(primary_checkout_root(checkout_root)),
+        "primary_checkout_root": str(primary_root),
         "primary_branch": primary_branch,
         "base_branch": base_branch,
         "target_branch": args.branch,
@@ -53,6 +170,8 @@ def evaluate(args: argparse.Namespace, cwd: Path) -> dict[str, object]:
         "existing_worktrees": worktrees,
         "existing_branch_worktrees": branch_to_path,
         "ok": not errors,
+        "untracked_advisories": untracked,
+        "ignore_coverage_advisories": ignore_gaps,
         "warnings": warnings,
         "errors": errors,
         "apply_mode": args.apply,
