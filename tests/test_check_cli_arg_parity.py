@@ -556,6 +556,19 @@ class CoverageTest(unittest.TestCase):
         problems = self._coverage()
         self.assertTrue(any("close-task" in p for p in problems), msg="\n".join(problems))
 
+    def test_unsupported_parser_pattern_reported_not_raised(self) -> None:
+        # A script whose parser check_invocation would also refuse to model
+        # must surface as a coverage problem, not crash check_coverage/check_tree.
+        (self.skill / "scripts" / "demo.py").write_text(FIXTURE_MUTEX_GROUP, encoding="utf-8")
+        self.doc.write_text(
+            "# Demo\n\n    demo/scripts/demo.py --from-file x\n", encoding="utf-8"
+        )
+        problems = self._coverage()
+        self.assertTrue(
+            any("add_mutually_exclusive_group" in p for p in problems),
+            msg="\n".join(problems),
+        )
+
 
 class CoverageInvocationHeuristicTest(unittest.TestCase):
     """Guards that only real invocations — not bare mentions — trigger the gate."""
