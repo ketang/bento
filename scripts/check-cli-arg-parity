@@ -566,6 +566,12 @@ def check_coverage(
             except SyntaxError as exc:
                 problems.append(f"{skill}: could not parse {script_path.name}: {exc}")
                 continue
+            except UnsupportedParserPatternError as exc:
+                problems.append(
+                    f"{skill}: {exc} — extend the walker in check-cli-arg-parity "
+                    f"to model this pattern; coverage cannot be checked as written"
+                )
+                continue
             if not buckets:
                 continue
             script_rel = f"scripts/{script_path.name}"
