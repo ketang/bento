@@ -4,6 +4,7 @@ import json
 import fnmatch
 import hashlib
 import os
+import re
 import shutil
 import struct
 import subprocess
@@ -27,6 +28,7 @@ PRIVACY_POLICY_URL = "https://github.com/ketang/bento"
 TERMS_OF_SERVICE_URL = "https://github.com/ketang/bento"
 LICENSE = "MIT"
 TEST_CMD = ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."]
+VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 CHECK_SKILL_REFS_CMD = ["python3", "scripts/check-skill-refs"]
 CHECK_TEMPORAL_CLAIMS_CMD = ["python3", "scripts/check-temporal-claims"]
 CLAUDE_VALIDATE_CMD = ["claude", "plugin", "validate", "."]
@@ -257,16 +259,23 @@ def load_plugin_versions() -> dict[str, dict]:
     normalized: dict[str, dict] = {}
     for plugin, value in raw.items():
         if isinstance(value, str):
-            normalized[plugin] = {"version": value, "content_hash": None}
+            version = value
+            content_hash = None
         elif isinstance(value, dict) and isinstance(value.get("version"), str):
+            version = value["version"]
             content_hash = value.get("content_hash")
             if content_hash is not None and not isinstance(content_hash, str):
                 raise SystemExit(
                     f"content_hash for {plugin!r} must be a string or null in {PLUGIN_VERSIONS_FILE}"
                 )
-            normalized[plugin] = {"version": value["version"], "content_hash": content_hash}
         else:
             raise SystemExit(f"Invalid version entry for {plugin!r} in {PLUGIN_VERSIONS_FILE}")
+        if not VERSION_RE.match(version):
+            raise SystemExit(
+                f"Malformed version {version!r} for {plugin!r} in {PLUGIN_VERSIONS_FILE}: "
+                "expected exactly three dot-separated numeric parts (e.g. '1.0.0')"
+            )
+        normalized[plugin] = {"version": version, "content_hash": content_hash}
     return normalized
 
 

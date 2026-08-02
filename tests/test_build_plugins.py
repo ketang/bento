@@ -877,6 +877,21 @@ class BuildPluginsTest(unittest.TestCase):
         # The manual major/minor survives; only the patch component advances.
         self.assertEqual(after["bento"]["version"], "2.0.1")
 
+    def test_malformed_version_raises_clear_system_exit(self) -> None:
+        self.build_repo()
+        settled = self._read_versions()
+
+        for malformed in ("1.0", "1.0.0-rc1", "v1.0.0"):
+            with self.subTest(malformed=malformed):
+                overridden = {plugin: dict(entry) for plugin, entry in settled.items()}
+                overridden["bento"]["version"] = malformed
+                self._write_versions(overridden)
+
+                with self.assertRaises(SystemExit) as ctx:
+                    self.build_repo()
+                self.assertIn(malformed, str(ctx.exception))
+                self.assertIn("bento", str(ctx.exception))
+
     def test_content_hash_stable_across_runs(self) -> None:
         self.build_repo()
         first = self._read_versions()
