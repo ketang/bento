@@ -80,9 +80,9 @@ def resolve_teammate_config(repo_root: Path) -> Path:
 
 
 def optional_non_empty_string(config: dict, field: str, path: Path) -> str | None:
-    value = config.get(field)
-    if value is None:
+    if field not in config:
         return None
+    value = config[field]
     if not isinstance(value, str) or not value.strip():
         raise TeammateConfigError(
             f"{path}: codex.{field} must be a non-empty string"

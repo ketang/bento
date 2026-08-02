@@ -213,6 +213,11 @@ class SwarmDiscoverTest(unittest.TestCase):
                 "codex.model",
             ),
             (
+                "null model",
+                json.dumps({"codex": {"model": None}}),
+                "codex.model",
+            ),
+            (
                 "empty model",
                 json.dumps({"codex": {"model": " "}}),
                 "codex.model",
@@ -220,6 +225,11 @@ class SwarmDiscoverTest(unittest.TestCase):
             (
                 "non-string reasoning effort",
                 json.dumps({"codex": {"reasoning_effort": False}}),
+                "codex.reasoning_effort",
+            ),
+            (
+                "null reasoning effort",
+                json.dumps({"codex": {"reasoning_effort": None}}),
                 "codex.reasoning_effort",
             ),
             (
