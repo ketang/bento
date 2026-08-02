@@ -119,6 +119,13 @@ class VerifierDiscoveryTest(unittest.TestCase):
         self.repo = self.root / "repo"
         self.repo.mkdir()
 
+        # Isolate the home-scope XDG config path so tests never pick up a
+        # real ~/.config/agent-plugins/bento/bento/land-work/verifier.json.
+        default_xdg = self.root / "xdg-home"
+        xdg_patch = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(default_xdg)})
+        xdg_patch.start()
+        self.addCleanup(xdg_patch.stop)
+
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
