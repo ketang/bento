@@ -205,6 +205,7 @@ class SwarmDiscoverTest(unittest.TestCase):
         repo_config = self.repo / TEAMMATE_CONFIG_REL
         invalid_cases = (
             ("malformed JSON", "{", "invalid JSON"),
+            ("non-object root", json.dumps([]), "config root"),
             ("non-object codex", json.dumps({"codex": []}), "codex"),
             (
                 "non-string model",
