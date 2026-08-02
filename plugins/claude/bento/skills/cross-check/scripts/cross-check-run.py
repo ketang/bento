@@ -130,7 +130,7 @@ def run_cross(
     cmd = common.build_counterpart_command(
         current_runtime, model=model, last_message_file=last_file
     )
-    child_env = {**os.environ, common.RECURSION_ENV: "1"}
+    child_env = common.build_child_env()
 
     try:
         try:
