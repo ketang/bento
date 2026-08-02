@@ -56,6 +56,67 @@ class CommonMappingTest(unittest.TestCase):
         self.assertFalse(common.in_agent_session({"CLAUDECODE": ""}))
 
 
+class BuildChildEnvTest(unittest.TestCase):
+    # Real-world identity/credential vars observed leaking through a naive
+    # {**os.environ} passthrough: tmc's lease-binding vars (cause a confirmed
+    # tmc lease-hijack bug), Claude Code's own session markers, ad hoc agent/
+    # workflow markers from other tooling, and the live SSH agent socket.
+    LEAKY_VARS = {
+        "TMC_AGENT_LAUNCH_ID": "c768c19b-a9af-4e2c-9aff-827e1c27141b",
+        "TMC_AGENT_TOOL": "claude",
+        "TMC_AGENT_TRACK": "1",
+        "TMC_AGENT_ORIGIN": "interactive",
+        "TMC_AGENT_LAUNCHER_PID": "4018",
+        "TMUX": "/tmp/tmux-1000/default,2016,6",
+        "TMUX_PANE": "%5",
+        "CLAUDE_CODE_SESSION_ID": "8e9f95d2-6bb8-447b-b5a7-843a59a8464b",
+        "CLAUDECODE": "1",
+        "CLAUDE_CODE_CHILD_SESSION": "1",
+        "CLAUDE_PID": "1376242",
+        "AI_AGENT": "claude-code_2-1-220_agent",
+        "WORKFLOW_PROJECT_DIR": "/home/ketan/project/wkflw",
+        "BEADS_NO_DAEMON": "1",
+        "SSH_AUTH_SOCK": "/tmp/ssh-agent.sock",
+        "SSH_AUTH_SOCK_STABLE": "/tmp/ssh-agent-stable.sock",
+        "SOME_UNKNOWN_FUTURE_VAR": "x",
+    }
+
+    NEEDED_VARS = {
+        "PATH": "/usr/bin:/bin",
+        "HOME": "/home/ketan",
+        "ANTHROPIC_API_KEY": "sk-ant-test",
+        "LC_ALL": "en_US.UTF-8",
+    }
+
+    def test_identity_and_credential_vars_are_stripped(self) -> None:
+        child_env = common.build_child_env({**self.LEAKY_VARS, **self.NEEDED_VARS})
+        for name in self.LEAKY_VARS:
+            self.assertNotIn(name, child_env, msg=name)
+
+    def test_needed_vars_survive(self) -> None:
+        child_env = common.build_child_env({**self.LEAKY_VARS, **self.NEEDED_VARS})
+        for name, value in self.NEEDED_VARS.items():
+            self.assertEqual(child_env.get(name), value, msg=name)
+
+    def test_recursion_env_always_forced_on(self) -> None:
+        self.assertEqual(common.build_child_env({})[common.RECURSION_ENV], "1")
+        # Even a caller-supplied falsey value must not survive into the child;
+        # the counterpart always gets a real recursion guard.
+        child_env = common.build_child_env({common.RECURSION_ENV: "0"})
+        self.assertEqual(child_env[common.RECURSION_ENV], "1")
+
+    def test_defaults_to_os_environ(self) -> None:
+        prev = os.environ.get("SOME_UNKNOWN_FUTURE_VAR")
+        os.environ["SOME_UNKNOWN_FUTURE_VAR"] = "leak-me-not"
+        try:
+            self.assertNotIn("SOME_UNKNOWN_FUTURE_VAR", common.build_child_env())
+        finally:
+            if prev is None:
+                os.environ.pop("SOME_UNKNOWN_FUTURE_VAR", None)
+            else:
+                os.environ["SOME_UNKNOWN_FUTURE_VAR"] = prev
+
+
 class BuildCommandTest(unittest.TestCase):
     def test_codex_command_is_read_only_and_has_no_approval_flag(self) -> None:
         cmd = common.build_counterpart_command("claude", last_message_file="/tmp/x")
@@ -575,6 +636,42 @@ class RunCrossIntegrationTest(unittest.TestCase):
         text = files[0].read_text(encoding="utf-8")
         expected = __import__("hashlib").sha256(b"PLAN CONTENT").hexdigest()
         self.assertIn(f"Artifact SHA-256:** {expected}", text)
+
+    def test_leaky_caller_env_does_not_reach_counterpart(self) -> None:
+        # RUN itself is invoked with a polluted environment (as it would be
+        # when spawned as a subprocess of a live interactive claude/codex
+        # session). The counterpart stub must not see any of that identity/
+        # credential state, only what build_child_env allows through.
+        self._install_stub("codex", (
+            "import os, sys\n"
+            "leaked = [n for n in ("
+            "'TMC_AGENT_LAUNCH_ID', 'TMC_AGENT_TOOL', 'TMUX_PANE', "
+            "'CLAUDE_CODE_SESSION_ID', 'CLAUDECODE', 'AI_AGENT', "
+            "'WORKFLOW_PROJECT_DIR', 'SSH_AUTH_SOCK'"
+            ") if n in os.environ]\n"
+            "assert not leaked, f'leaked into counterpart env: {leaked}'\n"
+            + self._codex_stub("VERDICT: clean env")
+        ))
+        env = _clean_env(
+            PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
+            CROSS_CHECK_TMP_ROOT=str(self.out),
+            XDG_CONFIG_HOME=str(self.xdg),
+            TMPDIR=str(self.systmp),
+            TMC_AGENT_LAUNCH_ID="c768c19b-a9af-4e2c-9aff-827e1c27141b",
+            TMC_AGENT_TOOL="claude",
+            TMUX_PANE="%5",
+            CLAUDE_CODE_SESSION_ID="8e9f95d2-6bb8-447b-b5a7-843a59a8464b",
+            AI_AGENT="claude-code_2-1-220_agent",
+            WORKFLOW_PROJECT_DIR="/home/ketan/project/wkflw",
+            SSH_AUTH_SOCK="/tmp/ssh-agent.sock",
+        )
+        proc = subprocess.run(
+            [str(RUN), "--current-runtime", "claude", "--artifact-type", "plan",
+             "--slug", "demo"],
+            input="PLAN CONTENT", capture_output=True, text=True, check=False,
+            cwd=str(self.cwd), env=env,
+        )
+        self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
     def test_recursion_guard_skips(self) -> None:
         self._install_stub("codex", "import sys\nsys.exit(0)\n")
