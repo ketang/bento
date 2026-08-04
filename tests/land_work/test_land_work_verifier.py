@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.script_test_utils import git, run
 
@@ -65,6 +66,13 @@ class LandWorkVerifierTest(unittest.TestCase):
         git(self.worktree, "add", "src/feature.go")
         git(self.worktree, "commit", "-m", "add feature")
         self.head_sha = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        # Isolate the home-scope XDG config path so tests never pick up a
+        # real ~/.config/agent-plugins/bento/bento/land-work/verifier.json.
+        default_xdg = base / "xdg-home"
+        xdg_patch = patch.dict(os.environ, {"XDG_CONFIG_HOME": str(default_xdg)})
+        xdg_patch.start()
+        self.addCleanup(xdg_patch.stop)
 
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
