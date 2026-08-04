@@ -16,6 +16,13 @@ REPO_ROOT = Path(__file__).resolve().parent.parent
 
 CHECKS: list[tuple[str, list[str]]] = [
     ("build-plugins --check", [sys.executable, "scripts/build-plugins", "--check"]),
+    # Plain pytest, not scripts/run-tests-with-skip-policy.py: that script's
+    # expected-skip set assumes a clean CI runner. Run nested inside an
+    # active agent session (the common case for a land-work verifier),
+    # several tests skip for a different, still-legitimate reason (no
+    # spawned claude/codex CLI to avoid inheriting the outer session's auth
+    # state), which would make the skip-policy script fail closed on a
+    # correct candidate. CI keeps the strict skip-policy check separately.
     ("pytest tests", [sys.executable, "-m", "pytest", "tests", "-q"]),
     ("check-cli-arg-parity", [sys.executable, "scripts/check-cli-arg-parity"]),
     ("check-temporal-claims", [sys.executable, "scripts/check-temporal-claims"]),
@@ -27,7 +34,9 @@ def main() -> int:
     overall = "passed"
     for name, cmd in CHECKS:
         print(f"==> {name}", file=sys.stderr)
-        result = subprocess.run(cmd, cwd=REPO_ROOT)
+        # Route child stdout to our stderr so the JSON result below stays
+        # the only thing this script ever writes to stdout.
+        result = subprocess.run(cmd, cwd=REPO_ROOT, stdout=sys.stderr, stderr=sys.stderr)
         status = "passed" if result.returncode == 0 else "failed"
         if status == "failed":
             overall = "failed"
