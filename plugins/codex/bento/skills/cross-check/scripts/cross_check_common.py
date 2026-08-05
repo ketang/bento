@@ -35,7 +35,51 @@ ARTIFACT_TYPES = ("code", "issue", "plan")
 # cross-check installed must not trigger another cross-check on the same artifact.
 RECURSION_ENV = "CROSS_CHECK_ACTIVE"
 
+# The counterpart runtime is supposed to be an independent reviewer, spawned
+# fresh for this one read-only review. It must not inherit the calling
+# session's identity or credentials by accident.
+#
+# This is an ALLOWLIST, not a denylist, deliberately: a denylist has to be
+# updated every time some other tool starts stamping a new identity var into
+# interactive shells (tmc's TMC_AGENT_*, Claude Code's own CLAUDE_CODE_*,
+# ad hoc ones like AI_AGENT/WORKFLOW_PROJECT_DIR/BEADS_NO_DAEMON have all been
+# observed leaking through a naive `{**os.environ}` passthrough). An allowlist
+# only has to name what a bare `claude -p`/`codex exec` invocation actually
+# needs, which is small and stable.
+#
+# Notably absent: SSH_AUTH_SOCK. Neither counterpart needs it — the claude
+# counterpart has no Bash tool (--tools Read,Grep,Glob) and the codex
+# counterpart runs under --sandbox read-only — and it is a live credential
+# (anything that can reach the socket can act as the user's SSH identity),
+# not inert metadata, so it must be opted in deliberately if a future artifact
+# type genuinely needs it, never inherited by default.
+SUBPROCESS_ENV_ALLOWLIST = frozenset({
+    "PATH", "HOME", "USER", "LOGNAME", "SHELL", "TERM", "TMPDIR",
+    "LANG", "TZ",
+    "ANTHROPIC_API_KEY", "ANTHROPIC_AUTH_TOKEN", "ANTHROPIC_BASE_URL",
+    "CLAUDE_CODE_OAUTH_TOKEN",
+    "HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
+    "http_proxy", "https_proxy", "no_proxy", "all_proxy",
+    "SSL_CERT_FILE", "NODE_EXTRA_CA_CERTS",
+})
+
 _SUFFIX_VALID = re.compile(r"[A-Za-z0-9._-]")
+
+
+def build_child_env(env: dict | None = None) -> dict:
+    """Build the counterpart subprocess environment from an allowlist.
+
+    Only SUBPROCESS_ENV_ALLOWLIST entries and LC_* locale vars survive from
+    `env` (default os.environ); RECURSION_ENV is always forced to "1" so the
+    counterpart's own cross-check recursion guard, if installed, engages
+    regardless of what the caller passed in."""
+    env = os.environ if env is None else env
+    child_env = {
+        k: v for k, v in env.items()
+        if k in SUBPROCESS_ENV_ALLOWLIST or k.startswith("LC_")
+    }
+    child_env[RECURSION_ENV] = "1"
+    return child_env
 
 
 def recursion_active(env: dict | None = None) -> bool:
