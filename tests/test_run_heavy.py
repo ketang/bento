@@ -5,7 +5,7 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-RUN_HEAVY = REPO_ROOT / "scripts" / "run-heavy"
+RUN_HEAVY = REPO_ROOT / "catalog" / "skills" / "launch-work" / "scripts" / "run-heavy"
 
 # run-heavy depends on Linux-only facilities (/proc/loadavg) and util-linux's
 # ionice. Skip the whole module cleanly where those are unavailable.

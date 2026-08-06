@@ -218,22 +218,26 @@ hygiene whenever concurrent activity is possible:
 ### Heavy Job Protocol
 
 When running a heavy job — a compiler, linker, full test suite, or bundler on
-a non-trivial codebase — prefix the command with `scripts/run-heavy`:
+a non-trivial codebase — prefix the command with `launch-work/scripts/run-heavy`:
 
 ```bash
-scripts/run-heavy cargo build --release
-scripts/run-heavy scripts/build-plugins
-scripts/run-heavy pnpm build
+launch-work/scripts/run-heavy cargo build --release
+launch-work/scripts/run-heavy scripts/build-plugins
+launch-work/scripts/run-heavy pnpm build
 ```
 
 `run-heavy` waits until the 1-minute load average drops below
 `nproc × HEAVY_LOAD_FACTOR` (default 1.5×), then execs the command under
-`nice -n 10 ionice -c 2 -n 7`. It gives up waiting after `HEAVY_MAX_WAIT`
+`nice -n 10 ionice -c 3`. It gives up waiting after `HEAVY_MAX_WAIT`
 seconds (default 600) and proceeds at low priority regardless.
 
-`scripts/run-heavy` lives in the bento repo root. Run it from the repo root or
-a linked worktree; if it is not on `PATH`, use the path relative to the repo
-root (`scripts/run-heavy <cmd>`).
+`run-heavy` ships as a bundled script inside the `launch-work` skill, so it is
+available in any repo the skill is installed into. Resolve its path relative
+to this `SKILL.md` file, the same way as the other helpers in this skill: if
+you opened `/.../skills/launch-work/SKILL.md`, run
+`/.../skills/launch-work/scripts/run-heavy <cmd>`. It targets the current
+machine's load, not the target repo, so it works the same whether the repo
+being built is bento itself or an unrelated target project.
 
 Heavy jobs: `cargo build/test/clippy`, `rustc`, `scripts/build-plugins`,
 `npm/pnpm/yarn build`, `webpack`, `vite build`, `tsc --build` (large projects),
