@@ -10,16 +10,15 @@ description: Do NOT use to clean up your own active or just-finished work — th
 Closure is a GC pass. It is **not** the cleanup path for the calling agent's
 own work:
 
-- **Just merged your own branch?** Run `land-work` — its post-merge cleanup
-  removes the branch and worktree it owns. Calling closure to delete your own
-  worktree leaves the worktree behind because the helper correctly refuses
-  to delete a recently-active or self-invoked worktree.
-- **Mid-task and want to discard your own work?** Exit the worktree, then use
-  `git worktree remove` and `git branch -D` directly. Closure will not delete
-  a worktree whose call-site is your own agent.
-- **Routine after every task?** No. Closure is for sweeping up state left
-  behind by agents that crashed, were abandoned, or whose `land-work` cleanup
-  did not run. Treat it as periodic GC, not a per-task step.
+- **Just merged your own branch?** Run `land-work`; its post-merge cleanup
+  removes the branch and worktree it owns. Don't reach for closure to tear down
+  your own just-landed worktree.
+- **Mid-task and want to discard your own work?** Exit the worktree, then run
+  `git worktree remove --force` (a dirty worktree refuses a plain remove) and
+  `git branch -D` directly.
+- **Routine after every task?** No. Closure sweeps up state left by agents that
+  crashed, were abandoned, or whose `land-work` cleanup did not run — periodic
+  GC, not a per-task step.
 
 The helper detects self-invocation (your own agent's process tree has a cwd
 inside one of the scanned worktrees) and surfaces a `self_invocation: true`
@@ -32,16 +31,13 @@ liveness inference across worktrees requires careful evidence weighing. A
 mid-tier model is acceptable only for dry-run scanning or tightly supervised
 safe cleanup.
 
-Use this skill when a repo needs a closeout pass over leftover git state from
-prior agent or human work. The most important case is **dead-agent worktrees**:
-worktrees created by agents that have since died, completed, or crashed, which
-may contain landed work, work-in-progress, or uncommitted state from a failed
-run. The presence of uncommitted changes in a worktree is *not* evidence of a
-live agent — a crashed machine or a failed run both leave dirty trees.
+Use this skill when a repo needs a closeout pass over leftover git state. The
+most important case is **dead-agent worktrees** — created by agents that died,
+completed, or crashed — which may hold landed work, work-in-progress, or
+uncommitted state from a failed run.
 
-Keep this skill generic. If the repo config or local conventions indicate a
-specific tracker or primary-branch workflow, open the matching companion doc
-before acting:
+If the repo config or local conventions indicate a specific tracker or
+primary-branch workflow, open the matching companion doc before acting:
 
 - `../land-work/references/workflow-invariants.md` for shared primary-branch wording,
   tracker mutation timing, and linked-worktree cleanup order
@@ -53,8 +49,8 @@ before acting:
 ## Deterministic Helper
 
 This skill includes `closure/scripts/closure-scan.py` for git-state discovery
-and narrow deterministic cleanup actions. Invoke by script path, not
-`python3 <script>`, so approvals stay scoped.
+and deterministic cleanup. Invoke by script path, not `python3 <script>`, so
+approvals stay scoped.
 
 Run the scan first:
 
@@ -63,9 +59,8 @@ closure/scripts/closure-scan.py
 ```
 
 The helper emits a JSON object with the detected primary branch, per-branch
-classification, per-worktree liveness assessment (overnight-aware activity
-timing, session log evidence, live-process detection), stashes, and
-working-tree changes. See `closure/references/helper-output.md` for the
+classification, per-worktree liveness assessment, stashes, and working-tree
+changes. See `closure/references/helper-output.md` for the
 branch-classification enum, liveness-verdict enum, apply-mode cleanup order,
 and recency calculation.
 
@@ -75,67 +70,35 @@ If the user wants the clearly safe local branch cleanup applied:
 closure/scripts/closure-scan.py --apply delete-local-merged-branches
 ```
 
-This apply mode deletes:
-
-- local branches whose classification is `safe_to_delete`
-- linked worktrees attached to `merged_checked_out` branches when the worktree
-  is clean and its liveness verdict is `stale` or `unknown`, then deletes the
-  merged branch after the worktree removal succeeds
-
-For merged, clean, stale-or-unknown linked worktrees, this helper apply mode is
-the approved automatic cleanup path.
-
-### Routine post-landing cleanup for your own branch
-
-Single-target apply mode is **not** the routine cleanup path for the agent
-that just landed its own branch. That agent should run direct cleanup from
-the primary checkout instead:
-
-```bash
-git worktree remove <worktree-path>
-```
-
-```bash
-git branch -d <feature-branch>
-```
-
-`land-work` step 10 prescribes this direct sequence. Closure's liveness gate
-treats a recently-active worktree (yours, just-used) as ineligible for
-automatic deletion, so handing your own just-landed branch to closure
-typically results in a `skipped_actions` entry rather than cleanup.
-
-Single-target apply mode is for stale, ambiguous, or other-agent leftovers —
-a worktree whose owner died, a branch whose merge state needs the helper's
-classification, or a fallback diagnostic when direct cleanup failed and you
-need closure's structured report on why. It is not the routine just-landed
-cleanup path for the active landing agent.
+This deletes `safe_to_delete` branches and removes clean `merged_checked_out`
+worktrees before deleting their branch — the approved automatic cleanup path.
+See `closure/references/helper-output.md` for the full liveness, dirty-tree, and
+self-invocation gates and skip conditions.
 
 ### Single-Target Mode
 
-When another skill needs to clean up a specific stale, ambiguous, or
-other-agent leftover branch, or needs a fallback diagnostic after direct
-cleanup fails, scope the apply pass with `--target-branch`:
+`--target-branch` scopes the apply pass to one named branch — a specific stale,
+ambiguous, or other-agent leftover, or a fallback diagnostic after direct
+cleanup fails:
 
 ```bash
 closure/scripts/closure-scan.py --target-branch <name> --apply delete-local-merged-branches
 ```
 
-The full scan still runs and the JSON output is unchanged in shape, but the
-apply pass operates on the named branch only — other `safe_to_delete` and
-`merged_checked_out` branches are ignored. All safety gates (clean worktree,
-liveness verdict) still apply. If the target branch does not exist locally,
-the helper exits non-zero. If the target exists but is not eligible (wrong
-classification), the helper records a single
-`skipped_actions` entry with the classification in the reason and exits 0; the
-caller decides what to do with that signal.
+The full scan still runs (JSON output shape unchanged), but the apply pass
+touches only the named branch; other `safe_to_delete` and `merged_checked_out`
+branches are ignored. All safety gates (clean worktree, liveness verdict) still
+apply. A target absent locally exits non-zero; one that exists but is ineligible
+records a `skipped_actions` entry (classification in the reason) and exits 0.
 
-Use single-target mode for stale/ambiguous/other-agent leftovers or fallback
-diagnostics — not for the active landing agent's routine cleanup of its own
-just-landed branch (see the section above). Passing `--target-branch` only
-narrows the helper's scan and apply scope; it does not override the
-same-session prohibition for the caller's own active or just-finished
-worktree. The wide-net workflow below is for repo-wide cleanup passes, not for
-single-branch tear-down.
+Single-target mode is **not** the routine cleanup path for the agent that just
+landed its own branch — that is `land-work` step 10's direct cleanup (see
+**When NOT to use**). If you invoke closure from inside your own worktree, its
+self-invocation gate redirects you to `land-work`.
+`--target-branch` narrows scan and apply scope only; it does not override the
+same-session prohibition on the caller's own active or just-finished worktree.
+The wide-net workflow below is for repo-wide passes, not single-branch
+tear-down.
 
 If the user also wants patch-equivalent branches removed (work landed via
 rebase or squash with no merge commit):
@@ -144,12 +107,11 @@ rebase or squash with no merge commit):
 closure/scripts/closure-scan.py --apply delete-local-patch-equivalent-branches
 ```
 
-This apply mode force-deletes local branches whose classification is
-`patch_equivalent_review` — branches with zero unique patches relative to
-primary that are not checked out in any worktree. These branches are not
-reachable ancestors of primary (hence no merge record), so the helper uses
-`git branch -D`. The force delete is safe because `unique_patch_count == 0`
-confirms all content is already on primary.
+This force-deletes patch-equivalent branches (zero unique patches vs primary)
+via `git branch -D`; safe because `unique_patch_count == 0` confirms all content
+is already on primary. For a patch-equivalent branch checked out in a worktree,
+the worktree is removed first under the same safety gates. See
+`closure/references/helper-output.md`.
 
 Everything else remains review-driven.
 
@@ -166,29 +128,16 @@ signal collection:
 closure/scripts/closure-scan.py --correlate-branches
 ```
 
-Off by default — `git cherry` across many branches is slow. Each
-`review_required` branch entry then carries a `correlation` block:
-
-- `issue_id` — extracted from the branch name and confirmed by tracker lookup;
-  `null` if the regex matches noise the tracker does not recognize
-- `cherry_unique_count` / `cherry_equivalent_count` — `git cherry` `+`/`-` lines
-- `main_commits_referencing_issue` — short SHAs on primary whose commit message
-  mentions the issue id (bounded by merge-base date)
-- `tracker_status` — `null`, or the tracker's status string (e.g. `closed`,
-  `open`, `in_progress`)
-- `merge_base_age_days`, `divergence_ahead`, `divergence_behind`
-
-Tracker auto-detection: `.beads/` → beads; else JIRA env vars
-(`JIRA_BASE_URL` + `JIRA_API_TOKEN` + `JIRA_USER_EMAIL`) → jira; else
-`.github/` + `gh` CLI → gh; else none. Override with
-`--tracker {beads,gh,jira,none}`. Override the issue-id regex with
-`--issue-pattern <regex>` when the tracker default does not fit the repo's
-branch convention.
+Off by default (`git cherry` across many branches is slow). Each
+`review_required` branch entry then carries a `correlation` block. See
+`closure/references/helper-output.md` for the correlation field list, tracker
+auto-detection precedence (JIRA needs `JIRA_BASE_URL` + `JIRA_API_TOKEN` +
+`JIRA_USER_EMAIL`), and the `--tracker`/`--issue-pattern` overrides.
 
 #### Decision matrix
 
-The agent applies this matrix per branch. Heuristic deletions are **never**
-batched — present the evidence and the proposed action, then ask the user.
+Apply this matrix per branch. Heuristic deletions are **never** batched —
+present the evidence and proposed action, then ask the user.
 
 | `cherry_unique_count` | `tracker_status` | grep on primary | Proposed action |
 |---|---|---|---|
@@ -200,65 +149,32 @@ batched — present the evidence and the proposed action, then ask the user.
 | > 0 | `open` | hits | Partial overlap. Surface to user; do not delete. |
 | > 0 | `null` | none | No tracker context. Surface to user; do not delete. |
 
-A `0` cherry count corresponds to the existing `patch_equivalent_review`
-classification when the branch is not in a worktree, and the
-`--apply delete-local-patch-equivalent-branches` mode already handles it.
-Correlation is for the `review_required` rows above where deletion remains
-review-driven.
-
-### Branch Classifications
-
-| Classification | Meaning |
-|---|---|
-| `primary` | The primary branch |
-| `safe_to_delete` | Merged into primary; not in any worktree |
-| `merged_checked_out` | Merged into primary; still checked out in a worktree — worktree is a cleanup candidate |
-| `checked_out_in_worktree` | Not yet merged; checked out in a linked worktree — needs investigation |
-| `patch_equivalent_review` | No unique patches vs primary; not in a worktree |
-| `review_required` | Unmerged work not in a worktree |
+A `0` cherry count matches the `patch_equivalent_review` classification (when
+not in a worktree), already handled by
+`--apply delete-local-patch-equivalent-branches`. Correlation covers the
+`review_required` rows above, where deletion stays review-driven.
 
 ### Liveness Verdicts
 
-The `liveness.verdict` field on each worktree is one of:
-
-| Verdict | Meaning |
-|---|---|
-| `confirmed_live` | A process with this worktree as CWD is running now |
-| `possibly_live` | Recent activity AND a session log exists — treat as live |
-| `recently_active` | Recent activity but no corroborating session log |
-| `stale` | Session log exists but activity is old; no live process |
-| `unknown` | No session evidence, no process — only git/file timestamps |
-
-**Important limitation**: an agent blocked waiting for user input may show no
-file or commit activity for many hours while still running. `confirmed_live`
-(live process detected) is the only signal that reliably distinguishes this
-case. All other verdicts are probabilistic.
+See `closure/references/helper-output.md` for the `liveness.verdict` enum and
+its important limitation: an agent blocked waiting for user input can look idle
+for hours, so `confirmed_live` (live process detected) is the only reliable
+liveness signal; every other verdict is probabilistic.
 
 Outside the helper's explicit apply mode, treat `possibly_live`,
 `recently_active`, and `unknown` as review-driven: present the evidence and ask
-the user before manual cleanup. Inside
-`--apply delete-local-merged-branches`, `unknown` is eligible for automatic
-cleanup only when the branch is `merged_checked_out` and the worktree is clean.
-
-### Recency Calculation
-
-The helper calculates `active_seconds_since_activity` using an overnight-aware
-clock that excludes 11pm–8am local time from the elapsed total.  This means
-activity at 10:45pm and a check at 8:15am produces ~30 active minutes, not
-~9.5 hours.  A worktree is considered recently active if
-`active_seconds_since_activity` is under 2 hours (7200 seconds).
-
-Last activity is the maximum of: the HEAD commit timestamp and the mtime of any
-tracked file with uncommitted changes.  Untracked files are excluded.
+before manual cleanup. Inside `--apply delete-local-merged-branches`, `unknown`
+is eligible for automatic cleanup only when the branch is `merged_checked_out`
+and the worktree is clean.
 
 ## Usage
 
 - Invoke `closure` for a full scan of the current repo.
 - Keep the first pass dry-run unless the user explicitly wants cleanup applied.
-- Do not stop at reporting findings from a dry-run scan. End by presenting the
-  safest supported next actions and asking the user to choose one.
-- **Never treat "no safe_to_delete branches" as a complete result when linked
-  worktrees are present.** Worktrees are the primary subject of investigation.
+- End a dry-run pass by presenting the safest supported next actions for the
+  user to choose from. **Never treat "no safe_to_delete branches" as a complete
+  result when linked worktrees are present** — worktrees are the primary
+  subject of investigation.
 
 ## Anti-Rationalization
 
@@ -266,7 +182,7 @@ tracked file with uncommitted changes.  Untracked files are excluded.
 |---|---|
 | "I just landed my own branch; closure can clean up the rest." | `land-work` owns routine cleanup for the active agent's just-landed branch. Closure is for other-agent or stale leftovers, and its self-invocation/liveness gates are expected to reject your own recent worktree. |
 | "The worktree has no live process, so it is safe to delete." | Absence of a live process is not proof of abandonment. An agent may be waiting for user input, and `possibly_live`, `recently_active`, and `unknown` findings remain review-driven outside the helper's explicit apply mode. |
-| "The branch is merged, so I can delete it manually." | Merged branches with linked worktrees still require ordered cleanup through the helper apply mode. Manual `git branch -d`/`-D` commands bypass the helper's classification, liveness, and worktree-order checks. |
+| "The branch is merged, so I can delete it manually during this closure pass." | In a closure GC pass, merged other-agent branches with linked worktrees require ordered cleanup through the helper apply mode; manual `git branch -d`/`-D` here bypasses the helper's classification, liveness, and worktree-order checks. Your own just-landed branch is `land-work` step 10's direct manual cleanup, not a closure pass. |
 | "The tracker item looks done; I can close it during cleanup." | Closure gathers and presents landing evidence, then hands tracker mutation to the tracker workflow skill. Tracker items close only after verified landing on the integration branch. |
 | "This is only a dry-run scan, so I can stop after saying nothing is safe to delete." | A dry-run pass must still account for linked worktrees, stashes, unmerged branches, and next actions. Linked worktrees are the main investigation target, not an optional appendix. |
 
@@ -274,41 +190,36 @@ tracked file with uncommitted changes.  Untracked files are excluded.
 
 1. Run the helper in dry-run mode to detect the primary branch and collect
    structured git state.
-2. If the repo config or local conventions require tracker-aware or
-   primary-branch-sync behavior, open the matching companion doc before acting.
+2. If tracker-aware or primary-branch-sync behavior is required, open the
+   matching companion doc (listed above) before acting.
 3. Fetch remote state if the repo and environment allow it, then inspect local
    and remote divergence where relevant.
-4. Review the helper output and categorize findings (local branches safe to
-   delete, patch-equivalent or unmerged branches needing analysis, linked
-   worktrees, stashes, working-tree changes, stale tracker items). For tracker
-   items, collect the branch/commit/diff/merge evidence that supports either
-   closing the item or leaving it open. Label ambiguous findings using the
-   taxonomy in `closure/references/recommendation-taxonomy.md`.
+4. Review the helper output and categorize findings (branches safe to delete,
+   patch-equivalent or unmerged branches, linked worktrees, stashes,
+   working-tree changes, stale tracker items). For tracker items, collect the
+   branch/commit/diff/merge evidence supporting close or leave-open. Label
+   ambiguous findings using the taxonomy in
+   `closure/references/recommendation-taxonomy.md`.
 5. For each linked worktree, assess liveness and value using the decision tree
    in `closure/references/worktree-triage.md`. Uncommitted state is never
    affirmative liveness evidence.
-6. If a branch appears valuable, complete, and likely ready to land, present
-   the evidence and recommend invoking `land-work` from that feature-branch
-   worktree rather than describing a separate landing procedure here.
-7. If a tracker item appears complete because its work is already landed,
-   present the evidence and hand off to the repo's tracker workflow skill
-   (`beads-issue-flow` or `github-issue-flow`) to close or update it rather
-   than mutating tracker state directly inside `closure`. Follow
+6. If a branch appears valuable, complete, and likely ready to land, hand it
+   off to `land-work` per **Handoffs** below.
+7. If a tracker item's work is already landed, hand it off to the tracker
+   workflow skill per **Handoffs** below. Follow
    `../land-work/references/workflow-invariants.md`: mutate tracker state only
    after the work is verified as landed on the detected primary branch. If the
-   tracker workflow is unclear, stop at evidence and proposed action instead of
-   guessing.
+   tracker workflow is unclear, stop at evidence and proposed action.
 8. Present evidence before any destructive step that falls outside the
    helper's explicit apply mode.
 9. If the user wants safe local branch cleanup, run the helper's apply mode
    and report the deleted branches.
-10. End every dry-run pass with a clear next-step choice for the user: apply
-    safe local branch cleanup, inspect or preserve working-tree changes, hand
-    off a landing-ready branch to `land-work`, hand off a landed tracker item
-    to the tracker workflow skill, or leave everything unchanged. If only one
-    action is justified, present that recommendation and ask for explicit
-    confirmation before applying it.
-11. End at the repository root on the detected primary branch rather than in a
+10. End every dry-run pass with a clear next-step choice: apply safe local
+    branch cleanup, inspect or preserve working-tree changes, hand off to
+    `land-work` or the tracker workflow skill, or leave everything unchanged.
+    If only one action is justified, present it and ask for explicit
+    confirmation before applying.
+11. End at the repository root on the detected primary branch, not in a
     feature-branch worktree.
 
 ## Handoffs
@@ -317,24 +228,19 @@ When `closure` finds work that belongs to another skill, hand off with
 evidence rather than restating that skill's procedure.
 
 **To `land-work`** (branch appears valuable and complete): branch name,
-worktree location, evidence the work is landing-ready, remaining checks or
-open questions, and a direct instruction to invoke `land-work` from that
-feature-branch worktree. Do not restate `land-work`'s rebase,
-lease-verification, or merge procedure here.
+worktree location, evidence the work is landing-ready, and remaining checks or
+open questions; instruct invoking `land-work` from that feature-branch worktree.
 
-**To the tracker workflow skill** (`beads-issue-flow` or `github-issue-flow`)
-when a tracker item's work appears landed: tracker item identifier, correlated
-branch/worktree/commit evidence, whether the recommended action is `close`,
-`update`, or `leave open`, and any uncertainty that still requires human
-review. Tracker-specific skills own the actual mutation.
+**To the tracker workflow skill** (`beads-issue-flow` or `github-issue-flow`,
+when a tracker item's work appears landed): item identifier, correlated
+branch/worktree/commit evidence, the recommended action (`close`, `update`, or
+`leave open`), and any uncertainty needing human review.
 
 ## Output Style
 
-Produce output progressively while scanning and cleaning. Narrate findings by
-phase and ground recommendations in the helper output rather than vague git
-intuition. When the scan remains in dry-run mode, end with a concise, explicit
-next-step choice over an open-ended summary. Confirm the final repo-root,
-primary-branch shell state.
+Produce output progressively while scanning: narrate findings by phase and
+ground recommendations in the helper output, not vague git intuition. Confirm
+the final repo-root, primary-branch shell state.
 
 ## Safety
 
@@ -352,10 +258,13 @@ primary-branch shell state.
 - Do not treat absence of a live process or recent activity as proof that a
   worktree is safe to discard — an agent waiting for input may be idle for
   hours.
-- **Never construct manual `git branch -D` or `git branch -d` commands.** All
-  branch deletion must go through the helper's apply modes
-  (`--apply delete-local-merged-branches` or
-  `--apply delete-local-patch-equivalent-branches`). Manually scripted
-  deletion loops bypass the helper's safety checks.
+- **During a closure GC pass, never construct manual `git branch -D` or
+  `git branch -d` commands.** All branch deletion in a closure pass must go
+  through the helper's apply modes (`--apply delete-local-merged-branches` or
+  `--apply delete-local-patch-equivalent-branches`); manually scripted deletion
+  loops bypass the helper's safety checks. This scopes to closure's sweep of
+  other-agent leftovers and does not override `land-work` step 10, where the
+  agent that just landed its own branch removes its own worktree and runs
+  `git branch -d` directly.
 - **Never combine multiple shell operations in one command** using `&&`, pipes,
   `$(...)`, or inline interpreters. Issue one command per tool call.
