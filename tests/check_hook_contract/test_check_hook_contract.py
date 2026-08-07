@@ -155,6 +155,13 @@ class PythonCheckTest(unittest.TestCase):
         findings = checker.check_python_source(src, FAKE)
         self.assertTrue(any("os.getcwd()" in f.message for f in findings))
 
+    def test_flags_getcwd_after_dotted_submodule_import(self) -> None:
+        """`import os.path` (no `as`) binds the top-level name `os`, not
+        `os.path` — os.getcwd() must still resolve and be flagged."""
+        src = "import os.path\n\n\ndef f(payload):\n    return payload.get('cwd') or os.getcwd()\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("os.getcwd()" in f.message for f in findings))
+
     def test_subscript_payload_cwd_reference_satisfies_check(self) -> None:
         src = (
             "import os\n\n\ndef f(payload):\n"

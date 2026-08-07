@@ -112,8 +112,15 @@ def _collect_import_aliases(tree: ast.AST) -> dict[str, str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Import):
             for alias in node.names:
-                local = alias.asname or alias.name.split(".")[0]
-                aliases[local] = alias.name
+                if alias.asname:
+                    aliases[alias.asname] = alias.name
+                else:
+                    # `import os.path` (no `as`) binds the top-level name
+                    # `os`, not `os.path` — the submodule is only reachable
+                    # as an attribute of that same `os` object, so `os` must
+                    # still resolve to `os`, not to `os.path`.
+                    top = alias.name.split(".")[0]
+                    aliases[top] = top
         elif isinstance(node, ast.ImportFrom):
             if node.module is None:  # relative `from . import x` — not relevant here
                 continue
