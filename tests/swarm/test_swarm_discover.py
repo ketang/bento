@@ -1,18 +1,27 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.script_test_utils import git, run, write
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 SCRIPT = REPO_ROOT / "catalog/skills/swarm/scripts/swarm-discover.py"
+BUNDLED_TEAMMATE_CONFIG = REPO_ROOT / "catalog/skills/swarm/references/config.json"
+TEAMMATE_CONFIG_REL = Path(".agent-plugins/bento/bento/swarm/config.json")
 
 
 class SwarmDiscoverTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
+        self.xdg_config_home = Path(self.temp_dir.name) / "xdg"
+        self.environment = patch.dict(
+            os.environ, {"XDG_CONFIG_HOME": str(self.xdg_config_home)}
+        )
+        self.environment.start()
         self.repo = Path(self.temp_dir.name) / "repo"
         self.repo.mkdir()
         git(self.repo, "init", "-b", "main")
@@ -23,6 +32,7 @@ class SwarmDiscoverTest(unittest.TestCase):
         git(self.repo, "commit", "-m", "initial commit")
 
     def tearDown(self) -> None:
+        self.environment.stop()
         self.temp_dir.cleanup()
 
     def run_discover(self, *args: str, cwd: Path | None = None) -> dict:
@@ -109,6 +119,155 @@ class SwarmDiscoverTest(unittest.TestCase):
     def test_landing_target_defaults_echo_integration_branch(self) -> None:
         payload = self.run_discover()
         self.assertEqual(payload["landing_target"], payload["integration_branch"])
+
+    def test_codex_defaults_to_bundled_inherited_teammate_settings(self) -> None:
+        payload = self.run_discover("--runtime", "codex")
+
+        self.assertIsNone(payload["teammate_model"])
+        self.assertIsNone(payload["teammate_reasoning_effort"])
+        self.assertEqual(
+            payload["teammate_config_path"], str(BUNDLED_TEAMMATE_CONFIG.resolve())
+        )
+
+    def test_codex_repo_teammate_config_overrides_home(self) -> None:
+        home_config = self.xdg_config_home / "agent-plugins/bento/bento/swarm/config.json"
+        repo_config = self.repo / TEAMMATE_CONFIG_REL
+        write(
+            home_config,
+            json.dumps(
+                {
+                    "codex": {
+                        "model": "home-model",
+                        "reasoning_effort": "medium",
+                    }
+                }
+            ),
+        )
+        write(
+            repo_config,
+            json.dumps(
+                {
+                    "codex": {
+                        "model": "repo-model",
+                        "reasoning_effort": "high",
+                    }
+                }
+            ),
+        )
+
+        payload = self.run_discover("--runtime", "codex")
+
+        self.assertEqual(payload["teammate_model"], "repo-model")
+        self.assertEqual(payload["teammate_reasoning_effort"], "high")
+        self.assertEqual(payload["teammate_config_path"], str(repo_config.resolve()))
+
+    def test_codex_home_teammate_config_overrides_bundled_default(self) -> None:
+        home_config = self.xdg_config_home / "agent-plugins/bento/bento/swarm/config.json"
+        write(
+            home_config,
+            json.dumps(
+                {
+                    "codex": {
+                        "model": "home-model",
+                        "reasoning_effort": "low",
+                    }
+                }
+            ),
+        )
+
+        payload = self.run_discover("--runtime", "codex")
+
+        self.assertEqual(payload["teammate_model"], "home-model")
+        self.assertEqual(payload["teammate_reasoning_effort"], "low")
+        self.assertEqual(payload["teammate_config_path"], str(home_config.resolve()))
+
+    def test_non_codex_runtimes_do_not_consume_teammate_config(self) -> None:
+        write(
+            self.repo / TEAMMATE_CONFIG_REL,
+            json.dumps(
+                {
+                    "codex": {
+                        "model": "codex-only-model",
+                        "reasoning_effort": "high",
+                    }
+                }
+            ),
+        )
+
+        for runtime in ("claude", "auto"):
+            with self.subTest(runtime=runtime):
+                payload = self.run_discover("--runtime", runtime)
+                self.assertIsNone(payload["teammate_model"])
+                self.assertIsNone(payload["teammate_reasoning_effort"])
+                self.assertIsNone(payload["teammate_config_path"])
+
+    def test_codex_teammate_config_rejects_invalid_values(self) -> None:
+        repo_config = self.repo / TEAMMATE_CONFIG_REL
+        invalid_cases = (
+            ("malformed JSON", "{", "invalid JSON"),
+            ("non-object root", json.dumps([]), "config root"),
+            ("non-object codex", json.dumps({"codex": []}), "codex"),
+            (
+                "non-string model",
+                json.dumps({"codex": {"model": 5}}),
+                "codex.model",
+            ),
+            (
+                "null model",
+                json.dumps({"codex": {"model": None}}),
+                "codex.model",
+            ),
+            (
+                "empty model",
+                json.dumps({"codex": {"model": " "}}),
+                "codex.model",
+            ),
+            (
+                "non-string reasoning effort",
+                json.dumps({"codex": {"reasoning_effort": False}}),
+                "codex.reasoning_effort",
+            ),
+            (
+                "null reasoning effort",
+                json.dumps({"codex": {"reasoning_effort": None}}),
+                "codex.reasoning_effort",
+            ),
+            (
+                "empty reasoning effort",
+                json.dumps({"codex": {"reasoning_effort": ""}}),
+                "codex.reasoning_effort",
+            ),
+        )
+
+        for label, content, expected_error in invalid_cases:
+            with self.subTest(label=label):
+                write(repo_config, content)
+                result = run(
+                    [str(SCRIPT), "--runtime", "codex"],
+                    self.repo,
+                    check=False,
+                )
+                self.assertNotEqual(result.returncode, 0)
+                self.assertIn(str(repo_config.resolve()), result.stderr)
+                self.assertIn(expected_error, result.stderr)
+
+    def test_codex_teammate_config_ignores_unknown_keys(self) -> None:
+        repo_config = self.repo / TEAMMATE_CONFIG_REL
+        write(
+            repo_config,
+            json.dumps(
+                {
+                    "future_top_level": True,
+                    "codex": {"future_codex_setting": "preserved-for-later"},
+                }
+            ),
+        )
+
+        payload = self.run_discover("--runtime", "codex")
+
+        self.assertIsNone(payload["teammate_model"])
+        self.assertIsNone(payload["teammate_reasoning_effort"])
+        self.assertEqual(payload["teammate_config_path"], str(repo_config.resolve()))
 
 
 if __name__ == "__main__":
