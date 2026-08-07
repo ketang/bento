@@ -35,7 +35,7 @@ their own `hooks.json` and scripts where their hook contracts differ.
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
 | Issue tracking | Beads (`bd`) | Keeps tracker state in-repo and matches the included `beads-issue-flow` workflow |
 | Skill source model | Canonical skills in `catalog/skills/`; generated installable plugins in `plugins/` | Supports both broad and narrow install options without maintaining duplicate skill content |
-| Published Claude plugin set | `bento`, `trackers`, `stacks`, `session-id`, `hygiene`, plus external `bugshot` and `storystore` | Keeps installation overhead low while still allowing narrower opt-in installs; the authoritative list is `.claude-plugin/marketplace.json`. Codex materializes only `bento`, `trackers`, `stacks` (see `plugins/codex/plugin-names.txt`). |
+| Published Claude plugin set | `bento`, `trackers`, `session-id`, `hygiene`, plus external `bugshot` and `storystore` | Keeps installation overhead low while still allowing narrower opt-in installs; the authoritative list is `.claude-plugin/marketplace.json`. Codex materializes only `bento`, `trackers` (see `plugins/codex/plugin-names.txt`). |
 
 ## Registration
 
@@ -197,12 +197,9 @@ Current rationale summary:
 | `closure` | high | Cleanup can discard useful git state despite helper support |
 | `generate-audit` | high | Broad repo inference and tailored audit generation |
 | `github-issue-flow` | low | Narrow procedural issue workflow with explicit commands |
-| `go-pgx-goose` | mid | Stack-specific implementation with migration and fixture risk |
-| `graphql-gqlgen-gql-tada` | mid | Schema and generated-artifact workflow with cross-layer effects |
 | `land-work` | high | High-cost landing and lease validation workflow |
 | `launch-work` | mid | Tracker, branch, and worktree setup with moderate coordination risk |
 | `project-memory` | low | Mostly bounded classification and maintenance work |
-| `react-vite-mantine` | mid | Repo discovery plus frontend behavior and test judgment |
 | `swarm` | high | Parallel triage, overlap prediction, and coordinated landing |
 
 ## Hook format

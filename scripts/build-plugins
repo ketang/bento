@@ -37,7 +37,6 @@ CLAUDE_VALIDATE_CMD = ["claude", "plugin", "validate", "."]
 PLUGIN_ORDER = [
     "bento",
     "trackers",
-    "stacks",
     "session-id",
     "hygiene",
 ]
@@ -101,9 +100,6 @@ PLUGIN_DEFS = {
             "issue-readiness-check",
             "beads-issue-flow",
             "github-issue-flow",
-            "go-pgx-goose",
-            "react-vite-mantine",
-            "graphql-gqlgen-gql-tada",
             "dev-skill",
             "bentobug",
             "code-bloat-sniffer",
@@ -138,37 +134,6 @@ PLUGIN_DEFS = {
             "issue-readiness-check",
             "beads-issue-flow",
             "github-issue-flow",
-        ],
-    },
-    "stacks": {
-        "description": "Stack-specific engineering skills for Go/Postgres, React/Vite/Mantine, and GraphQL",
-        "display_name": "Bento Stacks",
-        "short_description": "Stack-specific implementation guidance",
-        "long_description": (
-            "Bento Stacks gives Codex focused engineering guidance for common Bento implementation "
-            "stacks, including Go with Postgres and Goose, React with Vite and Mantine, and GraphQL "
-            "flows that span server and client codegen."
-        ),
-        "category": "Coding",
-        "capabilities": ["Write"],
-        "keywords": ["go", "postgres", "react", "graphql", "full-stack"],
-        "default_prompts": [
-            "Implement this feature using the existing Go, Postgres, and Goose migration patterns.",
-            "Add a React and Vite UI change that matches the current Mantine conventions in this repo.",
-            "Update this GraphQL flow across schema, server codegen, and client query types safely.",
-        ],
-        "brand_color": "#A24C1A",
-        "palette": {
-            "primary": (162, 76, 26),
-            "secondary": (242, 145, 74),
-            "accent": (255, 220, 123),
-            "background": (23, 14, 10),
-            "surface": (49, 29, 20),
-        },
-        "skills": [
-            "go-pgx-goose",
-            "react-vite-mantine",
-            "graphql-gqlgen-gql-tada",
         ],
     },
     "session-id": {

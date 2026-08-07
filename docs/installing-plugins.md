@@ -36,7 +36,6 @@ The marketplace currently publishes these plugins (authoritative list:
 
 - `bento` for the full Bento skill pack
 - `trackers` for tracker-oriented workflows such as Beads and GitHub Issues
-- `stacks` for stack-specific engineering skills
 - `session-id` for the SessionStart hook that records the Claude Code session id
 - `hygiene` for the SessionStart + Stop hooks that warn about untracked files
 - `bugshot` (sourced from `ketang/bugshot`) for the screenshot review gallery
@@ -53,7 +52,6 @@ Examples:
 ```text
 /plugin install bento@bento
 /plugin install trackers@bento
-/plugin install stacks@bento
 ```
 
 Use one command per plugin you want to install.
@@ -78,7 +76,7 @@ Bento provides two Codex installers:
 - project-scoped: only available inside one repository
 
 Both installers download the published plugin bundles from GitHub, install the
-Codex plugin set (`bento`, `trackers`, `stacks` — the entries in
+Codex plugin set (`bento`, `trackers` — the entries in
 `plugins/codex/plugin-names.txt`), create a timestamped backup before editing
 any existing marketplace file, and safely merge only the Bento entries.
 
@@ -148,7 +146,7 @@ the plugin by name:
 /plugin install bento@bento
 ```
 
-Use the same pattern for `trackers` or `stacks`.
+Use the same pattern for `trackers`.
 
 ## Removing a plugin
 

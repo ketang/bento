@@ -34,7 +34,7 @@ installable plugin directories under `plugins/` with `scripts/build-plugins`.
 This supports both:
 
 - coarse-grained installs such as `bento`
-- narrower installs such as `trackers` and `stacks`
+- narrower installs such as `trackers`
 
 The separation is intentional:
 

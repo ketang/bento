@@ -115,7 +115,6 @@ class BuildPluginsTest(unittest.TestCase):
         plugins_by_name = {p["name"]: p for p in claude_marketplace["plugins"]}
         self.assertIn("trackers", plugins_by_name)
         self.assertEqual(plugins_by_name["trackers"]["version"], versions["trackers"]["version"])
-        self.assertEqual(plugins_by_name["stacks"]["source"], "./plugins/claude/stacks")
         self.assertIn("session-id", plugins_by_name)
 
     @staticmethod
@@ -460,9 +459,6 @@ class BuildPluginsTest(unittest.TestCase):
         skills_dir = self.root / "plugins" / "claude" / "bento" / "skills"
         expected_phrases = {
             "launch-work": "For new work and behavioral changes with feasible automated coverage, use a red/green workflow",
-            "react-vite-mantine": "write or update a component test so it fails before implementing the change",
-            "go-pgx-goose": "write or update the relevant test so it fails before implementing the change",
-            "graphql-gqlgen-gql-tada": "write or update the relevant backend or frontend test so it fails before implementing the change",
         }
 
         for skill_name, expected_phrase in expected_phrases.items():
@@ -803,7 +799,6 @@ class BuildPluginsTest(unittest.TestCase):
         legacy = {
             "bento": "1.0.0",
             "trackers": "1.0.0",
-            "stacks": "1.0.0",
             "session-id": "1.0.0",
             "hygiene": "1.0.0",
         }
@@ -837,7 +832,7 @@ class BuildPluginsTest(unittest.TestCase):
             self.module.bump_patch(before["bento"]["version"]),
         )
         self.assertNotEqual(after["bento"]["content_hash"], before["bento"]["content_hash"])
-        for other in ("trackers", "stacks", "session-id", "hygiene"):
+        for other in ("trackers", "session-id", "hygiene"):
             self.assertEqual(after[other]["version"], before[other]["version"], other)
             self.assertEqual(after[other]["content_hash"], before[other]["content_hash"], other)
 
