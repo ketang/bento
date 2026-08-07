@@ -31,6 +31,7 @@ TEST_CMD = ["python3", "-m", "unittest", "discover", "-s", "tests", "-t", "."]
 VERSION_RE = re.compile(r"^\d+\.\d+\.\d+$")
 CHECK_SKILL_REFS_CMD = ["python3", "scripts/check-skill-refs"]
 CHECK_TEMPORAL_CLAIMS_CMD = ["python3", "scripts/check-temporal-claims"]
+CHECK_HOOK_CONTRACT_CMD = ["python3", "scripts/check-hook-contract"]
 CLAUDE_VALIDATE_CMD = ["claude", "plugin", "validate", "."]
 
 
@@ -912,6 +913,7 @@ def prune_generated_plugin_dirs() -> None:
 def run_verify_commands() -> None:
     subprocess.run(CHECK_SKILL_REFS_CMD, cwd=ROOT_DIR, check=True)
     subprocess.run(CHECK_TEMPORAL_CLAIMS_CMD, cwd=ROOT_DIR, check=True)
+    subprocess.run(CHECK_HOOK_CONTRACT_CMD, cwd=ROOT_DIR, check=True)
     subprocess.run(TEST_CMD, cwd=ROOT_DIR, check=True)
     if os.environ.get("BENTO_SKIP_CLAUDE_VALIDATE") == "1":
         return

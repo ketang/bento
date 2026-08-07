@@ -36,3 +36,6 @@ jobs:
 
       - name: Check for unanchored temporal claims
         run: scripts/check-temporal-claims
+
+      - name: Check hook cwd-from-stdin contract
+        run: scripts/check-hook-contract

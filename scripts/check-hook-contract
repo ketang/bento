@@ -40,8 +40,23 @@ from typing import NamedTuple
 
 EXEMPT_RE = re.compile(r"#\s*hook-cwd-exempt:\s*(\S.*)$")
 
-# Payload `cwd` field reference, e.g. .get("cwd") / ["cwd"] / 'cwd'.
+# Payload `cwd` field reference, e.g. .get("cwd") / ["cwd"] / 'cwd'. Only used
+# for the shell/embedded-python path, where code is scanned with regex rather
+# than parsed; comments are stripped from each line before this is applied so
+# a decoy comment mentioning "cwd" cannot satisfy the check. The Python path
+# uses an AST-based check instead (_references_payload_cwd_ast) so a "cwd"
+# substring in a docstring, comment, or unrelated string literal can't
+# satisfy it either.
 CWD_FIELD_RE = re.compile(r"""['"]cwd['"]""")
+
+# Canonical dotted targets that count as "process CWD" or "$PWD via
+# os.environ" primitives, resolved through import-alias tracking so aliased
+# imports (`from os import getcwd`, `from pathlib import Path as P`,
+# `import os as _os`) are still recognized.
+_GETCWD_TARGETS = {"os.getcwd"}
+_PATH_CWD_TARGETS = {"pathlib.Path.cwd"}
+_ENVIRON_PWD_SUBSCRIPT_TARGETS = {"os.environ"}
+_ENVIRON_PWD_GET_TARGETS = {"os.environ.get"}
 
 # Process-CWD primitives detectable in shell (and inline python) via regex.
 SHELL_PRIMITIVE_RES = [
@@ -83,30 +98,94 @@ def _is_exempt(line: int, lines: list[str], exempt: set[int]) -> bool:
 
 
 def _references_payload_cwd(text: str) -> bool:
-    return bool(CWD_FIELD_RE.search(text))
+    """Shell/embedded-python path: regex over comment-stripped code only."""
+    stripped = "\n".join(line.split("#", 1)[0] for line in text.splitlines())
+    return bool(CWD_FIELD_RE.search(stripped))
+
+
+def _collect_import_aliases(tree: ast.AST) -> dict[str, str]:
+    """Map each locally-bound name to the canonical dotted path it refers to,
+    so `import os as o`, `from os import getcwd`, and
+    `from pathlib import Path as P` all resolve the same as their unaliased
+    forms."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split(".")[0]
+                aliases[local] = alias.name
+        elif isinstance(node, ast.ImportFrom):
+            if node.module is None:  # relative `from . import x` — not relevant here
+                continue
+            for alias in node.names:
+                local = alias.asname or alias.name
+                aliases[local] = f"{node.module}.{alias.name}"
+    return aliases
+
+
+def _resolve_dotted(node: ast.AST, aliases: dict[str, str]) -> str | None:
+    """Resolve a Name/Attribute chain to its canonical dotted path, following
+    import aliases. Returns None for anything else (calls, subscripts, etc.)."""
+    if isinstance(node, ast.Name):
+        return aliases.get(node.id, node.id)
+    if isinstance(node, ast.Attribute):
+        base = _resolve_dotted(node.value, aliases)
+        if base is None:
+            return None
+        return f"{base}.{node.attr}"
+    return None
+
+
+def _constant_str(node: ast.AST | None) -> str | None:
+    if isinstance(node, ast.Constant) and isinstance(node.value, str):
+        return node.value
+    return None
 
 
 def _python_primitive_calls(tree: ast.AST) -> list[tuple[int, str]]:
-    """Return (lineno, label) for each os.getcwd()/Path.cwd() call in an AST."""
+    """Return (lineno, label) for each process-CWD primitive in an AST:
+    os.getcwd(), Path.cwd(), os.environ["PWD"], os.environ.get("PWD") —
+    resolved through import aliases so `from os import getcwd`,
+    `from pathlib import Path as P`, and `import os as o` are all caught."""
+    aliases = _collect_import_aliases(tree)
     found: list[tuple[int, str]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.Call):
-            continue
-        func = node.func
-        if not isinstance(func, ast.Attribute):
-            continue
-        if func.attr == "getcwd":
-            found.append((node.lineno, "os.getcwd()"))
-        elif func.attr == "cwd":
-            base = func.value
-            base_name = None
-            if isinstance(base, ast.Name):
-                base_name = base.id
-            elif isinstance(base, ast.Attribute):
-                base_name = base.attr
-            if base_name in {"Path", "pathlib"}:
+        if isinstance(node, ast.Call):
+            resolved = _resolve_dotted(node.func, aliases)
+            if resolved in _GETCWD_TARGETS:
+                found.append((node.lineno, "os.getcwd()"))
+            elif resolved in _PATH_CWD_TARGETS:
                 found.append((node.lineno, "Path.cwd()"))
+            elif resolved in _ENVIRON_PWD_GET_TARGETS:
+                if node.args and _constant_str(node.args[0]) == "PWD":
+                    found.append((node.lineno, 'os.environ.get("PWD")'))
+        elif isinstance(node, ast.Subscript):
+            resolved = _resolve_dotted(node.value, aliases)
+            if resolved in _ENVIRON_PWD_SUBSCRIPT_TARGETS:
+                if _constant_str(node.slice) == "PWD":
+                    found.append((node.lineno, 'os.environ["PWD"]'))
     return found
+
+
+def _references_payload_cwd_ast(tree: ast.AST) -> bool:
+    """Python path: does the code read a "cwd" key from some object, e.g.
+    `payload["cwd"]` or `payload.get("cwd")`? AST-based so a "cwd" substring
+    in a comment, docstring, or unrelated string literal can't satisfy it —
+    it must actually be used as a subscript key or a `.get()` first arg."""
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Subscript):
+            if _constant_str(node.slice) == "cwd":
+                return True
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr == "get"
+                and node.args
+                and _constant_str(node.args[0]) == "cwd"
+            ):
+                return True
+    return False
 
 
 def check_python_source(text: str, path: Path) -> list[Finding]:
@@ -129,7 +208,7 @@ def check_python_source(text: str, path: Path) -> list[Finding]:
                     f"`# hook-cwd-exempt: <reason>` annotation",
                 )
             )
-    if calls and not _references_payload_cwd(text):
+    if calls and not _references_payload_cwd_ast(tree):
         findings.append(
             Finding(
                 path,

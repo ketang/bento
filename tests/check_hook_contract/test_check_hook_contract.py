@@ -122,6 +122,49 @@ class PythonCheckTest(unittest.TestCase):
         src = "import sys, json\n\n\ndef f():\n    return json.load(sys.stdin).get('tool_input')\n"
         self.assertEqual(checker.check_python_source(src, FAKE), [])
 
+    def test_comment_mentioning_cwd_does_not_satisfy_payload_check(self) -> None:
+        """A decoy comment containing 'cwd' must not satisfy check B — the
+        payload-cwd reference must be real code, not a string anywhere in
+        the file."""
+        src = (
+            "import os\n\n"
+            "# never read cwd from payload, only comment mentions 'cwd'\n"
+            "def f():\n"
+            "    return os.getcwd()\n"
+        )
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("never" in f.message and "cwd" in f.message for f in findings))
+
+    def test_flags_environ_get_pwd(self) -> None:
+        src = "import os\n\n\ndef f(payload):\n    return payload.get('cwd') or os.environ.get('PWD')\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any('os.environ.get("PWD")' in f.message for f in findings))
+
+    def test_flags_environ_subscript_pwd(self) -> None:
+        src = "import os\n\n\ndef f(payload):\n    return payload.get('cwd') or os.environ['PWD']\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any('os.environ["PWD"]' in f.message for f in findings))
+
+    def test_flags_aliased_path_cwd_import(self) -> None:
+        src = "from pathlib import Path as P\n\n\ndef f(payload):\n    return payload.get('cwd') or P.cwd()\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("Path.cwd()" in f.message for f in findings))
+
+    def test_flags_from_os_import_getcwd(self) -> None:
+        src = "from os import getcwd\n\n\ndef f(payload):\n    return payload.get('cwd') or getcwd()\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("os.getcwd()" in f.message for f in findings))
+
+    def test_subscript_payload_cwd_reference_satisfies_check(self) -> None:
+        src = (
+            "import os\n\n\ndef f(payload):\n"
+            "    if 'cwd' in payload:\n"
+            "        return payload['cwd']\n"
+            "    # hook-cwd-exempt: fallback when payload lacks cwd\n"
+            "    return os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
 
 class ShellCheckTest(unittest.TestCase):
     def test_flags_unannotated_pwd(self) -> None:
@@ -150,6 +193,13 @@ class ShellCheckTest(unittest.TestCase):
     def test_comment_only_pwd_not_flagged(self) -> None:
         src = "cwd=$(jq -r .cwd)\n# do not use $PWD here\ndir=$cwd\n"
         self.assertEqual(checker.check_shell_source(src, FAKE_SH), [])
+
+    def test_comment_mentioning_cwd_does_not_satisfy_payload_check(self) -> None:
+        """A decoy comment containing 'cwd' must not satisfy the payload-cwd
+        check for a real $PWD usage with no genuine payload read."""
+        src = 'dir="$PWD"  # totally reads "cwd" from somewhere, trust me\n'
+        findings = checker.check_shell_source(src, FAKE_SH)
+        self.assertTrue(any("never" in f.message for f in findings))
 
 
 if __name__ == "__main__":
