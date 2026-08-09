@@ -6,7 +6,7 @@ pass on the exact merge candidate — regardless of which merge path lands it.
 ## Discover the gate suite
 
 Reuse the discovery approach the stack skills (`go-pgx-goose`,
-`react-vite-mantine`) and `generate-audit`'s `audit-discover.py` use: read the
+`react-vite-mantine`) and `audit`'s `audit-discover.py` use: read the
 repo's actual command surface instead of inventing commands. Check, in priority
 order:
 

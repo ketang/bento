@@ -1,6 +1,6 @@
 ---
 name: audit
-description: Use when a project needs a direct software quality audit: run discovery, inspect relevant risk surfaces, and produce a report-first assessment of correctness, maintainability, tests, docs, workflow, security, and product fit.
+description: Use when a project needs a direct software quality audit - run discovery, inspect relevant risk surfaces, and produce a report-first assessment of correctness, maintainability, tests, docs, workflow, security, and product fit.
 ---
 
 # Audit
@@ -24,7 +24,6 @@ facts before the model starts judging quality:
 - source-of-truth docs and documented command consistency
 - interface, schema, config, workflow, and demo surfaces
 - disabled-test signals, risk hotspots, and static-analysis tool detection
-- documentation command consistency and quality-review inputs
 
 Invoke by script path so approvals stay scoped.
 
@@ -73,8 +72,8 @@ profile.
    environment-mutating, deploy, release, payment, email, migration, or
    production-data commands just because docs mention them.
 7. Use specialized skills when they clearly fit and are available in the
-   runtime. Examples: `code-bloat-sniffer` for removal candidates,
-   `compress-docs` for agent-doc token footprint, story audit or coverage
+   runtime. Examples: `bento:code-bloat-sniffer` for removal candidates,
+   `bento:compress-docs` for agent-doc token footprint, story audit or coverage
    skills when `docs/stories/INDEX.md` exists, Shatter or Refute skills when
    configured, and web-demo maintenance skills when demo/walkthrough surfaces
    exist. Keep the final report unified.
@@ -83,7 +82,7 @@ profile.
    tracker, process, skill, plugin, CI, or repo governance.
 9. If the user wants tracker issues afterward, draft issues from the accepted
    findings only. Before filing or creating each issue, run the repo's issue
-   readiness workflow, including `issue-readiness-check` when available.
+   readiness workflow, including `bento:issue-readiness-check` when available.
 
 ## Audit Modules
 

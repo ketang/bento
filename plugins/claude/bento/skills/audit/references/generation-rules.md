@@ -82,12 +82,14 @@ Rules:
 - Do not require issue creation, commits, or memory edits by default.
 - Do not execute destructive or environment-mutating commands just because
   they appear in docs; prefer safe local verification first.
-- Do not generate a repo-local `audit` skill unless the user explicitly asks
+- Do not generate a repo-local audit skill unless the user explicitly asks
   for legacy generation output.
 
 ## Optional Legacy Draft Skill Structure
 
-When the user explicitly asks for a repo-local `audit` skill, structure that
+When the user explicitly asks for a repo-local audit skill (name it something
+repo-specific such as `project-audit`, never `audit`, so it does not shadow
+`bento:audit`), structure that
 legacy draft as:
 
 1. Purpose and scope
