@@ -28,28 +28,30 @@ This compatibility entrypoint may produce one of these legacy outputs:
 
 ## Deterministic Helper
 
-`generate-audit/scripts/audit-discover.py` collects the deterministic base
-layer of repo facts before shaping any legacy output.
+This entrypoint owns no assets of its own. The helper and reference docs live
+with the `audit` skill; `audit/scripts/audit-discover.py` collects the
+deterministic base layer of repo facts before shaping any legacy output.
 
 ```bash
-generate-audit/scripts/audit-discover.py
+audit/scripts/audit-discover.py
 ```
 
 Use the JSON output as the starting point, then fill gaps using
-`generate-audit/references/discovery-checklist.md`.
+`audit/references/discovery-checklist.md`.
 
 ## Legacy Workflow
 
 1. Confirm the user explicitly wants generated audit material rather than a
    direct report from `audit`.
 2. Run the helper; use its JSON as the deterministic base layer.
-3. Work through `generate-audit/references/discovery-checklist.md` to fill in
+3. Work through `audit/references/discovery-checklist.md` to fill in
    project shape, docs review, interfaces, workflow surfaces, test health,
    risk areas, documentation truthfulness, static analysis, and quality
    standards. Skip surfaces that do not apply.
 4. Select only modules that fit the discovered repo.
 5. Generate the requested legacy output, following
-   `generate-audit/references/generation-rules.md`.
+   `audit/references/generation-rules.md` (see its "Optional Legacy Draft Skill
+   Structure" section).
 6. When a repo-local `audit` skill was generated, commit it and record its
    rationale (see "Committing the Generated Skill").
 

@@ -68,7 +68,6 @@ class BuildPluginsTest(unittest.TestCase):
             claude_bento / "skills" / "build-vs-buy" / "scripts" / "build-vs-buy-discover.py",
             claude_bento / "skills" / "closure" / "scripts" / "closure-scan.py",
             claude_bento / "skills" / "expedition" / "scripts" / "expedition.py",
-            claude_bento / "skills" / "generate-audit" / "scripts" / "audit-discover.py",
             claude_bento / "skills" / "land-work" / "scripts" / "land-work-create-preview.py",
             claude_bento / "skills" / "land-work" / "scripts" / "land-work-prepare.py",
             claude_bento / "skills" / "land-work" / "scripts" / "land-work-run-verifier.py",
