@@ -1,6 +1,6 @@
 # Audit Discovery Checklist
 
-After running `generate-audit/scripts/audit-discover.py`, fill in the gaps
+After running `audit/scripts/audit-discover.py`, fill in the gaps
 the helper cannot infer from file structure. Work through the following
 surfaces; skip any that do not apply to the discovered repo.
 
@@ -79,7 +79,7 @@ For each candidate, propose a minimal fuzz target and suggest:
 
 ## Static Analysis Surface
 
-Read `generate-audit/references/static-analysis-tools.md`. Cross-reference
+Read `audit/references/static-analysis-tools.md`. Cross-reference
 `static_analysis.installed_tools` (tools that will actually run) against
 `static_analysis.applicable_tools` (tools that fit the repo but may be
 absent from `PATH`), note gaps from `missing_by_language` and
@@ -90,7 +90,7 @@ candidates.
 
 ## Quality Standards Binding
 
-Read `generate-audit/references/quality-standards.md`. This governs the code
+Read `audit/references/quality-standards.md`. This governs the code
 quality audit phase. Sample files in `risk_surfaces` first, then highest-
 churn files from
 `git log --format='' --name-only | sort | uniq -c | sort -rn | head -20`,

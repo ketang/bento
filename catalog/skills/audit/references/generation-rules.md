@@ -1,17 +1,17 @@
-# Audit Generation Rules
+# Audit Report Rules
 
 ## Grounding and Shape
 
-- Generate from discovered facts, not assumptions. Prefer the repo's actual
+- Audit from discovered facts, not assumptions. Prefer the repo's actual
   commands and paths over generic examples.
-- Keep the generated audit concise enough to be used repeatedly. Separate
-  generic audit structure from repo-specific bindings. Mark expensive or
-  optional phases clearly.
+- Keep the report concise enough to act on. Separate deterministic facts,
+  model judgment, and human preferences. Mark expensive, skipped, or optional
+  checks clearly.
 - Default to critical evaluation. Keep follow-up actions concrete and
   prioritized in a separate section, distinguishing immediate fixes,
   medium-term improvements, and structural investments.
-- If the repo lacks enough structure to justify a full audit skill, produce
-  a lightweight audit plan instead.
+- If the repo lacks enough structure for a full audit, produce a lightweight
+  report with explicit gaps and recommended next checks.
 
 ## Static Analysis Output
 
@@ -78,14 +78,19 @@ Rules:
 - Do not hardcode Rust, Go, TypeScript, Beads, GitHub, or any specific tool
   unless the repo actually uses it.
 - Do not copy a foreign repo's audit verbatim and swap names.
-- Do not let the generated audit become a giant project SOP dump.
+- Do not let the report become a giant project SOP dump.
 - Do not require issue creation, commits, or memory edits by default.
 - Do not execute destructive or environment-mutating commands just because
   they appear in docs; prefer safe local verification first.
+- Do not generate a repo-local audit skill unless the user explicitly asks
+  for legacy generation output.
 
-## Draft Skill Structure
+## Optional Legacy Draft Skill Structure
 
-When drafting a repo-local `audit` skill, structure it as:
+When the user explicitly asks for a repo-local audit skill (name it something
+repo-specific such as `project-audit`, never `audit`, so it does not shadow
+`bento:audit`), structure that
+legacy draft as:
 
 1. Purpose and scope
 2. Audit phases

@@ -5,8 +5,8 @@ description: Per-tool run commands, output interpretation, and recommendation gu
 
 # Static Analysis Tools
 
-This reference is loaded during audit generation to govern the **static
-analysis** audit phase. For each tool in `static_analysis.installed_tools`,
+This reference is loaded during the audit to govern the **static analysis**
+phase. For each tool in `static_analysis.installed_tools`,
 emit a concrete run block using the template below. For tools in
 `static_analysis.applicable_tools` that are absent from `installed_tools`
 (language fit but not on `PATH`), and for tools in `missing_by_language` and

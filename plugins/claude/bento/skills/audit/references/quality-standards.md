@@ -5,8 +5,8 @@ description: Concrete thresholds and named code smell catalog for the code quali
 
 # Quality Standards
 
-This reference is loaded during audit generation to govern the **code quality**
-audit phase. Apply thresholds as pass/fail criteria. Apply code smells as named
+This reference is loaded during the audit to govern the **code quality** phase.
+Apply thresholds as pass/fail criteria. Apply code smells as named
 patterns to look for when reading sampled files.
 
 ## Concrete Thresholds
