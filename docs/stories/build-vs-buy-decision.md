@@ -5,7 +5,7 @@ slug: build-vs-buy-decision
 status: active
 authority: observed
 change_resistance: medium
-tests_applicable: false
+tests_applicable: true
 locked_sections:
   - Intent
 ---
@@ -36,6 +36,7 @@ An agent is asked to add background job processing to a Go web service. Before w
 
 ## Evidence
 ### Tests
+- `tests/build_vs_buy/test_build_vs_buy_discover.py`
 ### Surface
 - `skill: build-vs-buy`
 ### Docs

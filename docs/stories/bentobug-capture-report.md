@@ -21,7 +21,7 @@ A user notices that the launch-work skill created a worktree at the wrong path. 
 ## Expected Behavior
 - The skill is triggered only when the user explicitly reports a bento bug and provides a substantive note.
 - If the note is empty or vague, the skill asks once for a concrete sentence and stops.
-- The skill infers the target skill from context or asks the user.
+- The skill infers the target skill from context or asks the user at most one disambiguation question per invocation.
 - A structured report block is emitted to chat for the user to confirm.
 - After the user confirms, the report is persisted via the report writer (`bentobug-report.py`), which prints the record `id` and `path`.
 - The skill does not open a tracker issue automatically; it captures a structured report record.
@@ -34,7 +34,8 @@ A user notices that the launch-work skill created a worktree at the wrong path. 
 
 ## Auditable Claims
 - The SKILL.md states the note must be "non-empty and contain at least one concrete claim about observed vs. expected behavior."
-- The SKILL.md states the skill is "independent of telemetry — works with zero telemetry data."
+- The SKILL.md description states: "Independent of telemetry — works with zero telemetry data."
+- The report writer requires `--target` and a `--target-resolution <explicit|inferred>` flag; it exits non-zero with `missing target` when `--target` is absent or empty.
 - The SKILL.md counter-triggers exclude cases where the user merely runs a skill without a bug claim.
 - The SKILL.md "Workflow" persists the confirmed report via `scripts/bentobug-report.py`, which "prints the record `id` and `path` as JSON."
 

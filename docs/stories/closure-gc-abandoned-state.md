@@ -5,7 +5,7 @@ slug: closure-gc-abandoned-state
 status: active
 authority: observed
 change_resistance: medium
-tests_applicable: false
+tests_applicable: true
 locked_sections:
   - Intent
 ---
@@ -16,13 +16,15 @@ locked_sections:
 When a repo accumulates branches, worktrees, and stashes left behind by crashed or abandoned agents, the closure skill performs a safe garbage-collection pass over that orphaned state — without touching the calling agent's own work.
 
 ## Story
-After several agents have run over a week, a repo has five stale worktrees: some from crashed sessions, some from agents whose land-work cleanup never ran. A user invokes closure for a periodic GC pass. The skill dry-runs first, scanning each worktree for liveness signals — recent commits, active processes, recent access times — and surfaces a report of what appears dead. The helper detects that one of the worktrees belongs to the calling agent's own process tree and marks it with `self_invocation: true`, directing the agent to use land-work instead. For the remaining dead worktrees, the agent removes each one in apply mode, deletes its associated branch, and records any uncommitted changes it discarded. After closure completes, the repo's worktree list contains only live work.
+After several agents have run over a week, a repo has five stale worktrees: some from crashed sessions, some from agents whose land-work cleanup never ran. A user invokes closure for a periodic GC pass. The skill dry-runs first, scanning each worktree for liveness signals — recent commits, active processes, recent access times — and surfaces a report of what appears dead. The helper detects that one of the worktrees belongs to the calling agent's own process tree and marks it with `self_invocation: true`, directing the agent to use land-work instead. For the remaining dead worktrees, the agent does not hand-write any removal command: every deletion goes through the helper's apply modes (`--apply delete-local-merged-branches`, `--apply delete-local-patch-equivalent-branches`), which remove the clean merged worktree and its branch in the right order and record any uncommitted changes discarded. The agent ends the pass at the repository root on the primary branch, and the repo's worktree list contains only live work.
 
 ## Expected Behavior
 - The skill dry-runs before applying any destructive action.
 - The helper detects self-invocation and skips the calling agent's own worktree with a directed error.
 - Dead worktrees are identified by liveness inference, not just by branch age.
-- Uncommitted state discarded during cleanup is recorded.
+- Uncommitted state discarded during cleanup is recorded, and is never treated as affirmative liveness evidence.
+- Branch and worktree deletion happens only through the helper's `--apply` modes; the agent never constructs a manual `git branch -D`/`-d` command.
+- The pass ends at the repository root on the detected primary branch, not inside a feature-branch worktree.
 - The skill does not clean up the calling agent's own work — that is land-work's job.
 
 ## Boundaries
@@ -32,11 +34,13 @@ After several agents have run over a week, a repo has five stale worktrees: some
 
 ## Auditable Claims
 - The SKILL.md states: "The helper detects self-invocation … and surfaces a `self_invocation: true` flag plus a pointed apply-mode skip reason directing you to `land-work`."
-- The SKILL.md states: "Treat it as periodic GC, not a per-task step."
+- The SKILL.md describes closure as sweeping up state left by agents whose `land-work` cleanup did not run — "periodic GC, not a per-task step."
+- The SKILL.md Safety rules state: "During a closure GC pass, never construct manual `git branch -D` or `git branch -d` commands." All branch deletion goes through the helper's apply modes.
 - Dry-run mode is required before apply mode per the workflow.
 
 ## Evidence
 ### Tests
+- `tests/closure/test_closure_scan.py`
 ### Surface
 - `skill: closure`
 ### Docs

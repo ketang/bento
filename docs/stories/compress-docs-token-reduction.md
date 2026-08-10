@@ -5,7 +5,7 @@ slug: compress-docs-token-reduction
 status: active
 authority: observed
 change_resistance: low
-tests_applicable: false
+tests_applicable: true
 locked_sections:
   - Intent
 ---
@@ -37,6 +37,7 @@ A CLAUDE.md file has grown to 800 lines over months. Several sections duplicate 
 
 ## Evidence
 ### Tests
+- `tests/compress_docs/test_compress_discover.py`
 ### Surface
 - `skill: compress-docs`
 ### Docs

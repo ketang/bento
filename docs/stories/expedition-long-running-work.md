@@ -5,7 +5,7 @@ slug: expedition-long-running-work
 status: active
 authority: observed
 change_resistance: medium
-tests_applicable: false
+tests_applicable: true
 locked_sections:
   - Intent
 ---
@@ -38,6 +38,7 @@ A user wants to rewrite the bento plugin packaging system — a body of work spa
 
 ## Evidence
 ### Tests
+- `tests/expedition/test_expedition_scripts.py`
 ### Surface
 - `skill: expedition`
 ### Docs

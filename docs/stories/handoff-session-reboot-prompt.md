@@ -5,7 +5,7 @@ slug: handoff-session-reboot-prompt
 status: active
 authority: observed
 change_resistance: low
-tests_applicable: false
+tests_applicable: true
 locked_sections:
   - Intent
 ---
@@ -37,6 +37,7 @@ An agent is deep into a multi-step implementation task when the context window a
 
 ## Evidence
 ### Tests
+- `tests/handoff/test_handoff.py`
 ### Surface
 - `skill: handoff`
 ### Docs
