@@ -379,8 +379,10 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
     direct cleanup that failed for a reason you cannot explain). For your own
     just-landed branch, do not invoke
     `closure/scripts/closure-scan.py --target-branch <name> --apply delete-local-merged-branches` —
-    closure's liveness gate is built around recently-active worktrees and
-    will skip your own.
+    closure is a GC pass over other agents' leftovers, and its liveness gate
+    is not designed to protect your own worktree. Once you have stepped out of
+    it, `self_invocation` is false and `recently_active`/`possibly_live` do not
+    block removal.
 
 ## Non-Negotiable Rules
 
