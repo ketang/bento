@@ -10,7 +10,7 @@
 | `checked_out_in_worktree` | Not yet merged; checked out in a linked worktree — needs investigation |
 | `patch_equivalent_review` | No unique patches vs primary; not in a worktree |
 | `patch_equivalent_checked_out` | No unique patches vs primary; still checked out in a linked worktree — squash/rebase-landing leftover |
-| `review_required` | Unmerged work not in a worktree |
+| `review_required` | Unmerged work not in a worktree, or the current branch (evaluated before merge status) |
 
 ## Liveness Verdicts
 
@@ -68,7 +68,8 @@ Performs two kinds of cleanup:
 - delete `safe_to_delete` local branches immediately
 - remove a linked worktree for a `merged_checked_out` branch, then delete that
   merged branch, when the worktree is clean and its `liveness.verdict` is
-  anything other than `confirmed_live`
+  present and is anything other than `confirmed_live` (a missing assessment,
+  e.g. under `--no-liveness`, blocks removal)
 - example: `merged_checked_out` + clean worktree + `unknown`, `stale`,
   `recently_active`, or `possibly_live` liveness verdict is eligible for
   helper-driven removal in apply mode

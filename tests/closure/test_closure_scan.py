@@ -228,6 +228,53 @@ class WorktreeSafeToRemoveLivenessContractTest(unittest.TestCase):
                 self.assertEqual(reason, f"worktree liveness is {verdict}")
 
 
+class DocumentedEnumCoverageTest(unittest.TestCase):
+    """Every enum value the helper can emit must appear in helper-output.md.
+
+    bento-kfau: patch_equivalent_checked_out was emitted by the script and
+    documented nowhere. This guards both enum tables against that class of
+    drift.
+    """
+
+    DOC = REPO_ROOT / "catalog/skills/closure/references/helper-output.md"
+
+    CLASSIFICATIONS = (
+        "primary",
+        "safe_to_delete",
+        "merged_checked_out",
+        "checked_out_in_worktree",
+        "patch_equivalent_review",
+        "patch_equivalent_checked_out",
+        "review_required",
+    )
+
+    LIVENESS_VERDICTS = (
+        "confirmed_live",
+        "possibly_live",
+        "recently_active",
+        "stale",
+        "unknown",
+    )
+
+    def setUp(self) -> None:
+        self.doc = self.DOC.read_text()
+        self.source = SCRIPT.read_text()
+
+    def test_every_classification_is_documented(self):
+        for value in self.CLASSIFICATIONS:
+            self.assertIn(f"`{value}`", self.doc, f"{value} missing from {self.DOC.name}")
+
+    def test_every_liveness_verdict_is_documented(self):
+        for value in self.LIVENESS_VERDICTS:
+            self.assertIn(f"`{value}`", self.doc, f"{value} missing from {self.DOC.name}")
+
+    def test_documented_classifications_match_the_script(self):
+        # Catches a new classification added to the script without a doc row:
+        # the literal would appear in the source but not in this list.
+        for value in self.CLASSIFICATIONS:
+            self.assertIn(f'"{value}"', self.source, f"{value} no longer emitted by the script")
+
+
 class MergedCheckedOutTest(unittest.TestCase):
     """Tests for the merged_checked_out branch classification."""
 

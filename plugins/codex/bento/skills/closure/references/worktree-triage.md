@@ -11,12 +11,18 @@ failed run, or an agent that wrote files and then died all leave dirty trees.
 ## Decision Tree
 
 - `confirmed_live` → do not touch; note the worktree is actively in use.
-- `possibly_live` or `recently_active` → present the liveness signals to the
-  user and ask before taking any action; the agent may be waiting for input.
-- `stale` or `unknown` with a `merged_checked_out` branch → the useful work is
+- `possibly_live` or `recently_active` → for manual triage, present the
+  liveness signals to the user and ask before taking any action; the agent may
+  be waiting for input. This caution does **not** apply inside
+  `--apply delete-local-merged-branches`, which treats both verdicts as
+  eligible (see next bullet).
+- Any verdict except `confirmed_live` (`stale`, `unknown`, `recently_active`,
+  `possibly_live`) with a `merged_checked_out` branch → the useful work is
   already in primary; recommend removing the worktree. If the worktree is also
   clean, the helper apply mode may remove that linked worktree and then delete
-  the merged branch. This order matches
+  the merged branch — for an already-landed branch, recency reflects only the
+  merging agent's own activity, so it does not block removal. This order
+  matches
   `../../land-work/references/workflow-invariants.md` and avoids detached
   `HEAD` orphans.
 - `stale` or `unknown` with an unmerged branch → investigate commits and diff
