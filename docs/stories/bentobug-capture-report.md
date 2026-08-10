@@ -35,7 +35,7 @@ A user notices that the launch-work skill created a worktree at the wrong path. 
 ## Auditable Claims
 - The SKILL.md states the note must be "non-empty and contain at least one concrete claim about observed vs. expected behavior."
 - The SKILL.md description states: "Independent of telemetry — works with zero telemetry data."
-- The report writer requires `--target` and a `--target-resolution <explicit|inferred>` flag; it exits non-zero with `missing target` when `--target` is absent or empty.
+- The report writer's only argparse-required flag is `--note`. It exits non-zero with `missing target` when `--target` is absent or empty and fewer than two `--candidate` values were supplied, and with `ambiguous target` when two or more candidates were. `--target-resolution` accepts `explicit|inferred` and defaults to `explicit`.
 - The SKILL.md counter-triggers exclude cases where the user merely runs a skill without a bug claim.
 - The SKILL.md "Workflow" persists the confirmed report via `scripts/bentobug-report.py`, which "prints the record `id` and `path` as JSON."
 

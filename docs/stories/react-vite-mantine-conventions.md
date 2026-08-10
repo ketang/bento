@@ -35,6 +35,8 @@ An agent is adding a new settings panel component to a React app. Before writing
 - The SKILL.md prohibits Tailwind unless the repo already uses it, and prohibits hardcoded hex colors.
 - The SKILL.md requires reusing the repo's existing app shell, provider, and theme setup.
 
+- The SKILL.md requires a failing test first: "For new work and behavioral changes with feasible automated coverage, write or update a component test so it fails before implementing the change, then make it pass."
+
 ## Evidence
 ### Tests
 ### Surface

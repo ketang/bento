@@ -1,6 +1,6 @@
 # Intent Story Index
 
-20 stories — generated 2026-07-12T15:26:49Z
+20 stories — generated 2026-08-10T00:00:00Z
 
 - [beads-issue-lifecycle](beads-issue-lifecycle.md) — Beads Issue Lifecycle Management *(active, observed, low)*
 - [bentobug-capture-report](bentobug-capture-report.md) — Bentobug Captures a Structured Bug Report *(active, observed, low)*

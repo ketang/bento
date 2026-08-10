@@ -16,7 +16,7 @@ locked_sections:
 In repos that use GitHub Issues as their tracker, the github-issue-flow skill governs how agents discover, claim, update, and close issues, requiring a completeness precheck before any new issue is filed.
 
 ## Story
-An agent is starting work on a repo that uses GitHub Issues. It runs `gh issue list` to find an issue covering the current task, reads the title and description, and if the repo uses a claim mechanism (label, assignee, or project field) applies it before any implementation. During implementation, the issue carries the active-claim signal. After the merge, the agent applies the Closure Evidence Rule before closing anything: it captures the merge SHA from land-work, confirms with `git merge-base --is-ancestor` that the SHA is an ancestor of the integration branch, and confirms the integration branch is actually pushed by comparing `git rev-parse` against `git ls-remote origin <branch>`. Only then does it close the issue with a comment naming the merge SHA and the branch it landed on. When the agent needs to file a new issue, it invokes issue-readiness-check first and only calls `gh issue create` after receiving `ready: yes`. If work is abandoned without landing, the active-claim signal is cleared rather than the issue closed.
+An agent is starting work on a repo that uses GitHub Issues. It runs `gh issue list` to find an issue covering the current task, reads the title and description, and if the repo uses a claim mechanism (label, assignee, or project field) applies it before any implementation. During implementation, the issue carries the active-claim signal. After the merge, the agent applies the Closure Evidence Rule before closing anything: it captures the merge SHA from land-work, confirms with `git merge-base --is-ancestor` that the SHA is an ancestor of the integration branch, and confirms the integration branch is actually pushed by comparing `git rev-parse` against `git ls-remote origin <branch>`. Only then does it close the issue with a comment naming the merge SHA and the branch it landed on. When the agent needs to file a new issue, it invokes issue-readiness-check first and only calls `gh issue create` after receiving `ready: yes` — or, on `ready: triage-only`, files with the repo's triage marker and the unresolved questions copied into the body. If work is abandoned without landing, the active-claim signal is cleared rather than the issue closed.
 
 ## Expected Behavior
 - The agent inspects the relevant issue before implementation begins.
@@ -33,10 +33,10 @@ An agent is starting work on a repo that uses GitHub Issues. It runs `gh issue l
 - Does not close issues based on another skill's handoff without independently verifying landing evidence.
 
 ## Auditable Claims
-- The SKILL.md states: "Before `gh issue create`, use the `issue-readiness-check` skill."
+- The SKILL.md states: "Before `gh issue create`, use the `issue-readiness-check` skill on the proposed title and body."
 - The SKILL.md states: "Do not close the issue when branch work is merely complete."
 - The SKILL.md defines a "Closure Evidence Rule" requiring an ancestry check and a pushed-branch check before `gh issue close`.
-- The `gh` CLI is the documented interface for all GitHub Issues mutations.
+- The SKILL.md "Common Commands" section documents the `gh` invocations used for listing, claiming, commenting on, and closing issues.
 
 ## Evidence
 ### Tests

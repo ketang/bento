@@ -35,6 +35,8 @@ An agent is about to add a new database table to a Go service. Before writing an
 - The SKILL.md code conventions require `%w` for error wrapping, `context.Context` first, and no `init()` globals.
 - The SKILL.md database conventions prohibit SQL string interpolation unconditionally.
 
+- The SKILL.md requires a failing test first: "For new work and behavioral changes with feasible automated coverage, write or update the relevant test so it fails before implementing the change, then make it pass before running the broader verification gates."
+
 ## Evidence
 ### Tests
 ### Surface

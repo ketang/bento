@@ -35,7 +35,7 @@ A developer renames a button from "Submit" to "Save changes" and updates the rou
 ## Auditable Claims
 - The SKILL.md states: "Update only the drifted pieces" — scope is explicitly bounded.
 - The SKILL.md states: "Do not hide demo failures by deleting assertions."
-- Headless verification is a documented required step before reporting completion.
+- The SKILL.md workflow states: "Run the demo headless for verification. Run visible only when needed to inspect timing, controller behavior, or human-observable flow."
 - The SKILL.md "Warning-Queue Contract Migration" section requires migrating installed contracts that still match queued failures only against an "existing open or in-progress bug".
 
 ## Evidence

@@ -27,12 +27,12 @@ An agent is asked to add background job processing to a Go web service. Before w
 
 ## Boundaries
 - Does not implement the chosen option; it only recommends.
-- Does not apply to trivial changes that do not constitute "substantial new functionality."
+- Does not apply when one of the three documented Skip Conditions holds: the user explicitly says to build from scratch, the user explicitly names the dependency or service to adopt, or repo policy or architecture docs mandate one option.
 - Treats unknown constraints as questions, not assumptions.
 
 ## Auditable Claims
 - `build-vs-buy/scripts/build-vs-buy-discover.py` accepts a `--feature` flag and emits JSON with repo shape, incumbents, and deployment signals.
-- The SKILL.md states: "the default is to research build vs buy first, not to assume a build-from-scratch path."
+- The SKILL.md states: "The default is to research build vs buy first, not to assume a build-from-scratch path."
 
 ## Evidence
 ### Tests

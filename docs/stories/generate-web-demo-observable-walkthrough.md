@@ -33,7 +33,6 @@ A team wants to show a new onboarding flow to stakeholders and also have agents 
 ## Boundaries
 - Does not create a parallel harness if the repo already has an equivalent browser automation stack.
 - Does not hide demo failures by deleting assertions.
-- Does not substitute for functional test coverage.
 
 ## Auditable Claims
 - The SKILL.md "Required Contract" enumerates eleven required demo components, including the canonical scenario, visible/headless paths, assertions, screenshots, deterministic data and startup, a project-native entry point, a stable artifact directory, warning-queue emission, the visible-run controller overlay, and maintenance notes tying the demo to overlapping functional tests.
@@ -49,3 +48,4 @@ A team wants to show a new onboarding flow to stakeholders and also have agents 
 ### Docs
 - `catalog/skills/generate-web-demo/SKILL.md`
 - `catalog/skills/generate-web-demo/references/warning-queue.md`
+- `catalog/skills/generate-web-demo/assets/playwright-controller/controller.js`

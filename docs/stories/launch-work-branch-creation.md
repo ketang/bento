@@ -16,7 +16,7 @@ locked_sections:
 When an agent is about to make any code or file edit, launch-work creates an isolated branch and linked worktree so the work never touches the primary branch directly.
 
 ## Story
-An agent receives a task — fix a bug, add a skill, update docs. Before touching a single file, the launch-work skill fires. It reads the repo's local instructions to find the documented branch and worktree conventions, optionally claims a tracker issue, then runs the bootstrap helper in dry-run mode to preview the branch name and worktree path. Once the agent confirms the target is correct, it re-runs with `--apply` to materialize the branch and linked worktree. It then symlinks the primary checkout's untracked `.claude/settings.json` files into the new worktree, runs any project `pre` lifecycle extension hooks, and bootstraps dependencies. From that point forward, all edits happen inside the isolated worktree — starting with a committed failing test before any implementation — with the primary branch left untouched until land-work is invoked.
+An agent receives a task — fix a bug, add a skill, update docs. Before touching a single file, the launch-work skill fires. It reads the repo's local instructions to find the documented branch and worktree conventions, optionally claims a tracker issue, then runs the bootstrap helper in dry-run mode to preview the branch name and worktree path. Once the agent confirms the target is correct, it re-runs with `--apply` to materialize the branch and linked worktree. It then symlinks the primary checkout's `.claude/settings.json` and `.claude/settings.local.json` into the new worktree — but only those that are untracked there, since a linked worktree contains only git-tracked files — runs any project `pre` lifecycle extension hooks, and bootstraps dependencies. From that point forward, all edits happen inside the isolated worktree; where automated coverage is feasible, a failing test is committed before the implementation. The primary branch is left untouched until land-work is invoked.
 
 ## Expected Behavior
 - The skill is invoked before any edit to files inside the repository working tree, even trivial ones; writes to `/tmp`, scratch space, and agent memory directories are exempt.
@@ -26,10 +26,11 @@ An agent receives a task — fix a bug, add a skill, update docs. Before touchin
 - If a tracker issue exists, it is claimed or updated to the active-work status.
 - Dry-run output is shown before `--apply` is used.
 - Project `pre` lifecycle extension hooks run after worktree verification; a hook exiting 75 halts for human handoff.
-- Implementation begins only after a failing test is committed (red/green gate).
+- For new work or a behavioral change with feasible automated coverage, a failing test is committed before implementation; where coverage is infeasible, that is stated explicitly rather than skipped silently.
+- Dependencies are bootstrapped in the new worktree before implementation begins.
 
 ## Boundaries
-- Does not perform product-code edits itself; workspace setup is limited to creating the worktree and symlinking the primary checkout's `.claude/` settings into it.
+- Does not perform product-code edits itself; its own writes are limited to workspace setup — creating the branch and worktree, symlinking the primary checkout's untracked `.claude/` settings files, and installing dependencies.
 - Does not apply to tracker-only mutations (creating, updating, or closing issues without touching files), or to out-of-tree outputs such as `/tmp`, scratch files, and agent memory directories.
 - Does not handle landing; that is land-work's responsibility.
 

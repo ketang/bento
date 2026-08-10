@@ -32,7 +32,8 @@ An agent is adding a new field to a GraphQL type. Before touching any file, the 
 
 ## Auditable Claims
 - The SKILL.md states: "Use repo-local commands and conventions when they exist. Treat the baseline workflow in this skill as a fallback, not as the default source of truth."
-- The backend workflow documented in the SKILL.md follows: edit schema → run gqlgen → implement resolvers → update frontend schema artifacts.
+- The SKILL.md "Backend Workflow" has four steps: edit the schema files, run the repo's gqlgen generation step, implement the generated resolver stubs, and wire any new resolver dependencies through the repo's existing resolver root or dependency injection path. Updating the generated frontend schema artifacts is a separate "Schema Sync" step, not part of the backend workflow.
+- The SKILL.md "Verification" section states: "For new work and behavioral changes with feasible automated coverage, write or update the relevant backend or frontend test so it fails before implementing the change, then make it pass."
 
 ## Evidence
 ### Tests
