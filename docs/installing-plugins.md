@@ -159,6 +159,15 @@ the same `<plugin-name>@bento` name you used during installation:
 /plugin uninstall bento@bento
 ```
 
+The `stacks` plugin was removed in `bento` 2.0.0, along with the
+`go-pgx-goose`, `react-vite-mantine`, and `graphql-gqlgen-gql-tada` skills it
+carried. It is no longer published, so an existing install will not be updated
+or removed for you. If you installed it previously, uninstall it explicitly:
+
+```text
+/plugin uninstall stacks@bento
+```
+
 ## Hooks ship inside plugins
 
 Lifecycle hooks are bundled into the generated plugins, so installing a plugin
