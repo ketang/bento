@@ -39,7 +39,7 @@ class CodexInstallerTest(unittest.TestCase):
         actual_sources = {
             entry["name"]: entry["source"]["path"]
             for entry in marketplace["plugins"]
-            if entry.get("name") in {"bento", "trackers", "stacks", "session-id", "bugshot"}
+            if entry.get("name") in {"bento", "trackers", "hygiene", "session-id", "bugshot"}
         }
 
         self.assertEqual(
@@ -47,7 +47,7 @@ class CodexInstallerTest(unittest.TestCase):
             {
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
-                "stacks": "./../../plugins/stacks",
+                "hygiene": "./../../plugins/hygiene",
                 "session-id": "./../../plugins/session-id",
             },
         )
@@ -78,7 +78,7 @@ class CodexInstallerTest(unittest.TestCase):
         actual_sources = {
             entry["name"]: entry["source"]["path"]
             for entry in marketplace["plugins"]
-            if entry.get("name") in {"bento", "trackers", "stacks", "session-id", "bugshot"}
+            if entry.get("name") in {"bento", "trackers", "hygiene", "session-id", "bugshot"}
         }
 
         self.assertEqual(
@@ -86,13 +86,13 @@ class CodexInstallerTest(unittest.TestCase):
             {
                 "bento": "./../../plugins/bento",
                 "trackers": "./../../plugins/trackers",
-                "stacks": "./../../plugins/stacks",
+                "hygiene": "./../../plugins/hygiene",
                 "session-id": "./../../plugins/session-id",
             },
         )
         self.assertFalse((plugin_root / "bugshot").exists())
         self.assertTrue((plugin_root / "trackers" / ".codex-plugin" / "plugin.json").exists())
-        self.assertTrue((plugin_root / "stacks" / ".codex-plugin" / "plugin.json").exists())
+        self.assertTrue((plugin_root / "hygiene" / ".codex-plugin" / "plugin.json").exists())
         self.assertTrue((plugin_root / "session-id" / ".codex-plugin" / "plugin.json").exists())
         self.assertFalse(codex_cache_root.exists())
         self.assertFalse(codex_config_path.exists())
@@ -288,7 +288,7 @@ class CodexInstallerTest(unittest.TestCase):
         plugin_defs = {
             "bento": "Coding",
             "trackers": "Productivity",
-            "stacks": "Coding",
+            "hygiene": "Coding",
             "session-id": "Productivity",
         }
         for name, category in plugin_defs.items():

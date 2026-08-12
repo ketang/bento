@@ -1,6 +1,6 @@
 # Intent Story Index
 
-20 stories — generated 2026-08-10T00:00:00Z
+17 stories — generated 2026-08-10T00:00:00Z
 
 - [beads-issue-lifecycle](beads-issue-lifecycle.md) — Beads Issue Lifecycle Management *(active, observed, low)*
 - [bentobug-capture-report](bentobug-capture-report.md) — Bentobug Captures a Structured Bug Report *(active, observed, low)*
@@ -12,13 +12,10 @@
 - [generate-audit-repo-playbook](generate-audit-repo-playbook.md) — Generate Audit Produces a Repo-Specific Audit Playbook *(active, observed, low)*
 - [generate-web-demo-observable-walkthrough](generate-web-demo-observable-walkthrough.md) — Generate Web Demo Creates an Observable Browser Walkthrough *(active, observed, medium)*
 - [github-issue-lifecycle](github-issue-lifecycle.md) — GitHub Issue Lifecycle Management *(active, observed, low)*
-- [go-pgx-goose-stack-conventions](go-pgx-goose-stack-conventions.md) — Go pgx Goose Discovers Stack Conventions Before Editing *(active, observed, low)*
-- [graphql-gqlgen-tada-schema-change](graphql-gqlgen-tada-schema-change.md) — GraphQL Stack Discovers Codegen Workflow Before Schema Changes *(active, observed, low)*
 - [handoff-session-reboot-prompt](handoff-session-reboot-prompt.md) — Handoff Writes a Session Reboot Prompt *(active, observed, low)*
 - [issue-readiness-check-fresh-review](issue-readiness-check-fresh-review.md) — Issue Readiness Check Validates Before Filing *(active, observed, medium)*
 - [land-work-merge-and-cleanup](land-work-merge-and-cleanup.md) — Land Work Merges Branch and Cleans Up *(active, observed, medium)*
 - [launch-work-branch-creation](launch-work-branch-creation.md) — Launch Work Creates Branch and Worktree *(active, observed, medium)*
 - [maintain-web-demo-sync-after-change](maintain-web-demo-sync-after-change.md) — Maintain Web Demo Syncs Demo After Product Changes *(active, observed, medium)*
 - [project-memory-durable-knowledge](project-memory-durable-knowledge.md) — Project Memory Captures and Maintains Durable Repo Knowledge *(active, observed, low)*
-- [react-vite-mantine-conventions](react-vite-mantine-conventions.md) — React Vite Mantine Discovers Conventions Before Component Edits *(active, observed, low)*
 - [swarm-parallel-task-batching](swarm-parallel-task-batching.md) — Swarm Batches and Executes Parallel Tasks *(active, observed, medium)*
