@@ -156,6 +156,17 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         git(task_worktree, "add", "task.txt")
         git(task_worktree, "commit", "-m", "add kept task result")
 
+        # A dry run rebases nothing, so it has no post-rebase tree to judge and
+        # must report null rather than a false all-clear.
+        preview = json.loads(
+            self.run_close(
+                "--expedition", "alpha-expedition", "--branch", start["target_branch"],
+                "--outcome", "kept", "--summary", "kept task",
+                cwd=base_worktree,
+            ).stdout
+        )
+        self.assertIsNone(preview["reverify_required"])
+
         result = self.run_close(
             "--expedition",
             "alpha-expedition",
@@ -171,6 +182,10 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertTrue(payload["updated"])
         self.assertTrue(payload["merged"])
         self.assertTrue(payload["rebased"])
+        # Base did not advance between start-task and close, so the rebase was a
+        # no-op and prior verification is not stale.
+        self.assertFalse(payload["reverify_required"])
+        self.assertEqual(payload["warnings"], [])
 
         state = self.read_state(base_worktree)
         self.assertEqual(state["status"], "ready_for_task")
@@ -356,16 +371,32 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         git(b_worktree, "add", "b.txt")
         git(b_worktree, "commit", "-m", "add b")
 
-        self.run_close(
+        close_a = json.loads(self.run_close(
             "--expedition", "alpha-expedition", "--branch", start_a["target_branch"],
             "--outcome", "kept", "--summary", "A", "--apply",
             cwd=base_worktree,
-        )
-        self.run_close(
+        ).stdout)
+        # First close rebases onto an unchanged base: no-op, not stale.
+        self.assertFalse(close_a["reverify_required"])
+
+        close_b = json.loads(self.run_close(
             "--expedition", "alpha-expedition", "--branch", start_b["target_branch"],
             "--outcome", "kept", "--summary", "B", "--apply",
             cwd=base_worktree,
-        )
+        ).stdout)
+        # task-b was cut from the original base; closing task-a advanced the base,
+        # so task-b's rebase rewrites the branch and prior verification is stale.
+        self.assertTrue(close_b["rebased"])
+        self.assertTrue(close_b["reverify_required"])
+        self.assertTrue(any("stale" in w for w in close_b["warnings"]))
+
+        # The verdict must survive the session: it is persisted to state.json and
+        # steers next_action away from "launch the next branch".
+        state = self.read_state(base_worktree)
+        self.assertTrue(state["reverify_required"])
+        self.assertIn("Re-run the expedition verification gates", str(state["next_action"]))
+        handoff = (base_worktree / "docs" / "expeditions" / "alpha-expedition" / "handoff.md").read_text()
+        self.assertIn("Re-run the expedition verification gates", handoff)
 
         # After both land, both files exist on base.
         self.assertTrue((base_worktree / "a.txt").exists())
