@@ -156,6 +156,17 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         git(task_worktree, "add", "task.txt")
         git(task_worktree, "commit", "-m", "add kept task result")
 
+        # A dry run rebases nothing, so it has no post-rebase tree to judge and
+        # must report null rather than a false all-clear.
+        preview = json.loads(
+            self.run_close(
+                "--expedition", "alpha-expedition", "--branch", start["target_branch"],
+                "--outcome", "kept", "--summary", "kept task",
+                cwd=base_worktree,
+            ).stdout
+        )
+        self.assertIsNone(preview["reverify_required"])
+
         result = self.run_close(
             "--expedition",
             "alpha-expedition",
@@ -378,6 +389,14 @@ class ExpeditionWorkScriptsTest(unittest.TestCase):
         self.assertTrue(close_b["rebased"])
         self.assertTrue(close_b["reverify_required"])
         self.assertTrue(any("stale" in w for w in close_b["warnings"]))
+
+        # The verdict must survive the session: it is persisted to state.json and
+        # steers next_action away from "launch the next branch".
+        state = self.read_state(base_worktree)
+        self.assertTrue(state["reverify_required"])
+        self.assertIn("Re-run the expedition verification gates", str(state["next_action"]))
+        handoff = (base_worktree / "docs" / "expeditions" / "alpha-expedition" / "handoff.md").read_text()
+        self.assertIn("Re-run the expedition verification gates", handoff)
 
         # After both land, both files exist on base.
         self.assertTrue((base_worktree / "a.txt").exists())

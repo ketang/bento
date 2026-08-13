@@ -89,7 +89,7 @@ the following subcommands:
     the currently active task worktree
 - `expedition/scripts/expedition.py close-task --expedition <name> [--branch <name>] --outcome kept|failed-experiment --summary <text>`
   - for kept branches: acquire the landing lease, rebase the branch onto the current base tip, merge into the base, release the lease; for failed experiments: preserve the branch and release the lease
-  - when the rebase pulls new base code under the task (any base change outside `docs/expeditions/`), the helper reports `reverify_required: true` with a warning: verification the task ran before the rebase is stale, so re-run the expedition verification gates on the post-merge base tip
+  - with `--apply`, when the rebase pulls new base code under the task (any base change outside `docs/expeditions/`), the helper reports `reverify_required: true` with a warning: verification the task ran before the rebase is stale, so re-run the expedition verification gates on the post-merge base tip. The verdict is also persisted to `state.json` and written into `next_action`, so it survives a handoff or a fresh session. Without `--apply` nothing is rebased and `reverify_required` is `null`, which is not an all-clear.
 - `expedition/scripts/expedition.py finish --expedition <name>`
   - verify that the expedition is ready for final landing and remove the
     branch-local expedition files before the last linear merge to the primary branch

@@ -99,6 +99,7 @@ def init_state(expedition: str, primary_branch: str, base_worktree: Path) -> dic
         "landing_lease": None,
         "last_completed": None,
         "preserved_experiments": [],
+        "reverify_required": False,
         "next_action": "Create the first task branch from the expedition base branch.",
         "created_at": now,
         "updated_at": now,

@@ -9,6 +9,7 @@ import sys
 from pathlib import Path
 
 from expedition_state import (
+    EXPEDITIONS_ROOT,
     ExpeditionStateError,
     append_log_entry,
     commit_expedition_docs,
@@ -41,6 +42,7 @@ from git_state import (
     is_linked_worktree,
     parse_worktrees,
     ref_exists,
+    try_git_stdout,
 )
 
 
@@ -337,17 +339,32 @@ def cmd_close_task(args: argparse.Namespace) -> int:
     try:
         result, state = _close_task_evaluate(args, cwd)
     except ExpeditionStateError as exc:
-        return _emit({"ok": False, "errors": [str(exc)], "updated": False, "merged": False}, 1)
+        return _emit(
+            {
+                "ok": False, "errors": [str(exc)], "updated": False, "merged": False,
+                "reverify_required": None, "warnings": [],
+            },
+            1,
+        )
 
     if args.apply and not result["ok"]:
-        return _emit({**result, "updated": False, "merged": False}, 1)
+        return _emit(
+            {
+                **result, "updated": False, "merged": False,
+                "reverify_required": None, "warnings": [],
+            },
+            1,
+        )
 
     merged = False
     rebased = False
     updated = False
-    reverify_required = False
+    # null outside apply mode: a dry run does not rebase, so it has no post-rebase
+    # tree to judge staleness against and must not read as an "all clear".
+    reverify_required: bool | None = None
     warnings: list[str] = []
     if args.apply:
+        reverify_required = False
         active_list = list(state.get("active_branches") or [])
         if args.branch:
             target = next((item for item in active_list if item["branch"] == args.branch), None)
@@ -369,20 +386,30 @@ def cmd_close_task(args: argparse.Namespace) -> int:
             # prior verification stale is code the base gained that the task was
             # never verified against — any base change outside docs/expeditions/,
             # which is coordinator-only and removed at final landing.
-            pre_rebase_head = git("rev-parse", "HEAD", cwd=target_worktree_path).stdout.strip()
-            base_tip = git("rev-parse", str(state["base_branch"]), cwd=target_worktree_path).stdout.strip()
-            fork_point = git(
-                "merge-base", pre_rebase_head, base_tip,
-                cwd=target_worktree_path, check=False,
-            ).stdout.strip()
-            base_changed_files = git(
-                "diff", "--name-only", fork_point, base_tip,
-                cwd=target_worktree_path, check=False,
-            ).stdout.splitlines()
-            base_moved_code = any(
-                line.strip() and not line.startswith("docs/expeditions/")
-                for line in base_changed_files
+            # Every probe below is check=False and fails safe: the landing lease
+            # is already held at this point, so an exception here would abort the
+            # process with the lease stuck. When the comparison cannot be made,
+            # assume the base moved and demand re-verification.
+            pre_rebase_head = try_git_stdout("rev-parse", "HEAD", cwd=target_worktree_path)
+            base_tip = try_git_stdout("rev-parse", str(state["base_branch"]), cwd=target_worktree_path)
+            fork_point = (
+                try_git_stdout("merge-base", pre_rebase_head, base_tip, cwd=target_worktree_path)
+                if pre_rebase_head and base_tip
+                else None
             )
+            if not fork_point:
+                base_moved_code = True
+            else:
+                docs_prefix = f"{EXPEDITIONS_ROOT.as_posix()}/"
+                base_changed_files = git(
+                    "-c", "core.quotePath=false",
+                    "diff", "--name-only", fork_point, base_tip,
+                    cwd=target_worktree_path, check=False,
+                ).stdout.splitlines()
+                base_moved_code = any(
+                    line.strip() and not line.startswith(docs_prefix)
+                    for line in base_changed_files
+                )
             rebase_task = git(
                 "rebase", str(state["base_branch"]),
                 cwd=target_worktree_path, check=False,
@@ -396,6 +423,7 @@ def cmd_close_task(args: argparse.Namespace) -> int:
                 commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed rebase for {target['branch']}")
                 payload = {
                     **result, "ok": False, "updated": False, "merged": False, "rebased": False,
+                    "reverify_required": reverify_required, "warnings": warnings,
                     "errors": [f"failed to rebase {target['branch']} onto {state['base_branch']}: {rebase_task.stderr.strip()}"],
                 }
                 return _emit(payload, rebase_task.returncode)
@@ -424,7 +452,11 @@ def cmd_close_task(args: argparse.Namespace) -> int:
                 state["landing_lease"] = None
                 write_state(state_file, state)
                 commit_expedition_docs(cwd, str(state["expedition"]), f"chore(expedition): release landing lease after failed merge for {target['branch']}")
-                payload = {**result, "ok": False, "updated": False, "merged": False, "rebased": rebased, "errors": [merge_result.stderr.strip()]}
+                payload = {
+                    **result, "ok": False, "updated": False, "merged": False, "rebased": rebased,
+                    "reverify_required": reverify_required, "warnings": warnings,
+                    "errors": [merge_result.stderr.strip()],
+                }
                 return _emit(payload, merge_result.returncode)
             merged = True
 
@@ -447,18 +479,37 @@ def cmd_close_task(args: argparse.Namespace) -> int:
             state["status"] = "ready_for_task"
         state["next_task_number"] = max(int(state["next_task_number"]), int(target["number"]) + 1)
         state["updated_at"] = utc_now()
-        state["next_action"] = "Create the next task branch from the expedition base branch."
+        # The staleness verdict must survive the session that produced it. A
+        # handoff or compaction between this close and the next launch would
+        # otherwise drop the stdout warning and read "create the next branch"
+        # off an unverified base — the exact failure this detection prevents.
+        state["reverify_required"] = bool(reverify_required)
+        if reverify_required:
+            state["next_action"] = (
+                "Re-run the expedition verification gates on the base branch tip: "
+                f"{target['branch']} was rebased onto an advanced {state['base_branch']}, "
+                "so its pre-rebase verification is stale. Do not launch further branches "
+                "or start final landing until the gates pass on this tree."
+            )
+        else:
+            state["next_action"] = "Create the next task branch from the expedition base branch."
         state["landing_lease"] = None
         write_state(state_file, state)
+        log_details = [
+            f"Branch: `{target['branch']}`.",
+            f"Outcome: `{args.outcome}`.",
+            f"Summary: {args.summary}",
+            "Experiment preserved without merging." if args.outcome == "failed-experiment" else "Task merged into base branch.",
+        ]
+        if reverify_required:
+            log_details.append(
+                "Re-verification required: the rebase pulled new base code under the task, "
+                "so verification gathered before the rebase is stale."
+            )
         append_log_entry(
             log_path(cwd, str(state["expedition"])),
             f"Closed {target['kind']}",
-            [
-                f"Branch: `{target['branch']}`.",
-                f"Outcome: `{args.outcome}`.",
-                f"Summary: {args.summary}",
-                "Experiment preserved without merging." if args.outcome == "failed-experiment" else "Task merged into base branch.",
-            ],
+            log_details,
         )
         sync_markdown_views(cwd, state)
         commit_expedition_docs(cwd, str(state["expedition"]), f"log(expedition): close {target['branch']} ({args.outcome})")
