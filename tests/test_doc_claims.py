@@ -231,6 +231,8 @@ class BeadsCodexBlockStaysMinimal(unittest.TestCase):
 
     MAX_WORDS = 40
 
+    SKIP_REASON = "Activate when bento-jdg minimizes the Beads block; see bento-0p1"
+
     def _block_words(self) -> int:
         text = read("AGENTS.md")
         m = re.search(
@@ -241,7 +243,7 @@ class BeadsCodexBlockStaysMinimal(unittest.TestCase):
         assert m, "BEADS CODEX SETUP markers not found in AGENTS.md"
         return len(m.group(1).split())
 
-    @unittest.skip("Activate when bento-jdg minimizes the Beads block; see bento-0p1")
+    @unittest.skip(SKIP_REASON)
     def test_block_under_word_budget(self) -> None:
         self.assertLessEqual(
             self._block_words(),

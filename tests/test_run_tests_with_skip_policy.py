@@ -54,11 +54,18 @@ class DiffSkipsTest(unittest.TestCase):
         self.assertEqual(self.mod._diff_skips(actual), [])
 
     def test_doc_claims_word_budget_skip_is_registered(self) -> None:
-        # bento-qi34: this skip was previously absent from EXPECTED_SKIPS.
+        # bento-qi34: this skip was previously absent from EXPECTED_SKIPS. A
+        # bare assertIn would pass even if the registered reason were wrong,
+        # so also check it matches the source-of-truth constant.
+        from tests.test_doc_claims import BeadsCodexBlockStaysMinimal
+
         test_id = (
             "tests.test_doc_claims.BeadsCodexBlockStaysMinimal.test_block_under_word_budget"
         )
         self.assertIn(test_id, self.mod.EXPECTED_SKIPS)
+        self.assertIn(
+            BeadsCodexBlockStaysMinimal.SKIP_REASON, self.mod.EXPECTED_SKIPS[test_id]
+        )
 
     def test_unknown_test_id_is_reported(self) -> None:
         actual = dict(self.baseline)
@@ -83,6 +90,25 @@ class DiffSkipsTest(unittest.TestCase):
 
     def test_exact_expected_set_has_no_problems(self) -> None:
         self.assertEqual(self.mod._diff_skips(self.baseline), [])
+
+    def test_nested_agent_session_reason_matches_e2e_utils_source_of_truth(self) -> None:
+        # bento-qi34 finding 2: the reason is imported, not hand-copied, so
+        # this passes by construction -- guards against a future refactor
+        # reintroducing a hand-copied duplicate that can silently drift.
+        from tests.e2e_utils import NESTED_AGENT_SESSION_SKIP_REASON
+
+        self.assertEqual(self.mod._NESTED_AGENT_SESSION_REASON, NESTED_AGENT_SESSION_SKIP_REASON)
+
+    def test_swarm_codex_integration_setup_skip_reason_is_registered(self) -> None:
+        # bento-qi34 finding 3: this test has two skip paths -- the class
+        # decorator (RUN_CODEX_INTEGRATION unset) and a setUp() skipTest when
+        # the codex CLI is missing. Both reasons must be registered or the
+        # gate fails closed with RUN_CODEX_INTEGRATION=1 set but no codex CLI.
+        test_id = (
+            "tests.swarm.test_swarm_codex_integration."
+            "SwarmCodexIntegrationTest.test_codex_exec_resume_preserves_thread_id_and_state_root"
+        )
+        self.assertIn("codex CLI not installed", self.mod.EXPECTED_SKIPS[test_id])
 
 
 if __name__ == "__main__":

@@ -8,9 +8,11 @@ skip nobody added to the allowlist. Reasons are a set, not a single string,
 because some e2e tests skip with different reasons depending on the runner:
 "zolem and claude must both be on PATH" when the CLI is missing, but
 "running nested inside an active Claude Code or Codex agent session ..."
-when an agent runs the suite with the CLI present. Shared by CI
-(.github/workflows/ci.yml) and the land-work project verifier
-(scripts/land-work-verifier.py) so both gate on the same policy.
+when an agent runs the suite with the CLI present. Used by CI
+(.github/workflows/ci.yml). The land-work project verifier
+(scripts/land-work-verifier.py) deliberately runs plain `pytest tests`
+instead, not this script, to avoid failing closed on the agent-session skip
+reasons this script now also accepts -- see the comment there.
 """
 from __future__ import annotations
 
@@ -19,12 +21,10 @@ import unittest
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO_ROOT))
 
-_NESTED_AGENT_SESSION_REASON = (
-    "running nested inside an active Claude Code or Codex agent session; a "
-    "spawned claude/codex CLI would inherit conflicting auth state from the "
-    "outer session"
-)
+from tests.e2e_utils import NESTED_AGENT_SESSION_SKIP_REASON as _NESTED_AGENT_SESSION_REASON
+from tests.test_doc_claims import BeadsCodexBlockStaysMinimal as _BeadsCodexBlockStaysMinimal
 
 EXPECTED_SKIPS = {
     (
@@ -69,14 +69,17 @@ EXPECTED_SKIPS = {
     (
         "tests.swarm.test_swarm_codex_integration."
         "SwarmCodexIntegrationTest.test_codex_exec_resume_preserves_thread_id_and_state_root"
-    ): {"set RUN_CODEX_INTEGRATION=1 to run Codex CLI integration tests"},
+    ): {
+        "set RUN_CODEX_INTEGRATION=1 to run Codex CLI integration tests",
+        "codex CLI not installed",
+    },
     (
         "tests.telemetry.test_bash_telemetry_hook_e2e."
         "BashTelemetryHookE2ETest.test_hook_records_bash_event"
     ): {"zolem and claude must both be on PATH", _NESTED_AGENT_SESSION_REASON},
     (
         "tests.test_doc_claims.BeadsCodexBlockStaysMinimal.test_block_under_word_budget"
-    ): {"Activate when bento-jdg minimizes the Beads block; see bento-0p1"},
+    ): {_BeadsCodexBlockStaysMinimal.SKIP_REASON},
     (
         "tests.test_require_worktree_hook_e2e."
         "RequireWorktreeHookE2ETest.test_allowed_on_feature_branch"
