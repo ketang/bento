@@ -77,6 +77,21 @@ is a recommendation gap:
 For each candidate, propose a minimal fuzz target and suggest:
 `go test -fuzz=FuzzX -fuzztime=30s ./path/to/package`
 
+## Control Integrity
+
+Read `audit/references/control-integrity.md`. Three absence-focused surfaces:
+
+- **Config failure mode** - enumerate config keys and env vars from
+  `interface_surfaces` plus the settings/env loaders, then record what each one
+  does when absent or empty. Fail-open defaults are findings.
+- **Gate integrity** - take documented gates from
+  `documentation_analysis.command_consistency`, run the safe local ones on a
+  clean tree, and classify each as failed, skipped, or advisory.
+- **Agent-instruction integrity** - resolve `@import` and rules paths in
+  `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` transitively, and check that hook
+  commands registered in `.claude/settings*.json` exist and are not silent
+  no-ops.
+
 ## Static Analysis Surface
 
 Read `audit/references/static-analysis-tools.md`. Cross-reference

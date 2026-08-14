@@ -64,7 +64,8 @@ profile.
 4. Work through `audit/references/discovery-checklist.md` to fill the helper's
    gaps. Read `audit/references/static-analysis-tools.md` and
    `audit/references/quality-standards.md` before static-analysis and code
-   quality phases.
+   quality phases, and `audit/references/control-integrity.md` before the
+   configuration, gate, and agent-instruction phases.
 5. Select audit modules from the list below. Include only modules that match
    the discovered repo; secrets scanning is never optional.
 6. Run safe local verification commands when they are relevant and available.
@@ -115,6 +116,24 @@ Include only modules that fit the discovered repo:
   configured mutation-testing command and report surviving mutants per package,
   not a percentage; each surviving mutant in a risk-surface function is
   `warning`; run this module after test-coverage gap module)
+- **configuration failure mode** (always include when the repo reads any config
+  key or env var; build the absence table per `control-integrity.md`. Absence
+  or emptiness that selects a permissive mode by inference, treats an empty
+  allowlist as allow-all, falls through to a less-private backend, makes a
+  verification gate skip, or turns an unset bound into "unlimited" is `error`;
+  absence that only degrades functionality is `warning`)
+- gate integrity (include when the repo documents gate commands; run them on a
+  clean checkout per `control-integrity.md`. Standard gate red on the primary
+  branch, a gate that skips silently when its tool is absent, and a threshold
+  documented as required but enforced nowhere are each `error`; documented gate
+  behavior the recipe does not perform is `warning`)
+- agent-instruction integrity (cheap; include for any repo with agent config.
+  Resolve `@import`/rules chains transitively: dangling or 0-byte import, and a
+  rules directory that is a 0-byte file or unpopulated submodule pointer, are
+  `error`; a registered hook whose command is absent is `error`, and a wrapper
+  that silently exits 0 when its external binary is missing is `warning`.
+  Overlaps the `agent-env-doctor` SessionStart hook by design - that hook is the
+  always-on layer, this module is the periodic sweep)
 - documentation coverage (exported/public symbol coverage)
 - documentation hygiene (automated) - run markdownlint, lychee, and typos on
   any repo with `*.md` files; distinct from the model-based "documentation
@@ -179,6 +198,10 @@ instead of inflating severity.
 - Do not bury systemic causes. If a finding points to a bad workflow, missing
   guardrail, or skill/plugin defect, route that meta finding separately from the
   immediate code symptom.
+
+See `audit/references/control-integrity.md` for how to build the config-absence
+table, run documented gates and classify failed vs skipped vs advisory, and
+resolve `@import` chains.
 
 See `audit/references/generation-rules.md` for grounding, static-analysis
 output format, code-quality sampling, coverage handling, documentation-finding
