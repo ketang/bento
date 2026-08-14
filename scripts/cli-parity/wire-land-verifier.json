@@ -1,0 +1,28 @@
+{
+  "invocations": [
+    {
+      "doc": "SKILL.md",
+      "command": "wire-land-verifier/scripts/wire-land-verifier.py discover",
+      "script": "scripts/wire-land-verifier.py",
+      "subcommand": "discover"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "wire-land-verifier/scripts/wire-land-verifier.py draft --check 'NAME::COMMAND' [--check ...]",
+      "script": "scripts/wire-land-verifier.py",
+      "subcommand": "draft"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "wire-land-verifier/scripts/wire-land-verifier.py validate",
+      "script": "scripts/wire-land-verifier.py",
+      "subcommand": "validate"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "wire-land-verifier/scripts/wire-land-verifier.py apply",
+      "script": "scripts/wire-land-verifier.py",
+      "subcommand": "apply"
+    }
+  ]
+}

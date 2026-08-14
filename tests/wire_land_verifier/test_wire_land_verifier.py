@@ -79,9 +79,10 @@ class DiscoverTest(WireLandVerifierTestBase):
 
     def test_discover_never_writes_anything(self) -> None:
         write(self.repo / "Makefile", "ci:\n\techo ci\n")
+        before = git(self.repo, "status", "--porcelain").stdout
         self.wire("discover")
         self.assertFalse((self.repo / MANIFEST_REL).exists())
-        self.assertEqual(git(self.repo, "status", "--porcelain").stdout.strip(), "")
+        self.assertEqual(git(self.repo, "status", "--porcelain").stdout, before)
 
     def test_empty_repo_reports_no_candidates_without_failing(self) -> None:
         payload = self.payload(self.wire("discover"))
