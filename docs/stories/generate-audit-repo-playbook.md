@@ -45,9 +45,6 @@ A team is onboarding a new agent and wants a repeatable audit procedure for thei
 ## Evidence
 ### Tests
 - `tests/audit/test_audit_discover.py`
-### Surface
-- `skill: generate-audit`
-- `skill: audit`
 ### Docs
 - `catalog/skills/generate-audit/SKILL.md`
 - `catalog/skills/audit/SKILL.md`

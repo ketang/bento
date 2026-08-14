@@ -42,7 +42,5 @@ A user notices that the launch-work skill created a worktree at the wrong path. 
 ## Evidence
 ### Tests
 - `tests/bentobug/test_bentobug_report.py`
-### Surface
-- `skill: bentobug`
 ### Docs
 - `catalog/skills/bentobug/SKILL.md`

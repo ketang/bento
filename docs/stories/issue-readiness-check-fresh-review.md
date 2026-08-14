@@ -38,7 +38,5 @@ An agent has diagnosed a bug in the land-work skill's worktree cleanup path and 
 
 ## Evidence
 ### Tests
-### Surface
-- `skill: issue-readiness-check`
 ### Docs
 - `catalog/skills/issue-readiness-check/SKILL.md`

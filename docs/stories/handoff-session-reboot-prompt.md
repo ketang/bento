@@ -39,7 +39,5 @@ An agent is deep into a multi-step implementation task when the context window a
 ## Evidence
 ### Tests
 - `tests/handoff/test_handoff.py`
-### Surface
-- `skill: handoff`
 ### Docs
 - `catalog/skills/handoff/SKILL.md`

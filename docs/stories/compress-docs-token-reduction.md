@@ -38,7 +38,5 @@ A CLAUDE.md file has grown to 800 lines over months. Several sections duplicate 
 ## Evidence
 ### Tests
 - `tests/compress_docs/test_compress_discover.py`
-### Surface
-- `skill: compress-docs`
 ### Docs
 - `catalog/skills/compress-docs/SKILL.md`

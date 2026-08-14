@@ -42,9 +42,6 @@ A team wants to show a new onboarding flow to stakeholders and also have agents 
 
 ## Evidence
 ### Tests
-### Surface
-- `skill: generate-web-demo`
-- `cli: make demo`
 ### Docs
 - `catalog/skills/generate-web-demo/SKILL.md`
 - `catalog/skills/generate-web-demo/references/warning-queue.md`

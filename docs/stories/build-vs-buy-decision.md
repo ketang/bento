@@ -37,7 +37,5 @@ An agent is asked to add background job processing to a Go web service. Before w
 ## Evidence
 ### Tests
 - `tests/build_vs_buy/test_build_vs_buy_discover.py`
-### Surface
-- `skill: build-vs-buy`
 ### Docs
 - `catalog/skills/build-vs-buy/SKILL.md`

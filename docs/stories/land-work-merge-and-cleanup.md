@@ -50,8 +50,6 @@ An agent finishes implementation on a feature branch, all required checks have p
 - `tests/land_work/test_land_work_scripts.py`
 - `tests/land_work/test_land_work_verifier.py`
 - `tests/land_work/test_land_work_root_hygiene.py`
-### Surface
-- `skill: land-work`
 ### Docs
 - `catalog/skills/land-work/SKILL.md`
 - `catalog/skills/land-work/references/project-verifier.md`
