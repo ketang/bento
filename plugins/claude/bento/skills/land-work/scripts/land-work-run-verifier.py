@@ -214,7 +214,7 @@ def main() -> int:
             [
                 "no verifier manifest configured but the candidate has a nonempty "
                 "relevant diff; create a verifier manifest at "
-                f"{required}",
+                f"{required} — the bento:wire-land-verifier skill scaffolds it",
             ],
         )
 
