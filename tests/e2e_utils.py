@@ -34,6 +34,13 @@ def _have(cmd: str) -> bool:
     return shutil.which(cmd) is not None
 
 
+NESTED_AGENT_SESSION_SKIP_REASON = (
+    "running nested inside an active Claude Code or Codex agent "
+    "session; a spawned claude/codex CLI would inherit "
+    "conflicting auth state from the outer session"
+)
+
+
 def _nested_in_agent_session() -> bool:
     """True if running inside an active Claude Code or Codex agent session.
 
@@ -63,11 +70,7 @@ class E2ETestCase(unittest.TestCase):
 
     def setUp(self) -> None:
         if _nested_in_agent_session():
-            self.skipTest(
-                "running nested inside an active Claude Code or Codex agent "
-                "session; a spawned claude/codex CLI would inherit "
-                "conflicting auth state from the outer session"
-            )
+            self.skipTest(NESTED_AGENT_SESSION_SKIP_REASON)
         self.tmp = tempfile.TemporaryDirectory()
         self.root = Path(self.tmp.name).resolve()
         self.zolem_log_path = self.root / "zolem.log"
