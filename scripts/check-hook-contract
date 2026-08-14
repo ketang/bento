@@ -174,15 +174,73 @@ def _python_primitive_calls(tree: ast.AST) -> list[tuple[int, str]]:
     return found
 
 
+def _is_literal_container(node: ast.AST) -> bool:
+    """A dict/list/set/tuple/constant literal — never a payload object."""
+    return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.Tuple, ast.Constant))
+
+
+def _literal_only_names(tree: ast.AST) -> set[str]:
+    """Names whose every observed binding in the file is a literal
+    dict/list/set/tuple/constant (e.g. `DEFAULTS = {'cwd': '/tmp'}`), and
+    that are never also a function/lambda parameter. A `.get("cwd")` or
+    `["cwd"]` read against one of these names is a decoy: it can't be
+    reading the real stdin payload, since the object was hardcoded in
+    source rather than parsed from input."""
+    param_names: set[str] = set()
+    literal_names: set[str] = set()
+    dynamic_names: set[str] = set()
+
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = node.args
+            for arg in (*args.posonlyargs, *args.args, *args.kwonlyargs):
+                param_names.add(arg.arg)
+            if args.vararg:
+                param_names.add(args.vararg.arg)
+            if args.kwarg:
+                param_names.add(args.kwarg.arg)
+        elif isinstance(node, ast.Assign):
+            targets = [t for t in node.targets if isinstance(t, ast.Name)]
+            for target in targets:
+                if _is_literal_container(node.value):
+                    literal_names.add(target.id)
+                else:
+                    dynamic_names.add(target.id)
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            if isinstance(node.target, ast.Name):
+                if _is_literal_container(node.value):
+                    literal_names.add(node.target.id)
+                else:
+                    dynamic_names.add(node.target.id)
+
+    return literal_names - dynamic_names - param_names
+
+
 def _references_payload_cwd_ast(tree: ast.AST) -> bool:
     """Python path: does the code read a "cwd" key from some object, e.g.
     `payload["cwd"]` or `payload.get("cwd")`? AST-based so a "cwd" substring
     in a comment, docstring, or unrelated string literal can't satisfy it —
-    it must actually be used as a subscript key or a `.get()` first arg."""
+    it must actually be used as a subscript key or a `.get()` first arg.
+
+    Also filters decoys where the target object is provably not a payload:
+    a name whose every binding in the file is a hardcoded literal (dict,
+    list, set, tuple, or constant) rather than something parsed from input.
+    A `.get("cwd")`/`["cwd"]` against any other kind of object (a function
+    parameter, a name assigned from a call or attribute access, or a bare
+    attribute/call expression) is accepted, since proving it genuinely
+    traces back to the stdin payload would require full data-flow analysis;
+    this stays a lightweight, one-pass check."""
+    literal_only = _literal_only_names(tree)
+
+    def _base_name(node: ast.AST) -> str | None:
+        return node.id if isinstance(node, ast.Name) else None
+
     for node in ast.walk(tree):
         if isinstance(node, ast.Subscript):
             if _constant_str(node.slice) == "cwd":
-                return True
+                base = _base_name(node.value)
+                if base is None or base not in literal_only:
+                    return True
         elif isinstance(node, ast.Call):
             func = node.func
             if (
@@ -191,7 +249,9 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
                 and node.args
                 and _constant_str(node.args[0]) == "cwd"
             ):
-                return True
+                base = _base_name(func.value)
+                if base is None or base not in literal_only:
+                    return True
     return False
 
 

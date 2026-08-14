@@ -162,6 +162,57 @@ class PythonCheckTest(unittest.TestCase):
         findings = checker.check_python_source(src, FAKE)
         self.assertTrue(any("os.getcwd()" in f.message for f in findings))
 
+    def test_literal_dict_cwd_read_does_not_satisfy_payload_check(self) -> None:
+        """bento-5ea5: check B was object-blind — it accepted ANY .get("cwd")
+        anywhere in the file, even against a hardcoded literal that can't be
+        the stdin payload. This must now be flagged."""
+        src = (
+            "import os\n\n"
+            "DEFAULTS = {'cwd': '/tmp/fallback'}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS.get('cwd')\n"
+            "    # hook-cwd-exempt: intentional\n"
+            "    return os.getcwd()\n"
+        )
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("never" in f.message and "cwd" in f.message for f in findings))
+
+    def test_dict_literal_subscript_cwd_does_not_satisfy_payload_check(self) -> None:
+        src = (
+            "import os\n\n"
+            "DEFAULTS = {'cwd': '/tmp/fallback'}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS['cwd']\n"
+            "    # hook-cwd-exempt: intentional\n"
+            "    return os.getcwd()\n"
+        )
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("never" in f.message and "cwd" in f.message for f in findings))
+
+    def test_dynamic_indirection_through_local_variable_satisfies_check(self) -> None:
+        """A name derived from a call (not a literal) still satisfies check B
+        even without proving it traces back to the payload — this mirrors
+        real hooks like record-bash.py, where the object read is a local
+        variable built from a wrapper call, not the payload variable itself."""
+        src = (
+            "import os\n\n\n"
+            "def f(payload):\n"
+            "    tool_input = _mapping(payload.get('tool_input'))\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return tool_input.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+    def test_module_level_json_load_assignment_satisfies_check(self) -> None:
+        src = (
+            "import json, os, sys\n\n"
+            "hook_input = json.load(sys.stdin)\n\n\n"
+            "def f():\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return hook_input.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
     def test_subscript_payload_cwd_reference_satisfies_check(self) -> None:
         src = (
             "import os\n\n\ndef f(payload):\n"
