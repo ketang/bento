@@ -50,7 +50,12 @@ MAX_IMPORT_DEPTH = 8
 # Recognized .agent-mode.local keys. Data-driven so a new opt-out only needs
 # an entry here to stop reading as an "unknown token".
 RECOGNIZED_AGENT_MODE_KEYS = frozenset(
-    {"require_worktree", "hygiene_check", "agent_env_doctor"}
+    {
+        "require_worktree",
+        "hygiene_check",
+        "agent_env_doctor",
+        "agent_env_doctor_skip_plugin",
+    }
 )
 
 # @import tokens: an "@" at line start or after whitespace, then a path token.

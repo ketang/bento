@@ -88,6 +88,14 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
         )
         self.assertIsNone(self._evaluate())
 
+    def test_skip_plugin_key_recognized(self) -> None:
+        # agent_env_doctor_skip_plugin has no effect here (Codex runs no
+        # dormant-plugin check), but it must not read as an unknown key.
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshot\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
     def test_suppression_flag_silences_doctor(self) -> None:
         (self.repo / "AGENTS.md").write_text("@nope.md\n", encoding="utf-8")
         (self.repo / ".agent-mode.local").write_text(

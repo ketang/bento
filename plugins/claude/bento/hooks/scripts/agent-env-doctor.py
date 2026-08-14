@@ -15,7 +15,9 @@ non-blocking warnings into the session context. Four checks:
      on an absent external binary (so it silently exits 0) is flagged.
   3. Installed plugins whose hard-trigger precondition is unmet get an
      "installed but dormant" nudge, driven by a data table so new plugins
-     register their own precondition.
+     register their own precondition. A repo can mark specific plugins as
+     inapplicable via 'agent_env_doctor_skip_plugin' without disabling any
+     other check.
   4. .agent-mode.local, if present, contains only recognized key=value
      lines; unknown tokens are flagged.
 
@@ -47,7 +49,12 @@ MAX_IMPORT_DEPTH = 8
 # Recognized .agent-mode.local keys. Data-driven so a new opt-out only needs
 # an entry here to stop reading as an "unknown token".
 RECOGNIZED_AGENT_MODE_KEYS = frozenset(
-    {"require_worktree", "hygiene_check", "agent_env_doctor"}
+    {
+        "require_worktree",
+        "hygiene_check",
+        "agent_env_doctor",
+        "agent_env_doctor_skip_plugin",
+    }
 )
 
 # Plugins that install guardrails gated behind a repo-local precondition. When
@@ -415,10 +422,14 @@ def installed_plugins(plugins_file: Path) -> set[str]:
     return {key.split("@", 1)[0] for key in plugins if isinstance(key, str) and key}
 
 
-def check_dormant_plugins(root: Path, installed: set[str]) -> list[str]:
+def check_dormant_plugins(
+    root: Path, installed: set[str], skip: frozenset[str] = frozenset()
+) -> list[str]:
     warnings: list[str] = []
     for precond in PLUGIN_PRECONDITIONS:
         if precond["plugin"] not in installed:
+            continue
+        if precond["plugin"] in skip:
             continue
         target = root / precond["path"]
         present = target.is_dir() if precond["kind"] == "dir" else target.is_file()
@@ -475,11 +486,34 @@ def _suppressed(root: Path) -> bool:
     return False
 
 
+def _skipped_plugins(root: Path) -> frozenset[str]:
+    """Plugin names named in .agent-mode.local's agent_env_doctor_skip_plugin,
+    a comma-separated allow-list scoped to the dormant-plugin check only —
+    unlike agent_env_doctor=false, every other check still runs."""
+    text = _read_text_bounded(root / ".agent-mode.local")
+    if text is None:
+        return frozenset()
+    skipped: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() != "agent_env_doctor_skip_plugin":
+            continue
+        skipped.update(name.strip() for name in value.split(",") if name.strip())
+    return frozenset(skipped)
+
+
 def collect_warnings(root: Path, env: dict, plugins_file: Path) -> list[str]:
     warnings: list[str] = []
     warnings.extend(check_imports(root))
     warnings.extend(check_hook_binaries(root, env))
-    warnings.extend(check_dormant_plugins(root, installed_plugins(plugins_file)))
+    warnings.extend(
+        check_dormant_plugins(
+            root, installed_plugins(plugins_file), _skipped_plugins(root)
+        )
+    )
     warnings.extend(check_agent_mode(root))
     return warnings
 
@@ -517,8 +551,10 @@ def evaluate(
         "non-blocking):\n"
         f"{body}\n"
         "Each item is a guardrail or instruction that currently does nothing. Fix "
-        "the wiring or, to silence this check for this repo, add "
-        "'agent_env_doctor=false' to .agent-mode.local."
+        "the wiring, or silence a specific inapplicable plugin's dormancy nudge "
+        "with 'agent_env_doctor_skip_plugin=<name>' (comma-separated for "
+        "multiple) in .agent-mode.local — every other check still runs. Only "
+        "use 'agent_env_doctor=false' to disable this doctor entirely."
     )
     return {
         "hookSpecificOutput": {
