@@ -41,7 +41,5 @@ After several agents have run over a week, a repo has five stale worktrees: some
 ## Evidence
 ### Tests
 - `tests/closure/test_closure_scan.py`
-### Surface
-- `skill: closure`
 ### Docs
 - `catalog/skills/closure/SKILL.md`

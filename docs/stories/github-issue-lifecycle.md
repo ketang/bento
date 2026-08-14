@@ -40,9 +40,6 @@ An agent is starting work on a repo that uses GitHub Issues. It runs `gh issue l
 
 ## Evidence
 ### Tests
-### Surface
-- `skill: github-issue-flow`
-- `cli: gh issue`
 ### Docs
 - `catalog/skills/github-issue-flow/SKILL.md`
 - `catalog/skills/github-issue-flow/references/tracker-migration.md`

@@ -40,9 +40,6 @@ A developer renames a button from "Submit" to "Save changes" and updates the rou
 
 ## Evidence
 ### Tests
-### Surface
-- `skill: maintain-web-demo`
-- `cli: make demo`
 ### Docs
 - `catalog/skills/maintain-web-demo/SKILL.md`
 - `catalog/skills/maintain-web-demo/references/generate-web-demo-contract.md`

@@ -45,8 +45,6 @@ A user has a backlog of ready tasks — several bug fixes, a documentation updat
 - `tests/swarm/test_swarm_scripts.py`
 - `tests/swarm/test_swarm_discover.py`
 - `tests/swarm/test_swarm_post_land.py`
-### Surface
-- `skill: swarm`
 ### Docs
 - `catalog/skills/swarm/SKILL.md`
 - `catalog/skills/swarm/CLAUDE.md`

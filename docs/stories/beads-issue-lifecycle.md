@@ -37,8 +37,5 @@ A user points an agent at a body of work tracked in Beads. The agent runs `bd` c
 
 ## Evidence
 ### Tests
-### Surface
-- `skill: beads-issue-flow`
-- `cli: bd`
 ### Docs
 - `catalog/skills/beads-issue-flow/SKILL.md`

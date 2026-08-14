@@ -39,7 +39,5 @@ A developer has added a new `expedition` skill to a local bento clone and wants 
 
 ## Evidence
 ### Tests
-### Surface
-- `skill: dev-skill`
 ### Docs
 - `catalog/skills/dev-skill/SKILL.md`

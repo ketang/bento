@@ -39,7 +39,5 @@ An agent discovers that the repo's integration tests require a specific Postgres
 
 ## Evidence
 ### Tests
-### Surface
-- `skill: project-memory`
 ### Docs
 - `catalog/skills/project-memory/SKILL.md`

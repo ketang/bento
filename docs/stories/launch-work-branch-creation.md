@@ -46,8 +46,6 @@ An agent receives a task — fix a bug, add a skill, update docs. Before touchin
 - `tests/launch_work/test_launch_work_scripts.py`
 - `tests/launch_work/test_lifecycle_extensions_cli.py`
 - `tests/launch_work/test_lifecycle_extensions_run_hooks.py`
-### Surface
-- `skill: launch-work`
 ### Docs
 - `catalog/skills/launch-work/SKILL.md`
 - `catalog/skills/launch-work/references/worktree-location.md`

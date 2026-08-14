@@ -41,7 +41,5 @@ A user wants to rewrite the bento plugin packaging system — a body of work spa
 ## Evidence
 ### Tests
 - `tests/expedition/test_expedition_scripts.py`
-### Surface
-- `skill: expedition`
 ### Docs
 - `catalog/skills/expedition/SKILL.md`
