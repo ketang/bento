@@ -121,17 +121,21 @@ Include only modules that fit the discovered repo:
   or emptiness that selects a permissive mode by inference, treats an empty
   allowlist as allow-all, falls through to a less-private backend, makes a
   verification gate skip, or turns an unset bound into "unlimited" is `error`;
-  absence that only degrades functionality is `warning`)
-- gate integrity (include when the repo documents gate commands; run them on a
-  clean checkout per `control-integrity.md`. Standard gate red on the primary
-  branch, a gate that skips silently when its tool is absent, and a threshold
+  absence that only degrades functionality is `warning`. A gate that skips on an
+  absent tool belongs to gate integrity whenever that module runs, and is
+  reported here only when it does not - one defect, one finding)
+- gate integrity (include when the repo documents gate commands; run them in the
+  tree as found per `control-integrity.md` - never stash or switch branches to
+  clean it. Standard gate red on a clean primary branch, a gate that skips silently when its tool is absent, and a threshold
   documented as required but enforced nowhere are each `error`; documented gate
   behavior the recipe does not perform is `warning`)
 - agent-instruction integrity (cheap; include for any repo with agent config.
   Resolve `@import`/rules chains transitively: dangling or 0-byte import, and a
   rules directory that is a 0-byte file or unpopulated submodule pointer, are
   `error`; a registered hook whose command is absent is `error`, and a wrapper
-  that silently exits 0 when its external binary is missing is `warning`.
+  that silently exits 0 when its external binary is missing is `warning`,
+  escalating to `error` when that hook is the enforcement point for a documented
+  rule.
   Overlaps the `agent-env-doctor` SessionStart hook by design - that hook is the
   always-on layer, this module is the periodic sweep)
 - documentation coverage (exported/public symbol coverage)

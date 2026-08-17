@@ -10,9 +10,17 @@ configured path is correct.
 
 ## Configuration Failure Mode
 
-Build a table over every config key and env var the code reads. Sources:
-`interface_surfaces` config/env entries from discovery, plus a direct read of
-settings/env loaders, `.env.example`, chart/compose files, and CI env blocks.
+Build a table over the config keys and env vars the code reads, in the priority
+order of `quality-standards.md` "Sampling Strategy": keys read by `risk_surfaces`
+files first (auth, persistence, external network, secrets handling), then
+highest-churn config loaders, then the rest until the pattern is clear.
+Exhaustive coverage is not the goal; say in the report which keys the table
+covers, so a truncated table is never read as a complete one.
+
+Sources: `interface_surfaces.config_contract_files` from discovery — an
+inventory of `.env*` and `config.example.*` files, not of keys; key enumeration
+is model-derived from the loaders. Read the settings/env loaders directly, plus
+chart/compose files and CI env blocks.
 
 One row per key: name, where read, default when absent or empty, and the
 resulting behavior. Then classify each row `fail-closed`, `fail-open`, or
@@ -29,6 +37,8 @@ resulting behavior. Then classify each row `fail-closed`, `fail-open`, or
   to a less-private default — no local model configured, so content goes to a
   cloud provider
 - an absent verification or scan tool that makes its gate skip rather than fail
+  — report this under gate integrity whenever that module runs, and only here
+  when it does not, so one silent-skip defect yields one finding
 - an unset bound that means "unlimited" where the safe reading is "reject" —
   no token expiry meaning never-expires, no size cap meaning unbounded upload
 
@@ -41,10 +51,17 @@ mutate the environment to test this — read the defaulting code.
 
 ## Gate Integrity
 
-Run the repo's own documented gate commands on a clean checkout. Use
+Run the repo's own documented gate commands in the working tree as found. Use
 `documentation_analysis.command_consistency` for the documented set and
 `project_shape.commands` for what exists. Run only safe local commands; never
 deploy, release, migration, or production-data targets.
+
+Check `git status` and the current branch first. Never `stash`, `checkout`, or
+otherwise mutate the tree to get a clean checkout — that is banned by workflow
+step 6. If the tree is dirty or the branch is not primary, a red gate may be the
+operator's own work in progress: qualify the finding with the state it was
+observed in, or record it as `skip` with that reason. Reserve the red-on-primary
+rule below for a clean tree on the primary branch.
 
 For each gate, record the command, exit status, and whether the reported
 outcome matches what the docs claim it enforces.
@@ -103,7 +120,10 @@ since that is a hook defect worth routing separately.
 ## Degradation
 
 These modules must run model-driven when deterministic collectors are absent.
-Where discovery supplies `documentation_analysis.command_consistency`,
-`interface_surfaces`, or `static_analysis.installed_tools`, use it as the base
-layer; where it does not, read the config loaders, gate recipes, and agent docs
-directly and say in the report which parts were model-derived.
+`documentation_analysis.command_consistency`, `interface_surfaces`, and
+`static_analysis.installed_tools` are always present in the helper payload, so
+judge them by their values, not by whether the key exists: use a non-empty value
+as the base layer, and where a value is empty read the config loaders, gate
+recipes, and agent docs directly and say in the report which parts were
+model-derived. An empty list means the collector found nothing, never that the
+collector was absent.

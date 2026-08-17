@@ -81,12 +81,15 @@ For each candidate, propose a minimal fuzz target and suggest:
 
 Read `audit/references/control-integrity.md`. Three absence-focused surfaces:
 
-- **Config failure mode** - enumerate config keys and env vars from
-  `interface_surfaces` plus the settings/env loaders, then record what each one
-  does when absent or empty. Fail-open defaults are findings.
+- **Config failure mode** - `interface_surfaces.config_contract_files` lists the
+  `.env*` and `config.example.*` files; the keys themselves are model-derived by
+  reading those files and the settings/env loaders. Record what each key does
+  when absent or empty, risk surfaces first. Fail-open defaults are findings.
 - **Gate integrity** - take documented gates from
-  `documentation_analysis.command_consistency`, run the safe local ones on a
-  clean tree, and classify each as failed, skipped, or advisory.
+  `documentation_analysis.command_consistency`, run the safe local ones in the
+  tree as found, and classify each as failed, skipped, or advisory. Check
+  `git status` first and qualify results from a dirty tree or non-primary
+  branch.
 - **Agent-instruction integrity** - resolve `@import` and rules paths in
   `CLAUDE.md`/`AGENTS.md`/`GEMINI.md` transitively, and check that hook
   commands registered in `.claude/settings*.json` exist and are not silent
