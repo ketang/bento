@@ -228,6 +228,74 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIn("bugshot", context)
         self.assertIn("capture-command", context)
 
+    def test_skip_plugin_marker_silences_only_that_plugins_dormancy(self) -> None:
+        self._write_installed(
+            {
+                "bugshot@bento": [{"version": "1.0.0"}],
+                "storystore@bento": [{"version": "1.0.0"}],
+            }
+        )
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshot\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertNotIn("bugshot", context)
+        self.assertIn("storystore", context)
+        self.assertIn("dormant", context)
+
+    def test_skip_plugin_marker_accepts_comma_separated_list(self) -> None:
+        self._write_installed(
+            {
+                "bugshot@bento": [{"version": "1.0.0"}],
+                "storystore@bento": [{"version": "1.0.0"}],
+            }
+        )
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshot, storystore\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_skip_plugin_marker_still_surfaces_other_checks(self) -> None:
+        # The per-plugin marker must not act like the global kill switch: a
+        # malformed .agent-mode.local line still gets flagged.
+        self._write_installed({"bugshot@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshot\nbroken-line\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertNotIn("bugshot is installed but dormant", context)
+        self.assertIn("not a key=value", context)
+
+    def test_skip_plugin_marker_is_recognized_key(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshot\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_skip_plugin_marker_unknown_plugin_name_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshoot\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("bugshoot", context)
+
+    def test_skip_plugin_marker_boolean_value_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=false\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("false", context)
+
+    def test_skip_plugin_marker_partial_unknown_name_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshot, nope\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("nope", context)
+
     # --- check 4: .agent-mode.local -----------------------------------------
 
     def test_bare_token_in_agent_mode_flagged(self) -> None:

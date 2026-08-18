@@ -36,7 +36,9 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
   `.agent-mode.local` tokens — and injects warning lines into session context.
   It never blocks (always exits 0) and is suppressed per repo by adding
   `agent_env_doctor=false` to `.agent-mode.local` (the same file and mechanism
-  the `require-worktree` and `hygiene` hooks use). A Codex peer runs the
+  the `require-worktree` and `hygiene` hooks use). To silence the dormant-plugin
+  nudge for one inapplicable plugin without disabling any other check, add
+  `agent_env_doctor_skip_plugin=<name>[,<name>...]` instead. A Codex peer runs the
   runtime-agnostic subset (the `@import` and `.agent-mode.local` checks); the
   hook-binary and dormant-plugin checks are Claude-only.
 - `session-id` — persists the Claude Code session id and a per-session scratch
