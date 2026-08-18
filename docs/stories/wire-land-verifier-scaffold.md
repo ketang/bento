@@ -41,8 +41,6 @@ A repo adopts `land-work` and hits its fail-closed verifier gate mid-landing: th
 ## Evidence
 ### Tests
 - `tests/wire_land_verifier/test_wire_land_verifier.py`
-### Surface
-- `skill: wire-land-verifier`
 ### Docs
 - `catalog/skills/wire-land-verifier/SKILL.md`
 - `catalog/skills/land-work/references/project-verifier.md`
