@@ -272,6 +272,30 @@ class AgentEnvDoctorTest(unittest.TestCase):
         )
         self.assertIsNone(self._evaluate())
 
+    def test_skip_plugin_marker_unknown_plugin_name_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshoot\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("bugshoot", context)
+
+    def test_skip_plugin_marker_boolean_value_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=false\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("false", context)
+
+    def test_skip_plugin_marker_partial_unknown_name_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_skip_plugin=bugshot, nope\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("nope", context)
+
     # --- check 4: .agent-mode.local -----------------------------------------
 
     def test_bare_token_in_agent_mode_flagged(self) -> None:

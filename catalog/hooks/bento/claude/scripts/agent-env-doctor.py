@@ -460,11 +460,21 @@ def check_agent_mode(root: Path) -> list[str]:
                 f"disables nothing but reads like a mode toggle"
             )
             continue
-        key = stripped.partition("=")[0].strip()
+        key, _, value = stripped.partition("=")
+        key = key.strip()
         if key not in RECOGNIZED_AGENT_MODE_KEYS:
             warnings.append(
                 f".agent-mode.local: unknown key '{key}' — it toggles nothing"
             )
+            continue
+        if key == "agent_env_doctor_skip_plugin":
+            known_plugins = {precond["plugin"] for precond in PLUGIN_PRECONDITIONS}
+            for name in (n.strip() for n in value.split(",")):
+                if name and name not in known_plugins:
+                    warnings.append(
+                        f".agent-mode.local: unknown plugin '{name}' in "
+                        f"agent_env_doctor_skip_plugin — it toggles nothing"
+                    )
     return warnings
 
 
