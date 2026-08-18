@@ -179,16 +179,103 @@ def _is_literal_container(node: ast.AST) -> bool:
     return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.Tuple, ast.Constant))
 
 
+# Names of builtin container factories. `DEFAULTS = dict(cwd='/tmp')` is just
+# as hardcoded as `DEFAULTS = {'cwd': '/tmp'}`, so a call to one of these with
+# only literal arguments counts as a literal binding — but only when the name
+# is not rebound anywhere in the file, so a shadowed `dict` is not misread.
+_LITERAL_FACTORY_NAMES = frozenset({"dict", "list", "set", "tuple", "frozenset"})
+
+# Method calls that only read a container. Calling one of these on a name
+# cannot turn a hardcoded literal into something derived from stdin, so the
+# name stays a decoy candidate. Any *other* method call on a name (`.update()`,
+# `.setdefault()`, `.__setitem__()`, ...) may populate it from input, so the
+# name is reclassified as dynamic.
+_READ_ONLY_METHODS = frozenset(
+    {"get", "keys", "values", "items", "copy", "index", "count"}
+)
+
+
+def _bound_names(tree: ast.AST) -> set[str]:
+    """Every name bound anywhere in the file, by any binding form. Used only to
+    detect shadowing of builtin container factories."""
+    names: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
+            names.add(node.id)
+        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            names.add(node.name)
+        elif isinstance(node, (ast.Import, ast.ImportFrom)):
+            for alias in node.names:
+                names.add((alias.asname or alias.name).split(".")[0])
+    return names
+
+
+def _binding_kind(
+    value: ast.AST, bound: set[str]
+) -> tuple[str, str | None]:
+    """Classify an assigned value as one of:
+
+    ("literal", None)  - a hardcoded literal container or literal factory call
+    ("alias", name)    - a bare reference to another name
+    ("dynamic", None)  - anything else (a call, attribute access, ...)
+    """
+    if _is_literal_container(value):
+        return ("literal", None)
+    if isinstance(value, ast.Name):
+        return ("alias", value.id)
+    if (
+        isinstance(value, ast.Call)
+        and isinstance(value.func, ast.Name)
+        and value.func.id in _LITERAL_FACTORY_NAMES
+        and value.func.id not in bound
+        and all(_is_literal_container(arg) for arg in value.args)
+        and all(_is_literal_container(kw.value) for kw in value.keywords)
+    ):
+        return ("literal", None)
+    return ("dynamic", None)
+
+
 def _literal_only_names(tree: ast.AST) -> set[str]:
-    """Names whose every observed binding in the file is a literal
-    dict/list/set/tuple/constant (e.g. `DEFAULTS = {'cwd': '/tmp'}`), and
-    that are never also a function/lambda parameter. A `.get("cwd")` or
-    `["cwd"]` read against one of these names is a decoy: it can't be
-    reading the real stdin payload, since the object was hardcoded in
-    source rather than parsed from input."""
+    """Names whose every observed binding in the file is a hardcoded literal
+    container -- a dict/list/set/tuple/constant literal, a literal-argument
+    `dict()`/`list()`/`set()`/`tuple()`/`frozenset()` call, or an alias chain
+    that bottoms out in one of those. A `.get("cwd")` or `["cwd"]` read against
+    one of these names is a decoy: it cannot be reading the real stdin payload,
+    since the object was hardcoded in source rather than parsed from input.
+
+    A name drops out of this set -- i.e. its `cwd` read is accepted -- as soon
+    as anything could have made it carry real input:
+
+    * it is a function or lambda parameter;
+    * it is bound by any form other than a literal assignment. Tuple unpacking,
+      `for` targets, `with ... as` targets, walrus assignments, augmented
+      assignments, comprehension targets and `except ... as` all count, since
+      each can bind a value derived from input;
+    * it is the receiver of a method call that is not a known read-only
+      accessor (`payload = {}` then `payload.update(json.load(sys.stdin))`);
+    * it is passed as an argument to a call, which could populate it in place.
+
+    Every one of those escapes errs toward *accepting* a `cwd` read. That is
+    deliberate: this lint gates every hook in the repo, so wrongly failing a
+    correct hook costs far more than letting a contrived decoy through.
+
+    Note (scope blindness): the three classifications are file-global rather
+    than per-scope, so a parameter named `DEFAULTS` in one function disarms
+    decoy detection for a module-level `DEFAULTS` elsewhere in the same file.
+    That direction is a false negative (a decoy slips through), never a false
+    positive: because any dynamic binding anywhere rescues a name, a legitimate
+    payload read can never be rejected by a same-named binding in another
+    scope. Tracked as a follow-up rather than fixed here.
+    """
+    bound = _bound_names(tree)
+
     param_names: set[str] = set()
     literal_names: set[str] = set()
     dynamic_names: set[str] = set()
+    alias_sources: dict[str, set[str]] = {}
+    # id() of Name nodes that are the target of a literal or alias assignment,
+    # so the catch-all Store sweep below does not re-classify them as dynamic.
+    assign_targets: set[int] = set()
 
     for node in ast.walk(tree):
         if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
@@ -199,47 +286,113 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
                 param_names.add(args.vararg.arg)
             if args.kwarg:
                 param_names.add(args.kwarg.arg)
-        elif isinstance(node, ast.Assign):
-            targets = [t for t in node.targets if isinstance(t, ast.Name)]
-            for target in targets:
-                if _is_literal_container(node.value):
-                    literal_names.add(target.id)
-                else:
-                    dynamic_names.add(target.id)
-        elif isinstance(node, ast.AnnAssign) and node.value is not None:
-            if isinstance(node.target, ast.Name):
-                if _is_literal_container(node.value):
-                    literal_names.add(node.target.id)
-                else:
-                    dynamic_names.add(node.target.id)
+            continue
 
-    return literal_names - dynamic_names - param_names
+        targets: list[ast.expr] = []
+        value: ast.AST | None = None
+        if isinstance(node, ast.Assign):
+            targets = node.targets
+            value = node.value
+        elif isinstance(node, ast.AnnAssign) and node.value is not None:
+            targets = [node.target]
+            value = node.value
+        else:
+            continue
+
+        for target in targets:
+            if not isinstance(target, ast.Name):
+                continue
+            kind, source = _binding_kind(value, bound)
+            if kind == "literal":
+                literal_names.add(target.id)
+                assign_targets.add(id(target))
+            elif kind == "alias" and source is not None:
+                alias_sources.setdefault(target.id, set()).add(source)
+                assign_targets.add(id(target))
+            else:
+                dynamic_names.add(target.id)
+
+    for node in ast.walk(tree):
+        # Any other binding form -- tuple unpack, `for`, `with ... as`, walrus,
+        # augmented assign, comprehension target -- can bind a value derived
+        # from input, so it makes the name dynamic.
+        if (
+            isinstance(node, ast.Name)
+            and isinstance(node.ctx, ast.Store)
+            and id(node) not in assign_targets
+        ):
+            dynamic_names.add(node.id)
+        elif isinstance(node, ast.Call):
+            func = node.func
+            if (
+                isinstance(func, ast.Attribute)
+                and isinstance(func.value, ast.Name)
+                and func.attr not in _READ_ONLY_METHODS
+            ):
+                # e.g. `payload.update(json.load(sys.stdin))`
+                dynamic_names.add(func.value.id)
+            for arg in (*node.args, *(kw.value for kw in node.keywords)):
+                if isinstance(arg, ast.Starred):
+                    arg = arg.value
+                if isinstance(arg, ast.Name):
+                    # The callee could populate it in place.
+                    dynamic_names.add(arg.id)
+
+    # Least fixpoint: a name is literal-only when it has at least one binding,
+    # none of them dynamic, it is not a parameter, and every alias it is bound
+    # from is itself literal-only. Starting empty and only ever adding grounded
+    # names means an alias cycle never resolves, which errs toward acceptance.
+    candidates = literal_names | set(alias_sources)
+    resolved: set[str] = set()
+    changed = True
+    while changed:
+        changed = False
+        for name in candidates:
+            if name in resolved or name in dynamic_names or name in param_names:
+                continue
+            if all(source in resolved for source in alias_sources.get(name, ())):
+                resolved.add(name)
+                changed = True
+    return resolved
 
 
 def _references_payload_cwd_ast(tree: ast.AST) -> bool:
     """Python path: does the code read a "cwd" key from some object, e.g.
     `payload["cwd"]` or `payload.get("cwd")`? AST-based so a "cwd" substring
-    in a comment, docstring, or unrelated string literal can't satisfy it —
+    in a comment, docstring, or unrelated string literal can't satisfy it --
     it must actually be used as a subscript key or a `.get()` first arg.
 
-    Also filters decoys where the target object is provably not a payload:
-    a name whose every binding in the file is a hardcoded literal (dict,
-    list, set, tuple, or constant) rather than something parsed from input.
-    A `.get("cwd")`/`["cwd"]` against any other kind of object (a function
-    parameter, a name assigned from a call or attribute access, or a bare
-    attribute/call expression) is accepted, since proving it genuinely
-    traces back to the stdin payload would require full data-flow analysis;
-    this stays a lightweight, one-pass check."""
-    literal_only = _literal_only_names(tree)
+    Reads whose base object is provably not the stdin payload do not count:
 
-    def _base_name(node: ast.AST) -> str | None:
-        return node.id if isinstance(node, ast.Name) else None
+    * an inline literal container -- `{'cwd': '/tmp'}.get('cwd')`;
+    * `os.environ`, which is the process environment, not the payload;
+    * a name that is literal-only per `_literal_only_names`.
+
+    A read against any other kind of object (a function parameter, a name
+    assigned from a call or attribute access, or a bare attribute/call
+    expression) is accepted, since proving it genuinely traces back to the
+    stdin payload would require full data-flow analysis; this stays a
+    lightweight, one-pass check.
+
+    This decoy filtering applies to Python hooks only. Shell hooks still go
+    through `_references_payload_cwd`, a regex over comment-stripped text,
+    where a bare `'cwd'` string anywhere in the file satisfies the check.
+    """
+    literal_only = _literal_only_names(tree)
+    import_aliases = _collect_import_aliases(tree)
+    environ_targets = _ENVIRON_PWD_SUBSCRIPT_TARGETS | _ENVIRON_PWD_GET_TARGETS
+
+    def _is_decoy_base(node: ast.AST) -> bool:
+        if _is_literal_container(node):
+            return True
+        if _resolve_dotted(node, import_aliases) in environ_targets:
+            return True
+        return isinstance(node, ast.Name) and node.id in literal_only
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Subscript):
             if _constant_str(node.slice) == "cwd":
-                base = _base_name(node.value)
-                if base is None or base not in literal_only:
+                if not _is_decoy_base(node.value):
                     return True
         elif isinstance(node, ast.Call):
             func = node.func
@@ -249,8 +402,7 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
                 and node.args
                 and _constant_str(node.args[0]) == "cwd"
             ):
-                base = _base_name(func.value)
-                if base is None or base not in literal_only:
+                if not _is_decoy_base(func.value):
                     return True
     return False
 
