@@ -436,12 +436,10 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
             timeout=timeout,
         )
     except subprocess.TimeoutExpired:
-        payload = {
+        return {
             "schema_valid": False,
             "error": f"verifier did not finish within {timeout}s",
-        }
-        _restore(installed, preexisting)
-        return payload, 1
+        }, 1
     finally:
         _restore(installed, preexisting)
 

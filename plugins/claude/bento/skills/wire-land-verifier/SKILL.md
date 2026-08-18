@@ -40,9 +40,8 @@ user's.
    ```
 
    `--check` (required) is repeatable; a bare `COMMAND` names itself. Use
-   `--wrapper-path <rel>` to override the default
-   `scripts/land-work-verifier.py`, or to reuse a wrapper the repo already has.
-   Nothing is installed yet.
+   `--wrapper-path <rel>` to place the generated wrapper somewhere other than
+   the default shown under **Output**. Nothing is installed yet.
 
 5. Show the user the drafted `wrapper_body` and `manifest_body`.
 6. Prove the draft actually runs:
