@@ -374,6 +374,101 @@ class LiteralOnlyBindingFormsTest(unittest.TestCase):
             "    return state['cache'].get('cwd') or _g()\n"
         )
 
+    def test_chained_write_is_the_only_rescue(self) -> None:
+        """Non-vacuous guard for the walk-down to the root name.
+
+        Every other chained-write test is rescued by something else as well --
+        a `Subscript`/`Attribute` read base (which `_is_decoy_base` never
+        rejects), a dynamically bound receiver, or a second `cwd` read on the
+        write line. Here the read base is a bare `Name`, the binding is a
+        nested literal, and the sole `cwd` read is `state.get('cwd')`, so the
+        chained write `state['cache']['k'] = ...` is the only thing keeping
+        `state` out of the literal-only set. Truncating the walk to
+        `node.value` flags this source.
+        """
+        self._assert_clean(
+            "def f():\n"
+            "    state = {'cache': {}}\n"
+            "    state['cache']['k'] = json.load(sys.stdin)\n"
+            "    return state.get('cwd') or _g()\n"
+        )
+
+    def test_chained_deletion_is_the_only_rescue(self) -> None:
+        """Same shape, via `del` rather than assignment."""
+        self._assert_clean(
+            "def f():\n"
+            "    state = {'cache': {'k': 1}}\n"
+            "    del state['cache']['k']\n"
+            "    return state.get('cwd') or _g()\n"
+        )
+
+    def test_parameter_shadowing_a_factory_name_satisfies_check(self) -> None:
+        """The literal-factory carve-out applies only to an unshadowed builtin.
+
+        A parameter named `dict` is a binding, so `dict(cfg)` here is an
+        arbitrary call that could populate `cfg` in place. Missing `ast.arg`
+        made this identical hook clean or flagged depending on the parameter's
+        name.
+        """
+        self._assert_clean(
+            "def f(dict):\n"
+            "    cfg = {}\n"
+            "    dict(cfg)\n"
+            "    return cfg.get('cwd') or _g()\n"
+        )
+
+    def test_except_as_shadowing_a_factory_name_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    cfg = {}\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception as dict:\n"
+            "        pass\n"
+            "    dict(cfg)\n"
+            "    return cfg.get('cwd') or _g()\n"
+        )
+
+    def test_except_as_rebinding_satisfies_check(self) -> None:
+        """`except ... as name` binds through a plain `str`, not a Name node,
+        so the Store sweep never sees it -- but it can bind anything."""
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception as d:\n"
+            "        pass\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_match_as_rebinding_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f(obj):\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    match obj:\n"
+            "        case object() as d:\n"
+            "            pass\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_def_rebinding_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    def d():\n"
+            "        pass\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_import_rebinding_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    import os as d\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
     def test_item_deletion_satisfies_check(self) -> None:
         self._assert_clean(
             "def f():\n"

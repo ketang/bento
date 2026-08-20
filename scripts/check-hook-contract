@@ -216,6 +216,32 @@ _READ_ONLY_METHODS = frozenset(
 )
 
 
+def _bindings_without_name_node(node: ast.AST) -> list[str]:
+    """Names that `node` binds through something other than an `ast.Name` in
+    `Store` context -- parameters, `def`/`class`/`import` names, `except ... as`
+    and `match ... case ... as` captures. Each of these stores the bound
+    identifier as a plain `str` attribute, so a sweep that only looks for
+    `Name`-Store nodes never sees them.
+
+    Two callers need this, for different reasons: `_bound_names` counts them as
+    shadowing a builtin container factory, and `_literal_only_names` counts the
+    non-parameter ones as dynamic bindings.
+    """
+    if isinstance(node, ast.arg):
+        return [node.arg]
+    if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+        return [node.name]
+    if isinstance(node, (ast.Import, ast.ImportFrom)):
+        return [(alias.asname or alias.name).split(".")[0] for alias in node.names]
+    if isinstance(node, ast.ExceptHandler):
+        return [node.name] if node.name else []
+    if isinstance(node, (ast.MatchAs, ast.MatchStar)):
+        return [node.name] if node.name else []
+    if isinstance(node, ast.MatchMapping):
+        return [node.rest] if node.rest else []
+    return []
+
+
 def _bound_names(tree: ast.AST) -> set[str]:
     """Every name bound anywhere in the file, by any binding form. Used only to
     detect shadowing of builtin container factories."""
@@ -223,11 +249,8 @@ def _bound_names(tree: ast.AST) -> set[str]:
     for node in ast.walk(tree):
         if isinstance(node, ast.Name) and isinstance(node.ctx, ast.Store):
             names.add(node.id)
-        elif isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
-            names.add(node.name)
-        elif isinstance(node, (ast.Import, ast.ImportFrom)):
-            for alias in node.names:
-                names.add((alias.asname or alias.name).split(".")[0])
+        else:
+            names.update(_bindings_without_name_node(node))
     return names
 
 
@@ -270,8 +293,9 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
     * it is a function or lambda parameter;
     * it is bound by any form other than a literal assignment. Tuple unpacking,
       `for` targets, `with ... as` targets, walrus assignments, augmented
-      assignments, comprehension targets and `except ... as` all count, since
-      each can bind a value derived from input;
+      assignments, comprehension targets, `except ... as`, `match ... as` and
+      `def`/`class`/`import` rebinding all count, since each can bind a value
+      derived from input;
     * it is populated or mutated in place through item or attribute assignment
       (`payload[k] = v`, `obj.attr = v`, `del payload[k]`);
     * it is the receiver of a method call that is not a known read-only
@@ -357,6 +381,13 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
                 root = root.value
             if isinstance(root, ast.Name):
                 dynamic_names.add(root.id)
+        elif _bindings_without_name_node(node):
+            # `except ... as name`, `match ... as name`, `def`/`class`/`import`
+            # rebinding. These store the bound identifier as a plain `str`, so
+            # the `Name`-Store sweep above never sees them, yet each can bind
+            # something derived from input just like a `for` target can.
+            # (Parameters land here too; `param_names` already covers them.)
+            dynamic_names.update(_bindings_without_name_node(node))
         elif isinstance(node, ast.Call):
             func = node.func
             if (
