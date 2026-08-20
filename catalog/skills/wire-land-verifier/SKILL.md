@@ -11,9 +11,16 @@ once, ahead of any landing, to create one.
 **Never rubber-stamp.** The generated verifier must wrap the repo's real gate
 command(s), confirmed by the repo owner. A verifier that reports `passed`
 without running the repo's checks defeats the guarantee land-work exists to
-enforce. The helper refuses no-op commands and unproven drafts, but it cannot
-tell a wrong-but-real command from a right one — that judgment is yours and the
-user's.
+enforce.
+
+**Where the guarantee actually lives.** The helper screens out commands that
+obviously do nothing (`true`, `echo`, `sh -c true`, `env true`, `python -c
+pass`) and refuses drafts it has not seen run. That screening is best-effort and
+cannot be complete: any command can be a no-op — `git status`, `ls`, a script
+whose body is commented out — and no static check can prove a given command is
+this repo's gate. **The binding guarantee is you confirming with the repo owner
+that the wired command is the real landing gate.** Do not treat a clean `draft`
+as evidence that the command checks anything.
 
 ## Workflow
 
@@ -62,7 +69,8 @@ user's.
    wire-land-verifier/scripts/wire-land-verifier.py apply
    ```
 
-   `apply` refuses without a validation receipt matching the current draft, and
+   `apply` re-hashes the staged files and refuses unless they still match the
+   receipt `validate` wrote, refuses a receipt with zero selected checks, and
    refuses to overwrite an existing wrapper or manifest without `--force`.
 
 8. Commit both files. Tell the user land-work's verifier gate is now live.
@@ -76,7 +84,19 @@ user's.
 
 The manifest is repo-local and overrides any home-scope manifest under
 `$XDG_CONFIG_HOME/agent-plugins/bento/bento/land-work/`. `verified_noop` starts
-empty; add exemptions by hand only with a real per-path reason.
+empty on a first wiring; add exemptions by hand only with a real per-path
+reason. Re-wiring a repo that already has a manifest carries its existing
+`verified_noop` entries forward and reports them as `carried_verified_noop` —
+review them, since they suppress the gate for those paths.
+
+Run every subcommand from the repo root. land-work reads the manifest from the
+root only, so the helper refuses to run from a subdirectory rather than install
+a manifest where the next landing would never find it.
+
+If the wrapper path is already taken by a file you wrote, `validate` stops
+instead of standing on it while the gate runs. Pick another `--wrapper-path`, or
+pass `validate --force` to accept the temporary swap (the original bytes and
+mode are restored afterward).
 
 ## Scope
 

@@ -11,11 +11,18 @@ The trust property land-work exists to enforce is that a landing never passes
 against a zero-check result, so this CLI never picks a gate command on its own:
 
 * `discover` only reports candidates; it writes nothing.
-* `draft` requires explicit `--check` values and rejects no-op commands and
-  commands whose executable does not resolve.
+* `draft` requires explicit `--check` values and screens out obvious no-op
+  commands and commands whose executable does not resolve.
 * `validate` actually runs the staged wrapper and records a receipt.
-* `apply` refuses unless a receipt matches the current draft and reported at
-  least one selected check.
+* `apply` refuses unless the staged files still hash to the receipt's
+  fingerprint and that receipt reported at least one selected check.
+
+No-op screening is best-effort and cannot be complete: any command can do
+nothing (`git status`, `ls`, a script whose body is commented out), and no
+static check can prove a command is this repo's real gate. The binding
+guarantee is the user explicitly confirming that the wired command is the
+repo's actual landing gate; this CLI's checks only remove the obvious ways to
+wire a gate that proves nothing by accident.
 
 Subcommands: discover, draft, validate, apply.
 """
@@ -39,8 +46,41 @@ DEFAULT_WRAPPER_REL = "scripts/land-work-verifier.py"
 STAGING_REL = Path("bento/wire-land-verifier")
 
 # Commands that would make the verifier rubber-stamp a landing. A wrapper built
-# from any of these reports "passed" while checking nothing.
-NO_OP_EXECUTABLES = frozenset({"true", ":", "echo", "printf", "exit", "test"})
+# from any of these reports "passed" while checking nothing. This list is a
+# screen for obvious mistakes, NOT a proof of non-triviality -- see the module
+# docstring and NO_OP_CAVEAT.
+NO_OP_EXECUTABLES = frozenset(
+    {"true", ":", "echo", "printf", "exit", "test", "[", "sleep"}
+)
+
+# Commands that merely set up an environment and then exec their argument, so a
+# no-op hidden behind them is still a no-op.
+PREFIX_COMMANDS = frozenset(
+    {"env", "nohup", "nice", "ionice", "time", "command", "stdbuf", "setsid"}
+)
+
+# Prefix flags that consume the following token as their value.
+PREFIX_VALUE_FLAGS = {
+    "nice": {"-n"},
+    "ionice": {"-c", "-n", "-p"},
+    "stdbuf": {"-i", "-o", "-e"},
+}
+
+SHELL_EXECUTABLES = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
+
+INTERPRETERS = frozenset(
+    {"python", "python2", "python3", "perl", "ruby", "node", "nodejs"}
+)
+
+# Inline interpreter bodies that evaluate to "do nothing".
+_TRIVIAL_SCRIPT_RE = re.compile(r"^[\s;]*(?:pass|None|0|true|1)?[\s;]*$")
+
+NO_OP_CAVEAT = (
+    "No-op screening is best-effort: it rejects commands that obviously do "
+    "nothing, but it cannot prove that any accepted command is this repo's "
+    "real landing gate. That guarantee comes only from the user confirming "
+    "the gate command -- confirm it before `apply`."
+)
 
 # Target/script names that usually mean "run everything" rather than one narrow
 # step. Used only to rank proposals; never to select one.
@@ -127,6 +167,17 @@ def _just_recipes(worktree: Path) -> list[str]:
     return []
 
 
+def _unquote(value: str) -> str:
+    """Strip one *matched* pair of surrounding quotes.
+
+    A blanket ``strip("\"'")`` mangles ordinary lines like
+    ``npm test -- --grep "smoke"`` into unbalanced text that shlex cannot parse.
+    """
+    if len(value) >= 2 and value[0] == value[-1] and value[0] in "\"'":
+        return value[1:-1].strip()
+    return value
+
+
 def _workflow_runs(worktree: Path) -> list[tuple[str, str]]:
     """Single-line `run:` steps from GitHub workflows.
 
@@ -142,7 +193,7 @@ def _workflow_runs(worktree: Path) -> list[tuple[str, str]]:
             match = _WORKFLOW_RUN_RE.match(line)
             if not match:
                 continue
-            command = match.group(1).strip().strip("\"'")
+            command = _unquote(match.group(1).strip())
             if command in {"|", ">", "|-", ">-"} or not command:
                 continue
             found.append((command, str(path.relative_to(worktree))))
@@ -169,9 +220,16 @@ def discover(worktree: Path) -> dict:
             {"command": f"just {recipe}", "source": "justfile", "rank": _rank(recipe)}
         )
     for command, source in _workflow_runs(worktree):
-        first_word = shlex.split(command)[0] if command.strip() else ""
+        try:
+            words = shlex.split(command)
+        except ValueError:
+            # Unbalanced quoting in a `run:` line is that workflow's business,
+            # not a reason to abort discovery. Skip the candidate.
+            continue
+        if not words:
+            continue
         candidates.append(
-            {"command": command, "source": source, "rank": _rank(first_word)}
+            {"command": command, "source": source, "rank": _rank(words[0])}
         )
 
     seen: set[str] = set()
@@ -214,26 +272,103 @@ def parse_check(raw: str) -> dict:
     return {"name": name, "command": command, "argv": argv}
 
 
-def reject_no_ops(check: dict) -> None:
-    argv = check["argv"]
+def strip_prefix_commands(argv: list[str]) -> list[str]:
+    """Resolve `env FOO=1 nice -n5 <real command>` down to the real command."""
+    argv = list(argv)
+    for _ in range(8):
+        if not argv:
+            return []
+        head = Path(argv[0]).name
+        if head not in PREFIX_COMMANDS:
+            return argv
+        rest = argv[1:]
+        value_flags = PREFIX_VALUE_FLAGS.get(head, frozenset())
+        while rest:
+            token = rest[0]
+            if token == "--":
+                rest = rest[1:]
+                break
+            if head == "env" and "=" in token and not token.startswith("-"):
+                rest = rest[1:]
+                continue
+            if token.startswith("-") and token != "-":
+                if token in value_flags and len(rest) > 1:
+                    rest = rest[2:]
+                else:
+                    rest = rest[1:]
+                continue
+            break
+        argv = rest
+    return argv
+
+
+def shell_inline_script(argv: list[str]) -> str | None:
+    """Return the inline script of a `sh -c SCRIPT` argv, else None.
+
+    Handles clustered flags (`bash -lc`, `sh -cx`) and `sh -c -- SCRIPT`, which
+    a literal `"-c" in argv` test misses.
+    """
+    rest = argv[1:]
+    for index, token in enumerate(rest):
+        if token == "--" or not token.startswith("-") or token == "-":
+            return None
+        if "c" in token[1:]:
+            tail = [t for t in rest[index + 1 :]]
+            while tail and tail[0] == "--":
+                tail = tail[1:]
+            return tail[0] if tail else ""
+    return None
+
+
+def interpreter_inline_script(argv: list[str]) -> str | None:
+    """Return the inline program of `python -c ...` / `node -e ...`, else None."""
+    rest = argv[1:]
+    for index, token in enumerate(rest):
+        if token in {"-c", "-e", "--eval"} or (
+            token.startswith("-")
+            and not token.startswith("--")
+            and ("c" in token[1:] or "e" in token[1:])
+        ):
+            return rest[index + 1] if index + 1 < len(rest) else ""
+    return None
+
+
+def no_op_reason(argv: list[str], depth: int = 0) -> str | None:
+    """Why this argv obviously does nothing, or None if it might be real."""
+    argv = strip_prefix_commands(argv)
+    if not argv:
+        return "it runs no command at all"
     head = Path(argv[0]).name
     if head in NO_OP_EXECUTABLES:
-        raise WireError(
-            f"--check {check['command']!r} is a no-op command ({head!r}). A verifier "
-            "built from it would report 'passed' without checking the diff, which "
-            "is exactly what land-work's gate exists to prevent."
-        )
-    if head in {"sh", "bash", "zsh"} and "-c" in argv:
-        inner = argv[argv.index("-c") + 1 :]
-        if inner:
+        return f"{head!r} does no work"
+    if depth < 4 and head in SHELL_EXECUTABLES:
+        script = shell_inline_script(argv)
+        if script is not None:
             try:
-                inner_argv = shlex.split(inner[0])
+                inner = shlex.split(script)
             except ValueError:
-                inner_argv = []
-            if inner_argv and Path(inner_argv[0]).name in NO_OP_EXECUTABLES:
-                raise WireError(
-                    f"--check {check['command']!r} wraps a no-op command; see above."
-                )
+                inner = []
+            if not script.strip():
+                return "its inline shell script is empty"
+            inner_reason = no_op_reason(inner, depth + 1) if inner else None
+            if inner_reason:
+                return f"it wraps a shell command that does nothing ({inner_reason})"
+    if head in INTERPRETERS:
+        program = interpreter_inline_script(argv)
+        if program is not None and _TRIVIAL_SCRIPT_RE.match(program):
+            return f"{head!r} is handed an inline program that does nothing"
+    return None
+
+
+def reject_no_ops(check: dict) -> None:
+    reason = no_op_reason(check["argv"])
+    if reason is None:
+        return
+    raise WireError(
+        f"--check {check['command']!r} looks like a no-op: {reason}. A verifier "
+        "built from it would report 'passed' without running a real check. "
+        + NO_OP_CAVEAT
+    )
 
 
 def resolve_executable(check: dict, worktree: Path) -> None:
@@ -310,18 +445,61 @@ def render_wrapper(checks: list[dict], wrapper_rel: Path) -> str:
     )
 
 
-def render_manifest(wrapper_rel: Path) -> str:
+def render_manifest(wrapper_rel: Path, verified_noop: list | None = None) -> str:
     return (
         json.dumps(
             {
                 "schema_version": 1,
                 "command": [f"./{wrapper_rel.as_posix()}"],
-                "verified_noop": [],
+                "verified_noop": verified_noop or [],
             },
             indent=2,
         )
         + "\n"
     )
+
+
+def existing_verified_noop(worktree: Path) -> list:
+    """Exemptions already recorded in the repo's manifest, if any.
+
+    Re-wiring must not silently drop them: land-work would then fail closed on
+    paths the user had deliberately exempted, with no record of why.
+    """
+    path = worktree / MANIFEST_REL
+    if not path.is_file():
+        return []
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, UnicodeDecodeError):
+        return []
+    existing = data.get("verified_noop")
+    return existing if isinstance(existing, list) else []
+
+
+def require_repo_root(worktree: Path) -> Path:
+    """Reject a worktree that is not the repo root.
+
+    Everything downstream (`land-work-run-verifier.py`, the manifest lookup,
+    the wrapper's own REPO_ROOT) is anchored at the repo root. Writing the
+    manifest into a subdirectory reports success while leaving land-work with
+    nothing to find.
+    """
+    result = subprocess.run(
+        ["git", "rev-parse", "--show-toplevel"],
+        cwd=worktree,
+        capture_output=True,
+        text=True,
+    )
+    if result.returncode != 0:
+        raise WireError(f"{worktree} is not inside a git worktree")
+    root = Path(result.stdout.strip()).resolve()
+    if root != worktree.resolve():
+        raise WireError(
+            f"{worktree} is not the root of its git worktree ({root}). land-work "
+            f"looks for {MANIFEST_REL} at the root only, so re-run with "
+            f"--worktree {root}"
+        )
+    return root
 
 
 def staging_dir(worktree: Path) -> Path:
@@ -346,8 +524,9 @@ def draft(worktree: Path, raw_checks: list[str], wrapper_path: str) -> dict:
         reject_no_ops(check)
         resolve_executable(check, worktree)
 
+    carried = existing_verified_noop(worktree)
     wrapper_body = render_wrapper(checks, wrapper_rel)
-    manifest_body = render_manifest(wrapper_rel)
+    manifest_body = render_manifest(wrapper_rel, carried)
 
     staging = staging_dir(worktree)
     if staging.exists():
@@ -372,6 +551,8 @@ def draft(worktree: Path, raw_checks: list[str], wrapper_path: str) -> dict:
         "manifest_target": MANIFEST_REL.as_posix(),
         "wrapper_body": wrapper_body,
         "manifest_body": manifest_body,
+        "carried_verified_noop": carried,
+        "caveat": NO_OP_CAVEAT,
         "next": "Show both files to the user, then run `validate`, then `apply`.",
     }
 
@@ -414,7 +595,7 @@ def _trailing_json(stdout: str) -> dict | None:
     return None
 
 
-def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
+def validate(worktree: Path, timeout: int, force: bool = False) -> tuple[dict, int]:
     staging, state = _read_state(worktree)
     runner = staging / "wrapper"
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
@@ -423,7 +604,19 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     # (computed from its own depth) resolves the way it will once installed.
     wrapper_rel = Path(state["wrapper_rel"])
     installed = worktree / wrapper_rel
-    preexisting = installed.read_bytes() if installed.exists() else None
+    if installed.exists() and not force:
+        # Staging over a user's file means their content and mode are only as
+        # safe as this process surviving the gate run. Mirror `apply`'s refusal.
+        raise WireError(
+            f"{wrapper_rel.as_posix()} already exists; `validate` would "
+            "temporarily replace it while the gate runs. Choose another "
+            "--wrapper-path, or re-run with --force to accept that risk"
+        )
+    preexisting: tuple[bytes, int] | None = None
+    if installed.exists():
+        info = installed.stat()
+        preexisting = (installed.read_bytes(), stat.S_IMODE(info.st_mode))
+    created_dirs = _missing_ancestors(installed.parent)
     installed.parent.mkdir(parents=True, exist_ok=True)
     shutil.copy2(runner, installed)
     installed.chmod(installed.stat().st_mode | stat.S_IXUSR)
@@ -441,7 +634,7 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
             "error": f"verifier did not finish within {timeout}s",
         }, 1
     finally:
-        _restore(installed, preexisting)
+        _restore(installed, preexisting, created_dirs)
 
     parsed = _trailing_json(result.stdout)
     problems: list[str] = []
@@ -496,16 +689,53 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     return payload, exit_code
 
 
-def _restore(path: Path, preexisting: bytes | None) -> None:
+def _missing_ancestors(directory: Path) -> list[Path]:
+    """Directories `mkdir(parents=True)` would create, deepest first."""
+    missing: list[Path] = []
+    current = directory
+    while not current.exists() and current != current.parent:
+        missing.append(current)
+        current = current.parent
+    return missing
+
+
+def _restore(
+    path: Path, preexisting: tuple[bytes, int] | None, created_dirs: list[Path]
+) -> None:
     if preexisting is None:
         path.unlink(missing_ok=True)
     else:
-        path.write_bytes(preexisting)
+        data, mode = preexisting
+        path.write_bytes(data)
+        os.chmod(path, mode)
+    for directory in created_dirs:
+        try:
+            directory.rmdir()
+        except OSError:
+            break
 
 
 # --------------------------------------------------------------------------
 # apply
 # --------------------------------------------------------------------------
+
+
+def _staged_fingerprint(staging: Path, state: dict) -> str:
+    """Hash what is actually on disk, not what state.json remembers.
+
+    Comparing the receipt against `state["fingerprint"]` is vacuous: validate
+    copies one field to the other inside the same file. Only re-reading the
+    staged bytes can detect a wrapper swapped out after validation.
+    """
+    wrapper = staging / "wrapper"
+    manifest = staging / "verifier.json"
+    if not wrapper.is_file() or not manifest.is_file():
+        raise WireError("the staged draft is incomplete; re-run `draft`")
+    return _fingerprint(
+        wrapper.read_text(encoding="utf-8"),
+        manifest.read_text(encoding="utf-8"),
+        Path(state["wrapper_rel"]),
+    )
 
 
 def apply(worktree: Path, force: bool) -> dict:
@@ -516,9 +746,12 @@ def apply(worktree: Path, force: bool) -> dict:
             "no validation receipt; run `wire-land-verifier.py validate` before "
             "`apply` so the wrapper is never installed unproven"
         )
-    if receipt.get("fingerprint") != state["fingerprint"]:
+    staged_fingerprint = _staged_fingerprint(staging, state)
+    if receipt.get("fingerprint") != staged_fingerprint:
         raise WireError(
-            "the draft changed after validation; re-run `validate` before `apply`"
+            "the staged files no longer hash to the validated fingerprint; the "
+            "draft changed (or was tampered with) after validation. Re-run "
+            "`draft` and `validate` before `apply`"
         )
     if receipt.get("selected_check_count", 0) < 1:
         raise WireError(
@@ -552,6 +785,7 @@ def apply(worktree: Path, force: bool) -> dict:
         "wrapper": state["wrapper_rel"],
         "manifest": MANIFEST_REL.as_posix(),
         "validated_status": receipt.get("status"),
+        "caveat": NO_OP_CAVEAT,
         "next": "Commit both files so land-work finds the manifest on the next landing.",
     }
 
@@ -590,6 +824,11 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "--timeout", type=int, default=1800, help="seconds before giving up"
     )
+    validate_parser.add_argument(
+        "--force",
+        action="store_true",
+        help="stage over an existing file at the wrapper path",
+    )
 
     apply_parser = subparsers.add_parser(
         "apply", help="install the validated wrapper and manifest"
@@ -608,12 +847,13 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
+        require_repo_root(worktree)
         if args.command == "discover":
             payload, exit_code = discover(worktree), 0
         elif args.command == "draft":
             payload, exit_code = draft(worktree, args.check, args.wrapper_path), 0
         elif args.command == "validate":
-            payload, exit_code = validate(worktree, args.timeout)
+            payload, exit_code = validate(worktree, args.timeout, args.force)
         else:
             payload, exit_code = apply(worktree, args.force), 0
     except WireError as error:
