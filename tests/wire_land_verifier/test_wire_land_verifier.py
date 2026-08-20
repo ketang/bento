@@ -77,6 +77,29 @@ class DiscoverTest(WireLandVerifierTestBase):
         commands = [c["command"] for c in payload["candidates"]]
         self.assertIn("pytest -q", commands)
 
+    def test_quoted_run_step_does_not_crash_discovery(self) -> None:
+        """An unpaired-quote strip made shlex raise ValueError as a traceback."""
+        write(
+            self.repo / ".github/workflows/ci.yml",
+            'jobs:\n  build:\n    steps:\n'
+            '      - run: npm test -- --grep "smoke"\n'
+            "      - run: make check\n",
+        )
+        payload = self.payload(self.wire("discover"))
+        commands = [c["command"] for c in payload["candidates"]]
+        self.assertIn('npm test -- --grep "smoke"', commands)
+        self.assertIn("make check", commands)
+
+    def test_unparseable_run_step_is_skipped_not_fatal(self) -> None:
+        write(
+            self.repo / ".github/workflows/ci.yml",
+            "jobs:\n  build:\n    steps:\n"
+            "      - run: echo it's broken \"\n"
+            "      - run: make check\n",
+        )
+        payload = self.payload(self.wire("discover"))
+        self.assertIn("make check", [c["command"] for c in payload["candidates"]])
+
     def test_discover_never_writes_anything(self) -> None:
         write(self.repo / "Makefile", "ci:\n\techo ci\n")
         before = git(self.repo, "status", "--porcelain").stdout
@@ -111,6 +134,62 @@ class DraftTest(WireLandVerifierTestBase):
                 result = self.wire("draft", "--check", f"gate::{command}", check=False)
                 self.assertNotEqual(result.returncode, 0, command)
                 self.assertIn("no-op", (result.stderr + result.stdout).lower())
+
+    def test_draft_rejects_no_ops_hidden_behind_env_prefixes(self) -> None:
+        """`env true` reached a full install before; a prefix is not a gate."""
+        for command in (
+            "env true",
+            "env FOO=1 true",
+            "nohup true",
+            "nice -n 5 true",
+            "command true",
+            "time true",
+        ):
+            with self.subTest(command=command):
+                result = self.wire("draft", "--check", f"gate::{command}", check=False)
+                self.assertNotEqual(result.returncode, 0, command)
+                self.assertIn("no-op", (result.stderr + result.stdout).lower())
+
+    def test_draft_rejects_no_ops_behind_clustered_shell_flags(self) -> None:
+        """A bare `"-c" in argv` test missed all of these."""
+        for command in (
+            "bash -lc true",
+            "sh -cx true",
+            "bash -ec true",
+            "sh -c -- true",
+            "sh -c ''",
+        ):
+            with self.subTest(command=command):
+                result = self.wire("draft", "--check", f"gate::{command}", check=False)
+                self.assertNotEqual(result.returncode, 0, command)
+
+    def test_draft_rejects_trivial_interpreter_one_liners(self) -> None:
+        for command in ("python3 -c pass", "python3 -c ''", "node -e ''"):
+            with self.subTest(command=command):
+                result = self.wire("draft", "--check", f"gate::{command}", check=False)
+                self.assertNotEqual(result.returncode, 0, command)
+
+    def test_draft_reports_that_no_op_screening_is_best_effort(self) -> None:
+        """The tool must not claim a completeness no denylist can deliver."""
+        payload = self.payload(self.wire("draft", "--check", self.passing_check()))
+        self.assertIn("caveat", payload)
+        self.assertIn("best-effort", payload["caveat"])
+
+    def test_draft_carries_forward_existing_verified_noop_exemptions(self) -> None:
+        write(
+            self.repo / MANIFEST_REL,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "command": ["./scripts/old.sh"],
+                    "verified_noop": ["docs/**", "*.md"],
+                }
+            ),
+        )
+        payload = self.payload(self.wire("draft", "--check", self.passing_check()))
+        manifest = json.loads(payload["manifest_body"])
+        self.assertEqual(manifest["verified_noop"], ["docs/**", "*.md"])
+        self.assertEqual(payload["carried_verified_noop"], ["docs/**", "*.md"])
 
     def test_draft_rejects_unresolvable_executable(self) -> None:
         result = self.wire(
@@ -195,6 +274,35 @@ class ApplyTest(WireLandVerifierTestBase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse((self.repo / MANIFEST_REL).exists())
 
+    def test_apply_refuses_a_wrapper_swapped_out_after_validation(self) -> None:
+        """The fingerprint check compared state.json to itself, so it never fired.
+
+        Tampering with the staged wrapper after a legitimate validate used to
+        install the tampered file.
+        """
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        staged = self.repo / ".git/bento/wire-land-verifier/wrapper"
+        self.assertTrue(staged.is_file())
+        write(
+            staged,
+            '#!/bin/sh\necho \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":["fake"]}\'\n',
+        )
+        result = self.wire("apply", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.repo / MANIFEST_REL).exists())
+        self.assertFalse((self.repo / "scripts/land-work-verifier.py").exists())
+
+    def test_apply_refuses_a_tampered_staged_manifest(self) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        staged = self.repo / ".git/bento/wire-land-verifier/verifier.json"
+        write(staged, '{"schema_version": 1, "command": ["./evil.sh"]}\n')
+        result = self.wire("apply", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.repo / MANIFEST_REL).exists())
+
     def test_apply_refuses_to_clobber_an_existing_manifest_without_force(self) -> None:
         write(self.repo / MANIFEST_REL, '{"schema_version": 1, "command": ["./x"]}\n')
         self.wire("draft", "--check", self.passing_check())
@@ -235,6 +343,73 @@ class ApplyTest(WireLandVerifierTestBase):
         diagnostics = json.loads(result.stdout)
         self.assertEqual(diagnostics["verifier_status"], "passed")
         self.assertGreaterEqual(diagnostics["selected_check_count"], 1)
+
+
+class RepoRootTest(WireLandVerifierTestBase):
+    """land-work reads the manifest from the repo root only (MEDIUM 5)."""
+
+    def wire_from(
+        self, cwd: Path, *args: str, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return run([str(SCRIPT), *args], cwd, check=check)
+
+    def test_running_from_a_subdirectory_is_refused(self) -> None:
+        sub = self.repo / "sub"
+        sub.mkdir()
+        for command in ("discover", "draft", "validate", "apply"):
+            with self.subTest(command=command):
+                args = ["draft", "--check", "gate::./gate.sh"]
+                args = args if command == "draft" else [command]
+                result = self.wire_from(sub, *args, check=False)
+                self.assertNotEqual(result.returncode, 0, command)
+                self.assertIn("root", result.stderr + result.stdout)
+
+    def test_subdirectory_run_installs_nothing_anywhere(self) -> None:
+        sub = self.repo / "sub"
+        sub.mkdir()
+        gate = self.repo / "gate.sh"
+        write(gate, "#!/bin/sh\nexit 0\n")
+        gate.chmod(0o755)
+        self.wire_from(sub, "draft", "--check", "gate::../gate.sh", check=False)
+        self.assertFalse((sub / MANIFEST_REL).exists())
+        self.assertFalse((self.repo / MANIFEST_REL).exists())
+
+
+class ValidateStagingSafetyTest(WireLandVerifierTestBase):
+    """validate briefly installs the wrapper; it must not damage a user file."""
+
+    def existing_wrapper(self, mode: int = 0o600) -> Path:
+        target = self.repo / "scripts/land-work-verifier.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        write(target, "#!/usr/bin/env python3\n# hand-written by the user\n")
+        target.chmod(mode)
+        return target
+
+    def test_validate_refuses_to_stage_over_an_existing_file(self) -> None:
+        target = self.existing_wrapper()
+        self.wire("draft", "--check", self.passing_check())
+        result = self.wire("validate", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already exists", result.stderr + result.stdout)
+        self.assertIn("hand-written", target.read_text())
+
+    def test_validate_force_restores_original_bytes_and_mode(self) -> None:
+        target = self.existing_wrapper(0o600)
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate", "--force")
+        self.assertIn("hand-written", target.read_text())
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def test_validate_cleans_up_directories_it_created(self) -> None:
+        self.wire(
+            "draft",
+            "--check",
+            self.passing_check(),
+            "--wrapper-path",
+            "tools/deep/verify.py",
+        )
+        self.wire("validate")
+        self.assertFalse((self.repo / "tools").exists())
 
 
 if __name__ == "__main__":
