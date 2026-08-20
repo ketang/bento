@@ -314,6 +314,90 @@ class LiteralOnlyBindingFormsTest(unittest.TestCase):
             "    return payload['cwd'] or _g()\n"
         )
 
+    def test_dict_unpack_merge_of_payload_satisfies_check(self) -> None:
+        """`{**DEFAULTS, **payload}` is an `ast.Dict` node but carries stdin
+        input. Classifying it as a hardcoded literal by node type alone made
+        `merged['cwd']` -- the only cwd read in the file -- look like a decoy.
+        """
+        self._assert_clean(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    payload = json.load(sys.stdin)\n"
+            "    merged = {**DEFAULTS, **payload}\n"
+            "    return merged['cwd'] or _g()\n"
+        )
+
+    def test_list_star_unpack_of_payload_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    items = [*json.load(sys.stdin)]\n"
+            "    return items['cwd'] or _g()\n"
+        )
+
+    def test_dict_literal_with_non_literal_value_satisfies_check(self) -> None:
+        """A dict literal whose *values* come from a call is not hardcoded."""
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': _parse()}\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_item_assignment_population_satisfies_check(self) -> None:
+        """`payload[k] = v` mutates `payload`, but the name sits in Load
+        position inside the Store node, so the Name-Store sweep never sees it.
+        """
+        self._assert_clean(
+            "def f():\n"
+            "    payload = {}\n"
+            "    for k, v in json.load(sys.stdin).items():\n"
+            "        payload[k] = v\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_attribute_assignment_population_satisfies_check(self) -> None:
+        self._assert_clean(
+            "class Box:\n"
+            "    pass\n\n\n"
+            "def f():\n"
+            "    box = Box()\n"
+            "    box.data = json.load(sys.stdin)\n"
+            "    return box.data.get('cwd') or _g()\n"
+        )
+
+    def test_nested_item_assignment_population_satisfies_check(self) -> None:
+        """A write through a chain (`state.cache['k'] = v`) mutates the root
+        name, so the root must be rescued too."""
+        self._assert_clean(
+            "def f():\n"
+            "    state = {'cache': {}}\n"
+            "    state['cache']['cwd'] = json.load(sys.stdin)['cwd']\n"
+            "    return state['cache'].get('cwd') or _g()\n"
+        )
+
+    def test_item_deletion_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    payload = {'cwd': '/tmp'}\n"
+            "    del payload['cwd']\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_payload_copy_accessor_chain_satisfies_check(self) -> None:
+        """Closing the `DEFAULTS.copy().get('cwd')` decoy must not reject the
+        same shape over a genuine payload."""
+        self._assert_clean(
+            "def f():\n"
+            "    payload = json.load(sys.stdin)\n"
+            "    return payload.copy().get('cwd') or _g()\n"
+        )
+
+    def test_dict_of_payload_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    payload = json.load(sys.stdin)\n"
+            "    return dict(payload).get('cwd') or _g()\n"
+        )
+
 
 class LiteralOnlyDecoyTest(unittest.TestCase):
     """The other direction: reads that provably cannot be the stdin payload
@@ -377,6 +461,57 @@ class LiteralOnlyDecoyTest(unittest.TestCase):
             "def f():\n"
             "    unrelated = DEFAULTS.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
         )
+
+    def test_inline_dict_factory_call_is_a_decoy(self) -> None:
+        """`dict(cwd='/tmp')` is a decoy once assigned to a name (see
+        test_literal_dict_factory_call_is_a_decoy); it must be a decoy inline
+        too."""
+        self._assert_flagged(
+            "\ndef f():\n"
+            "    unrelated = dict(cwd='/tmp').get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_read_only_accessor_chain_over_literal_is_a_decoy(self) -> None:
+        """`.copy()` is an allowlisted read-only accessor, so `DEFAULTS` stays
+        literal-only -- the chain over it must stay a decoy as well."""
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS.copy().get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_literal_factory_over_literal_name_is_a_decoy(self) -> None:
+        """A builtin container factory copies its argument rather than
+        populating it, so `dict(DEFAULTS)` is still hardcoded."""
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    unrelated = dict(DEFAULTS).get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_nested_literal_container_is_a_decoy(self) -> None:
+        """Inspecting container contents must not accidentally rescue a
+        container that is literal all the way down."""
+        self._assert_flagged(
+            "DEFAULTS = {'nested': {'cwd': '/tmp'}, 'items': (1, 2)}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_alias_cycle_satisfies_check(self) -> None:
+        """The fixpoint starts empty and only ever adds grounded names, so an
+        alias cycle never resolves to literal-only and its read is accepted.
+        That direction is deliberate: this lint gates every hook, so erring
+        toward acceptance is the cheap error."""
+        src = (
+            "import os\n\n"
+            "a = b\n"
+            "b = a\n\n\n"
+            "def f():\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return a.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
 
     def test_alias_of_dynamic_name_satisfies_check(self) -> None:
         """An alias chain that bottoms out in a dynamic binding is NOT a

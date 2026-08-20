@@ -175,8 +175,29 @@ def _python_primitive_calls(tree: ast.AST) -> list[tuple[int, str]]:
 
 
 def _is_literal_container(node: ast.AST) -> bool:
-    """A dict/list/set/tuple/constant literal — never a payload object."""
-    return isinstance(node, (ast.Dict, ast.List, ast.Set, ast.Tuple, ast.Constant))
+    """A dict/list/set/tuple/constant literal whose contents are *also* all
+    literal — never a payload object.
+
+    Inspecting the contents matters: `{**DEFAULTS, **payload}` and
+    `[*payload_items]` are `ast.Dict`/`ast.List` nodes, but they carry the stdin
+    payload. Treating them as hardcoded literals would wrongly reject a hook
+    that reads `merged["cwd"]`. Any `**`/`*` unpacking (a `None` key in a Dict,
+    an `ast.Starred` element) makes the container non-literal, as does any
+    non-literal key, value, or element.
+    """
+    if isinstance(node, ast.Constant):
+        return True
+    if isinstance(node, ast.Dict):
+        # A `None` key is `**unpacking` — the mapping being unpacked can be
+        # anything, including the payload.
+        return all(key is not None for key in node.keys) and all(
+            _is_literal_container(child)
+            for child in (*node.keys, *node.values)
+            if child is not None
+        )
+    if isinstance(node, (ast.List, ast.Set, ast.Tuple)):
+        return all(_is_literal_container(elt) for elt in node.elts)
+    return False
 
 
 # Names of builtin container factories. `DEFAULTS = dict(cwd='/tmp')` is just
@@ -251,6 +272,8 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
       `for` targets, `with ... as` targets, walrus assignments, augmented
       assignments, comprehension targets and `except ... as` all count, since
       each can bind a value derived from input;
+    * it is populated or mutated in place through item or attribute assignment
+      (`payload[k] = v`, `obj.attr = v`, `del payload[k]`);
     * it is the receiver of a method call that is not a known read-only
       accessor (`payload = {}` then `payload.update(json.load(sys.stdin))`);
     * it is passed as an argument to a call, which could populate it in place.
@@ -322,6 +345,18 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
             and id(node) not in assign_targets
         ):
             dynamic_names.add(node.id)
+        elif isinstance(node, (ast.Subscript, ast.Attribute)) and isinstance(
+            node.ctx, (ast.Store, ast.Del)
+        ):
+            # In-place population: `payload[k] = v`, `obj.attr = v`, `del d[k]`.
+            # The mutated name sits in *Load* position inside the Store node, so
+            # the sweep above never sees it. Walk down to the root name — a
+            # write to `a.b["c"]` mutates `a` just as much as a write to `a`.
+            root: ast.AST = node
+            while isinstance(root, (ast.Subscript, ast.Attribute)):
+                root = root.value
+            if isinstance(root, ast.Name):
+                dynamic_names.add(root.id)
         elif isinstance(node, ast.Call):
             func = node.func
             if (
@@ -331,6 +366,16 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
             ):
                 # e.g. `payload.update(json.load(sys.stdin))`
                 dynamic_names.add(func.value.id)
+            if (
+                isinstance(func, ast.Name)
+                and func.id in _LITERAL_FACTORY_NAMES
+                and func.id not in bound
+            ):
+                # A builtin container factory copies its argument; it never
+                # populates it in place. `dict(DEFAULTS)` leaves `DEFAULTS`
+                # just as hardcoded as it was, so the arg sweep below -- which
+                # exists to catch in-place population -- must not fire here.
+                continue
             for arg in (*node.args, *(kw.value for kw in node.keywords)):
                 if isinstance(arg, ast.Starred):
                     arg = arg.value
@@ -364,9 +409,12 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
 
     Reads whose base object is provably not the stdin payload do not count:
 
-    * an inline literal container -- `{'cwd': '/tmp'}.get('cwd')`;
+    * an inline literal container -- `{'cwd': '/tmp'}.get('cwd')`, or an
+      inline literal-factory call -- `dict(cwd='/tmp').get('cwd')`;
     * `os.environ`, which is the process environment, not the payload;
-    * a name that is literal-only per `_literal_only_names`.
+    * a name that is literal-only per `_literal_only_names`;
+    * a read-only accessor chain over any of the above --
+      `DEFAULTS.copy().get('cwd')`, `dict(DEFAULTS).get('cwd')`.
 
     A read against any other kind of object (a function parameter, a name
     assigned from a call or attribute access, or a bare attribute/call
@@ -380,6 +428,7 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
     """
     literal_only = _literal_only_names(tree)
     import_aliases = _collect_import_aliases(tree)
+    bound = _bound_names(tree)
     environ_targets = _ENVIRON_PWD_SUBSCRIPT_TARGETS | _ENVIRON_PWD_GET_TARGETS
 
     def _is_decoy_base(node: ast.AST) -> bool:
@@ -387,7 +436,33 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
             return True
         if _resolve_dotted(node, import_aliases) in environ_targets:
             return True
-        return isinstance(node, ast.Name) and node.id in literal_only
+        if isinstance(node, ast.Name):
+            return node.id in literal_only
+        if isinstance(node, ast.Call):
+            func = node.func
+            # A read-only accessor cannot turn a decoy into payload data, so
+            # the chain stays a decoy: `DEFAULTS.copy().get("cwd")`. The
+            # recursion is what keeps `payload.copy().get("cwd")` accepted --
+            # `payload` is not a decoy base, so neither is the chain.
+            if (
+                isinstance(func, ast.Attribute)
+                and func.attr in _READ_ONLY_METHODS
+                and _is_decoy_base(func.value)
+            ):
+                return True
+            # Same literal-factory rule `_binding_kind` applies to assignments,
+            # so `dict(cwd="/tmp").get("cwd")` is a decoy inline exactly as it
+            # is once assigned to a name. Decoy arguments (not just inline
+            # literals) count, which also covers `dict(DEFAULTS)`.
+            if (
+                isinstance(func, ast.Name)
+                and func.id in _LITERAL_FACTORY_NAMES
+                and func.id not in bound
+                and all(_is_decoy_base(arg) for arg in node.args)
+                and all(_is_decoy_base(kw.value) for kw in node.keywords)
+            ):
+                return True
+        return False
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Subscript):
