@@ -162,6 +162,57 @@ class PythonCheckTest(unittest.TestCase):
         findings = checker.check_python_source(src, FAKE)
         self.assertTrue(any("os.getcwd()" in f.message for f in findings))
 
+    def test_literal_dict_cwd_read_does_not_satisfy_payload_check(self) -> None:
+        """bento-5ea5: check B was object-blind — it accepted ANY .get("cwd")
+        anywhere in the file, even against a hardcoded literal that can't be
+        the stdin payload. This must now be flagged."""
+        src = (
+            "import os\n\n"
+            "DEFAULTS = {'cwd': '/tmp/fallback'}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS.get('cwd')\n"
+            "    # hook-cwd-exempt: intentional\n"
+            "    return os.getcwd()\n"
+        )
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("never" in f.message and "cwd" in f.message for f in findings))
+
+    def test_dict_literal_subscript_cwd_does_not_satisfy_payload_check(self) -> None:
+        src = (
+            "import os\n\n"
+            "DEFAULTS = {'cwd': '/tmp/fallback'}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS['cwd']\n"
+            "    # hook-cwd-exempt: intentional\n"
+            "    return os.getcwd()\n"
+        )
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("never" in f.message and "cwd" in f.message for f in findings))
+
+    def test_dynamic_indirection_through_local_variable_satisfies_check(self) -> None:
+        """A name derived from a call (not a literal) still satisfies check B
+        even without proving it traces back to the payload — this mirrors
+        real hooks like record-bash.py, where the object read is a local
+        variable built from a wrapper call, not the payload variable itself."""
+        src = (
+            "import os\n\n\n"
+            "def f(payload):\n"
+            "    tool_input = _mapping(payload.get('tool_input'))\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return tool_input.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+    def test_module_level_json_load_assignment_satisfies_check(self) -> None:
+        src = (
+            "import json, os, sys\n\n"
+            "hook_input = json.load(sys.stdin)\n\n\n"
+            "def f():\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return hook_input.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
     def test_subscript_payload_cwd_reference_satisfies_check(self) -> None:
         src = (
             "import os\n\n\ndef f(payload):\n"
@@ -169,6 +220,418 @@ class PythonCheckTest(unittest.TestCase):
             "        return payload['cwd']\n"
             "    # hook-cwd-exempt: fallback when payload lacks cwd\n"
             "    return os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+
+
+class LiteralOnlyBindingFormsTest(unittest.TestCase):
+    """bento-5ea5 follow-up: the literal-only decoy filter must not reject a
+    genuine payload read just because the payload name happens to also have a
+    literal binding. This lint gates every hook in the repo, so a false
+    positive here fails CI on a correct hook. Each case below is a binding
+    form that leaves the name carrying real stdin input."""
+
+    EXEMPT = "    # hook-cwd-exempt: last-resort fallback only.\n"
+
+    def _assert_clean(self, body: str) -> None:
+        src = "import json, os, sys\n\n\n" + body + "\n\ndef _g():\n" + self.EXEMPT + "    return os.getcwd()\n"
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+    def test_literal_default_then_update_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    payload = {}\n"
+            "    payload.update(json.load(sys.stdin))\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_literal_default_then_setdefault_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    payload = {}\n"
+            "    payload.setdefault('cwd', _parse())\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_literal_default_passed_to_call_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    payload = {}\n"
+            "    _fill(payload)\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_tuple_unpack_rebind_satisfies_check(self) -> None:
+        self._assert_clean(
+            "payload = {}\n\n\n"
+            "def f():\n"
+            "    global payload\n"
+            "    payload, extra = _parse()\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_for_target_rebind_satisfies_check(self) -> None:
+        self._assert_clean(
+            "payload = {}\n\n\n"
+            "def f():\n"
+            "    for payload in _iter():\n"
+            "        pass\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_with_as_rebind_satisfies_check(self) -> None:
+        self._assert_clean(
+            "payload = {}\n\n\n"
+            "def f():\n"
+            "    with _open() as payload:\n"
+            "        return payload.get('cwd') or _g()\n"
+        )
+
+    def test_walrus_rebind_satisfies_check(self) -> None:
+        self._assert_clean(
+            "payload = {}\n\n\n"
+            "def f():\n"
+            "    if (payload := json.load(sys.stdin)):\n"
+            "        return payload.get('cwd') or _g()\n"
+        )
+
+    def test_augmented_assign_rebind_satisfies_check(self) -> None:
+        self._assert_clean(
+            "payload = {}\n\n\n"
+            "def f():\n"
+            "    global payload\n"
+            "    payload |= _parse()\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_subscript_read_on_rebound_name_satisfies_check(self) -> None:
+        self._assert_clean(
+            "payload = {}\n\n\n"
+            "def f():\n"
+            "    for payload in _iter():\n"
+            "        pass\n"
+            "    return payload['cwd'] or _g()\n"
+        )
+
+    def test_dict_unpack_merge_of_payload_satisfies_check(self) -> None:
+        """`{**DEFAULTS, **payload}` is an `ast.Dict` node but carries stdin
+        input. Classifying it as a hardcoded literal by node type alone made
+        `merged['cwd']` -- the only cwd read in the file -- look like a decoy.
+        """
+        self._assert_clean(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    payload = json.load(sys.stdin)\n"
+            "    merged = {**DEFAULTS, **payload}\n"
+            "    return merged['cwd'] or _g()\n"
+        )
+
+    def test_list_star_unpack_of_payload_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    items = [*json.load(sys.stdin)]\n"
+            "    return items['cwd'] or _g()\n"
+        )
+
+    def test_dict_literal_with_non_literal_value_satisfies_check(self) -> None:
+        """A dict literal whose *values* come from a call is not hardcoded."""
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': _parse()}\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_item_assignment_population_satisfies_check(self) -> None:
+        """`payload[k] = v` mutates `payload`, but the name sits in Load
+        position inside the Store node, so the Name-Store sweep never sees it.
+        """
+        self._assert_clean(
+            "def f():\n"
+            "    payload = {}\n"
+            "    for k, v in json.load(sys.stdin).items():\n"
+            "        payload[k] = v\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_attribute_assignment_population_satisfies_check(self) -> None:
+        self._assert_clean(
+            "class Box:\n"
+            "    pass\n\n\n"
+            "def f():\n"
+            "    box = Box()\n"
+            "    box.data = json.load(sys.stdin)\n"
+            "    return box.data.get('cwd') or _g()\n"
+        )
+
+    def test_nested_item_assignment_population_satisfies_check(self) -> None:
+        """A write through a chain (`state.cache['k'] = v`) mutates the root
+        name, so the root must be rescued too."""
+        self._assert_clean(
+            "def f():\n"
+            "    state = {'cache': {}}\n"
+            "    state['cache']['cwd'] = json.load(sys.stdin)['cwd']\n"
+            "    return state['cache'].get('cwd') or _g()\n"
+        )
+
+    def test_chained_write_is_the_only_rescue(self) -> None:
+        """Non-vacuous guard for the walk-down to the root name.
+
+        Every other chained-write test is rescued by something else as well --
+        a `Subscript`/`Attribute` read base (which `_is_decoy_base` never
+        rejects), a dynamically bound receiver, or a second `cwd` read on the
+        write line. Here the read base is a bare `Name`, the binding is a
+        nested literal, and the sole `cwd` read is `state.get('cwd')`, so the
+        chained write `state['cache']['k'] = ...` is the only thing keeping
+        `state` out of the literal-only set. Truncating the walk to
+        `node.value` flags this source.
+        """
+        self._assert_clean(
+            "def f():\n"
+            "    state = {'cache': {}}\n"
+            "    state['cache']['k'] = json.load(sys.stdin)\n"
+            "    return state.get('cwd') or _g()\n"
+        )
+
+    def test_chained_deletion_is_the_only_rescue(self) -> None:
+        """Same shape, via `del` rather than assignment."""
+        self._assert_clean(
+            "def f():\n"
+            "    state = {'cache': {'k': 1}}\n"
+            "    del state['cache']['k']\n"
+            "    return state.get('cwd') or _g()\n"
+        )
+
+    def test_parameter_shadowing_a_factory_name_satisfies_check(self) -> None:
+        """The literal-factory carve-out applies only to an unshadowed builtin.
+
+        A parameter named `dict` is a binding, so `dict(cfg)` here is an
+        arbitrary call that could populate `cfg` in place. Missing `ast.arg`
+        made this identical hook clean or flagged depending on the parameter's
+        name.
+        """
+        self._assert_clean(
+            "def f(dict):\n"
+            "    cfg = {}\n"
+            "    dict(cfg)\n"
+            "    return cfg.get('cwd') or _g()\n"
+        )
+
+    def test_except_as_shadowing_a_factory_name_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    cfg = {}\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception as dict:\n"
+            "        pass\n"
+            "    dict(cfg)\n"
+            "    return cfg.get('cwd') or _g()\n"
+        )
+
+    def test_except_as_rebinding_satisfies_check(self) -> None:
+        """`except ... as name` binds through a plain `str`, not a Name node,
+        so the Store sweep never sees it -- but it can bind anything."""
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    try:\n"
+            "        pass\n"
+            "    except Exception as d:\n"
+            "        pass\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_match_as_rebinding_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f(obj):\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    match obj:\n"
+            "        case object() as d:\n"
+            "            pass\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_def_rebinding_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    def d():\n"
+            "        pass\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_import_rebinding_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    d = {'cwd': '/tmp'}\n"
+            "    import os as d\n"
+            "    return d['cwd'] or _g()\n"
+        )
+
+    def test_item_deletion_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    payload = {'cwd': '/tmp'}\n"
+            "    del payload['cwd']\n"
+            "    return payload.get('cwd') or _g()\n"
+        )
+
+    def test_payload_copy_accessor_chain_satisfies_check(self) -> None:
+        """Closing the `DEFAULTS.copy().get('cwd')` decoy must not reject the
+        same shape over a genuine payload."""
+        self._assert_clean(
+            "def f():\n"
+            "    payload = json.load(sys.stdin)\n"
+            "    return payload.copy().get('cwd') or _g()\n"
+        )
+
+    def test_dict_of_payload_satisfies_check(self) -> None:
+        self._assert_clean(
+            "def f():\n"
+            "    payload = json.load(sys.stdin)\n"
+            "    return dict(payload).get('cwd') or _g()\n"
+        )
+
+
+class LiteralOnlyDecoyTest(unittest.TestCase):
+    """The other direction: reads that provably cannot be the stdin payload
+    must not satisfy check B."""
+
+    EXEMPT = "    # hook-cwd-exempt: intentional\n"
+
+    def _assert_flagged(self, body: str) -> None:
+        src = "import os\n\n" + body
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(
+            any("never" in f.message and "cwd" in f.message for f in findings),
+            f"expected payload-check violation, got {[f.message for f in findings]}",
+        )
+
+    def test_inline_dict_literal_get_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "\ndef f():\n"
+            "    unrelated = {'cwd': '/tmp'}.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_inline_dict_literal_subscript_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "\ndef f():\n"
+            "    unrelated = {'cwd': '/tmp'}['cwd']\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_os_environ_get_cwd_is_a_decoy(self) -> None:
+        """os.environ is the process environment, not the stdin payload."""
+        self._assert_flagged(
+            "\ndef f():\n"
+            "    unrelated = os.environ.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_os_environ_subscript_cwd_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "\ndef f():\n"
+            "    unrelated = os.environ['cwd']\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_single_hop_alias_of_literal_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    d = DEFAULTS\n"
+            "    unrelated = d.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_multi_hop_alias_of_literal_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n"
+            "MID = DEFAULTS\n\n\n"
+            "def f():\n"
+            "    d = MID\n"
+            "    unrelated = d.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_literal_dict_factory_call_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "DEFAULTS = dict(cwd='/tmp')\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_inline_dict_factory_call_is_a_decoy(self) -> None:
+        """`dict(cwd='/tmp')` is a decoy once assigned to a name (see
+        test_literal_dict_factory_call_is_a_decoy); it must be a decoy inline
+        too."""
+        self._assert_flagged(
+            "\ndef f():\n"
+            "    unrelated = dict(cwd='/tmp').get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_read_only_accessor_chain_over_literal_is_a_decoy(self) -> None:
+        """`.copy()` is an allowlisted read-only accessor, so `DEFAULTS` stays
+        literal-only -- the chain over it must stay a decoy as well."""
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS.copy().get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_literal_factory_over_literal_name_is_a_decoy(self) -> None:
+        """A builtin container factory copies its argument rather than
+        populating it, so `dict(DEFAULTS)` is still hardcoded."""
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    unrelated = dict(DEFAULTS).get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_nested_literal_container_is_a_decoy(self) -> None:
+        """Inspecting container contents must not accidentally rescue a
+        container that is literal all the way down."""
+        self._assert_flagged(
+            "DEFAULTS = {'nested': {'cwd': '/tmp'}, 'items': (1, 2)}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS.get('cwd')\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_alias_cycle_satisfies_check(self) -> None:
+        """The fixpoint starts empty and only ever adds grounded names, so an
+        alias cycle never resolves to literal-only and its read is accepted.
+        That direction is deliberate: this lint gates every hook, so erring
+        toward acceptance is the cheap error."""
+        src = (
+            "import os\n\n"
+            "a = b\n"
+            "b = a\n\n\n"
+            "def f():\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return a.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+    def test_alias_of_dynamic_name_satisfies_check(self) -> None:
+        """An alias chain that bottoms out in a dynamic binding is NOT a
+        decoy -- it may carry the real payload."""
+        src = (
+            "import json, os, sys\n\n"
+            "PAYLOAD = json.load(sys.stdin)\n"
+            "d = PAYLOAD\n\n\n"
+            "def f():\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return d.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+    def test_shadowed_dict_factory_is_not_treated_as_literal(self) -> None:
+        """If `dict` is rebound in the file, `dict(...)` is an ordinary call,
+        so the name stays dynamic and its read is accepted."""
+        src = (
+            "import os\n\n\n"
+            "def dict(**kwargs):\n"
+            "    return _parse()\n\n\n"
+            "def f():\n"
+            "    payload = dict(cwd='/tmp')\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return payload.get('cwd') or os.getcwd()\n"
         )
         self.assertEqual(checker.check_python_source(src, FAKE), [])
 
