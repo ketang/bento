@@ -40,14 +40,21 @@ from typing import NamedTuple
 
 EXEMPT_RE = re.compile(r"#\s*hook-cwd-exempt:\s*(\S.*)$")
 
-# Payload `cwd` field reference, e.g. .get("cwd") / ["cwd"] / 'cwd'. Only used
-# for the shell/embedded-python path, where code is scanned with regex rather
-# than parsed; comments are stripped from each line before this is applied so
-# a decoy comment mentioning "cwd" cannot satisfy the check. The Python path
-# uses an AST-based check instead (_references_payload_cwd_ast) so a "cwd"
-# substring in a docstring, comment, or unrelated string literal can't
-# satisfy it either.
-CWD_FIELD_RE = re.compile(r"""['"]cwd['"]""")
+# Payload `cwd` field *read*, e.g. `.get("cwd")` / `["cwd"]` (embedded-python
+# dict access) or `.cwd` (jq path syntax). Only used for the shell/embedded-
+# python path, where code is scanned with regex rather than parsed; comments
+# are stripped from each line before this is applied so a decoy comment
+# mentioning "cwd" cannot satisfy the check. Matching only these read shapes
+# -- not a bare quoted `'cwd'` anywhere in the file -- means a hardcoded
+# literal like `DEFAULT_KEY='cwd'` cannot satisfy the check either; it is
+# never dereferenced against anything. The Python path uses an AST-based
+# check instead (_references_payload_cwd_ast) so it can additionally reject
+# reads whose base is provably a hardcoded literal rather than the payload;
+# shell has no cheap AST, so this regex settles for requiring an actual read
+# shape as the next-best heuristic.
+CWD_FIELD_RE = re.compile(
+    r"""\.get\(\s*['"]cwd['"]|\[\s*['"]cwd['"]\s*\]|\.cwd\b"""
+)
 
 # Canonical dotted targets that count as "process CWD" or "$PWD via
 # os.environ" primitives, resolved through import-alias tracking so aliased
