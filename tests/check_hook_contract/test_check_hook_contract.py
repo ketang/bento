@@ -671,6 +671,18 @@ class ShellCheckTest(unittest.TestCase):
         findings = checker.check_shell_source(src, FAKE_SH)
         self.assertTrue(any("never" in f.message for f in findings))
 
+    def test_literal_only_cwd_string_does_not_satisfy_payload_check(self) -> None:
+        """A hardcoded literal that merely contains the string 'cwd' -- never
+        read from anything -- must not satisfy the payload-cwd check for a
+        real $PWD fallback with no genuine payload read. Shell mirror of the
+        Python-side literal-only-decoy fix (bento-5ea5)."""
+        src = (
+            "DEFAULT_KEY='cwd'\n"
+            'dir="$PWD"  # hook-cwd-exempt: deliberate\n'
+        )
+        findings = checker.check_shell_source(src, FAKE_SH)
+        self.assertTrue(any("never" in f.message for f in findings))
+
 
 if __name__ == "__main__":
     unittest.main()
