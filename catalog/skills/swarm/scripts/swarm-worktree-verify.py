@@ -45,6 +45,14 @@ def main() -> int:
         ]
     )
 
+    if require_linked_worktree and args.expected_branch is None and args.expected_worktree is None:
+        print(
+            "warning: --require-linked-worktree alone only checks that you are in "
+            "SOME linked worktree, not the one assigned to this task. Pass "
+            "--expected-branch (and/or --expected-worktree) to verify identity.",
+            file=sys.stderr,
+        )
+
     json.dump(checks, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0 if checks["ok"] else 1
