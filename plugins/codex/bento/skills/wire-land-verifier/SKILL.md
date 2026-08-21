@@ -14,13 +14,17 @@ without running the repo's checks defeats the guarantee land-work exists to
 enforce.
 
 **Where the guarantee actually lives.** The helper screens out commands that
-obviously do nothing (`true`, `echo`, `sh -c true`, `env true`, `python -c
-pass`) and refuses drafts it has not seen run. That screening is best-effort and
-cannot be complete: any command can be a no-op — `git status`, `ls`, a script
-whose body is commented out — and no static check can prove a given command is
-this repo's gate. **The binding guarantee is you confirming with the repo owner
-that the wired command is the real landing gate.** Do not treat a clean `draft`
-as evidence that the command checks anything.
+obviously do nothing and refuses drafts it has not seen run. It resolves through
+prefix commands (`timeout 5 …`, `sudo …`, `env -u FOO …`, `uv run …`) and shell
+`-c` wrappers before screening, so a no-op hidden behind one is still caught.
+Those are illustrations, not the list: the screen is a moving best-effort
+heuristic, not an enumerated net, and it cannot be complete. Any command can be
+a no-op — `git status`, `ls`, `make -f /dev/null`, a container image whose entry
+point exits 0, a script whose body is commented out — and no static check can
+prove a given command is this repo's gate. **The binding guarantee is you
+confirming with the repo owner that the wired command is the real landing
+gate.** Do not treat a clean `draft` as evidence that the command checks
+anything.
 
 ## Workflow
 
@@ -93,10 +97,14 @@ Run every subcommand from the repo root. land-work reads the manifest from the
 root only, so the helper refuses to run from a subdirectory rather than install
 a manifest where the next landing would never find it.
 
-If the wrapper path is already taken by a file you wrote, `validate` stops
-instead of standing on it while the gate runs. Pick another `--wrapper-path`, or
-pass `validate --force` to accept the temporary swap (the original bytes and
-mode are restored afterward).
+`validate` never writes to the wrapper path. It runs its copy from a scratch
+sibling in the same directory (`.land-work-verifier.<pid>.tmp.py`), which gives
+the wrapper the same `REPO_ROOT` depth it will have once installed while leaving
+any file already at the real path untouched — so re-wiring an already-wired repo
+just works, and a `validate` killed mid-gate cannot strand a generated file over
+something you wrote. Only `apply` writes to the real paths, and it refuses to
+replace an existing wrapper or manifest — including a symlink — without
+`--force`.
 
 ## Scope
 

@@ -40,6 +40,7 @@ import stat
 import subprocess
 import sys
 from pathlib import Path
+from typing import NamedTuple
 
 MANIFEST_REL = Path(".agent-plugins/bento/bento/land-work/verifier.json")
 DEFAULT_WRAPPER_REL = "scripts/land-work-verifier.py"
@@ -53,26 +54,152 @@ NO_OP_EXECUTABLES = frozenset(
     {"true", ":", "echo", "printf", "exit", "test", "[", "sleep"}
 )
 
-# Commands that merely set up an environment and then exec their argument, so a
-# no-op hidden behind them is still a no-op.
-PREFIX_COMMANDS = frozenset(
-    {"env", "nohup", "nice", "ionice", "time", "command", "stdbuf", "setsid"}
-)
+# Commands that merely set up an environment, a limit, or a runtime and then
+# run their remaining argument as the real command, so a no-op hidden behind
+# one is still a no-op. Each entry describes how to walk past that command's
+# own options so screening lands on the real executable.
+#
+#   value_flags   flags that consume the following token as their value
+#   positionals   positional arguments that precede the command (`timeout 5 CMD`)
+#   assignments   NAME=VALUE tokens are part of the prefix (`env FOO=1 CMD`)
+#   subcommands   a literal word must follow for this to be a prefix at all
+#                 (`uv run CMD` is a prefix; `uv lock` is not)
+#   script_flags  flags whose value is the command, as one shell string
+#                 (`flock -c 'make test'`, `nix-shell --run 'make test'`)
+class PrefixSpec(NamedTuple):
+    value_flags: frozenset[str] = frozenset()
+    positionals: int = 0
+    assignments: bool = False
+    subcommands: frozenset[str] = frozenset()
+    script_flags: frozenset[str] = frozenset()
 
-# Prefix flags that consume the following token as their value.
-PREFIX_VALUE_FLAGS = {
-    "nice": {"-n"},
-    "ionice": {"-c", "-n", "-p"},
-    "stdbuf": {"-i", "-o", "-e"},
+
+PREFIX_COMMANDS: dict[str, PrefixSpec] = {
+    # environment / scheduling wrappers
+    "env": PrefixSpec(
+        value_flags=frozenset(
+            {"-u", "--unset", "-S", "--split-string", "-C", "--chdir"}
+        ),
+        assignments=True,
+    ),
+    "nohup": PrefixSpec(),
+    "setsid": PrefixSpec(),
+    "nice": PrefixSpec(value_flags=frozenset({"-n", "--adjustment"})),
+    "ionice": PrefixSpec(
+        value_flags=frozenset(
+            {"-c", "--class", "-n", "--classdata", "-p", "--pid"}
+        )
+    ),
+    "stdbuf": PrefixSpec(
+        value_flags=frozenset({"-i", "--input", "-o", "--output", "-e", "--error"})
+    ),
+    "time": PrefixSpec(value_flags=frozenset({"-f", "--format", "-o", "--output"})),
+    "command": PrefixSpec(),
+    "eatmydata": PrefixSpec(),
+    "unbuffer": PrefixSpec(),
+    "chronic": PrefixSpec(),
+    # limits and retries
+    "timeout": PrefixSpec(
+        value_flags=frozenset({"-s", "--signal", "-k", "--kill-after"}),
+        positionals=1,
+    ),
+    "retry": PrefixSpec(
+        value_flags=frozenset({"-t", "--times", "-s", "--sleep", "-d", "--delay"})
+    ),
+    "flock": PrefixSpec(
+        value_flags=frozenset(
+            {"-w", "--wait", "--timeout", "-E", "--conflict-exit-code"}
+        ),
+        positionals=1,
+        script_flags=frozenset({"-c", "--command"}),
+    ),
+    "nix-shell": PrefixSpec(script_flags=frozenset({"--run", "--command"})),
+    # privilege wrappers
+    "sudo": PrefixSpec(
+        value_flags=frozenset(
+            {
+                "-u", "--user", "-g", "--group", "-p", "--prompt", "-C",
+                "--close-from", "-h", "--host", "-r", "--role", "-t", "--type",
+                "-T", "--command-timeout", "-U", "--other-user", "-D", "--chdir",
+                "-R", "--chroot",
+            }
+        )
+    ),
+    "doas": PrefixSpec(value_flags=frozenset({"-u", "-C"})),
+    "runuser": PrefixSpec(
+        value_flags=frozenset({"-u", "--user", "-g", "--group", "-G", "--supp-group"})
+    ),
+    # argument plumbing
+    "xargs": PrefixSpec(
+        value_flags=frozenset(
+            {
+                "-a", "--arg-file", "-d", "--delimiter", "-E", "-I", "--replace",
+                "-i", "-L", "--max-lines", "-l", "-n", "--max-args", "-P",
+                "--max-procs", "-s", "--max-chars",
+            }
+        )
+    ),
+    # language/runtime task runners: only a prefix in their `run`/`exec` form
+    "poetry": PrefixSpec(subcommands=frozenset({"run"})),
+    "pipenv": PrefixSpec(subcommands=frozenset({"run"})),
+    "uv": PrefixSpec(subcommands=frozenset({"run"})),
+    "pdm": PrefixSpec(subcommands=frozenset({"run"})),
+    "rye": PrefixSpec(subcommands=frozenset({"run"})),
+    "hatch": PrefixSpec(subcommands=frozenset({"run"})),
+    "bundle": PrefixSpec(subcommands=frozenset({"exec"})),
+    "npm": PrefixSpec(subcommands=frozenset({"exec"})),
+    "pnpm": PrefixSpec(subcommands=frozenset({"exec", "dlx"})),
+    "yarn": PrefixSpec(subcommands=frozenset({"exec", "dlx"})),
+    "npx": PrefixSpec(value_flags=frozenset({"-p", "--package"})),
+    "conda": PrefixSpec(
+        value_flags=frozenset({"-n", "--name", "-p", "--prefix"}),
+        subcommands=frozenset({"run"}),
+    ),
+    "mamba": PrefixSpec(
+        value_flags=frozenset({"-n", "--name", "-p", "--prefix"}),
+        subcommands=frozenset({"run"}),
+    ),
+    "micromamba": PrefixSpec(
+        value_flags=frozenset({"-n", "--name", "-p", "--prefix"}),
+        subcommands=frozenset({"run"}),
+    ),
+    "pixi": PrefixSpec(
+        value_flags=frozenset({"-e", "--environment", "--manifest-path"}),
+        subcommands=frozenset({"run", "exec"}),
+    ),
+    "mise": PrefixSpec(subcommands=frozenset({"exec", "x"})),
+    "direnv": PrefixSpec(subcommands=frozenset({"exec"}), positionals=1),
+    # misc wrappers that take the command as their tail
+    "watch": PrefixSpec(value_flags=frozenset({"-n", "--interval"})),
+    "setarch": PrefixSpec(positionals=1),
 }
 
+# Screening applied to *speculative* resolutions -- the branch taken when a
+# prefix is handed a flag the table does not know, which may or may not consume
+# the next token. Narrower than NO_OP_EXECUTABLES on purpose: `test` and `echo`
+# plausibly appear as an ordinary argument (`nice -5 make test`), while these
+# never mean real work.
+SPECULATIVE_NO_OPS = frozenset({"true", ":", "sleep", "exit"})
+
 SHELL_EXECUTABLES = frozenset({"sh", "bash", "zsh", "dash", "ksh", "ash"})
+
+# Shell options that consume the following token, so the `-c` after them is not
+# the first flag the walk sees.
+SHELL_VALUE_FLAGS = frozenset(
+    {"-o", "+o", "-O", "+O", "--rcfile", "--init-file"}
+)
 
 INTERPRETERS = frozenset(
     {"python", "python2", "python3", "perl", "ruby", "node", "nodejs"}
 )
 
 # Inline interpreter bodies that evaluate to "do nothing".
+# Shell punctuation that runs nothing on its own.
+_SHELL_SEPARATORS = " \t\n\r;&|"
+_SHELL_SEPARATOR_TOKENS = frozenset({";", ";;", "&", "&&", "|", "||"})
+
+_NEGATIVE_NUMBER_RE = re.compile(r"^-\d+$")
+
 _TRIVIAL_SCRIPT_RE = re.compile(r"^[\s;]*(?:pass|None|0|true|1)?[\s;]*$")
 
 NO_OP_CAVEAT = (
@@ -272,52 +399,177 @@ def parse_check(raw: str) -> dict:
     return {"name": name, "command": command, "argv": argv}
 
 
-def strip_prefix_commands(argv: list[str]) -> list[str]:
-    """Resolve `env FOO=1 nice -n5 <real command>` down to the real command."""
-    argv = list(argv)
-    for _ in range(8):
-        if not argv:
-            return []
-        head = Path(argv[0]).name
-        if head not in PREFIX_COMMANDS:
-            return argv
-        rest = argv[1:]
-        value_flags = PREFIX_VALUE_FLAGS.get(head, frozenset())
-        while rest:
-            token = rest[0]
-            if token == "--":
-                rest = rest[1:]
-                break
-            if head == "env" and "=" in token and not token.startswith("-"):
-                rest = rest[1:]
-                continue
-            if token.startswith("-") and token != "-":
-                if token in value_flags and len(rest) > 1:
-                    rest = rest[2:]
-                else:
-                    rest = rest[1:]
-                continue
+def _is_value(token: str) -> bool:
+    """Whether a flag may claim this token as its value.
+
+    A flag never consumes another flag (`bash -o -c true` does not hide the
+    `-c`), but a negative number is a value (`nice -n -5 make test`).
+    """
+    return not token.startswith("-") or _NEGATIVE_NUMBER_RE.match(token) is not None
+
+
+def _consume_options(spec: PrefixSpec, rest: list[str]) -> list[list[str]]:
+    """Token lists left after one prefix's own options are removed.
+
+    Returns more than one list when the prefix is handed a flag the table does
+    not describe: such a flag may or may not consume the token after it, and
+    guessing wrong is how `env -u NAME true` used to slip through. Both readings
+    are returned; the first is the primary (flag takes no value), the rest are
+    speculative and screened against SPECULATIVE_NO_OPS only.
+    """
+    speculative: list[list[str]] = []
+    while rest:
+        token = rest[0]
+        if token == "--":
+            rest = rest[1:]
             break
-        argv = rest
-    return argv
+        if spec.assignments and "=" in token and not token.startswith("-"):
+            rest = rest[1:]
+            continue
+        if not token.startswith("-") or token == "-":
+            break
+        if token in spec.value_flags and len(rest) > 1 and _is_value(rest[1]):
+            rest = rest[2:]
+            continue
+        if "=" in token:  # --flag=value carries its own value
+            rest = rest[1:]
+            continue
+        if not token.startswith("--") and token[:2] in spec.value_flags:
+            rest = rest[1:]  # -n5, attached value
+            continue
+        if len(rest) > 2:
+            speculative.append(rest[2:])
+        rest = rest[1:]
+    return [rest, *speculative]
+
+
+def _script_flag_value(spec: PrefixSpec, rest: list[str]) -> str | None:
+    """The shell-string command handed to a prefix's script flag, if any."""
+    for index, token in enumerate(rest):
+        flag, separator, attached = token.partition("=")
+        if flag not in spec.script_flags:
+            continue
+        if separator:
+            return attached
+        return rest[index + 1] if index + 1 < len(rest) else ""
+    return None
+
+
+def _strip_one_prefix(argv: list[str]) -> list[list[str]] | None:
+    """Peel one prefix command off ``argv``, or None if it is not one.
+
+    Walks options, then any required subcommand word, then the prefix's own
+    positional arguments, then options again -- the second option pass is what
+    catches `timeout 5 -- true`, where the `--` only becomes visible once the
+    duration has been consumed.
+    """
+    spec = PREFIX_COMMANDS.get(Path(argv[0]).name)
+    if spec is None:
+        return None
+    inline = _script_flag_value(spec, argv[1:])
+    if inline is not None:
+        # The command is a shell string, not the tail of the argv. Screen the
+        # string itself so `flock -c 'make test'` resolves to `make test`
+        # instead of to a nonexistent executable named "make test".
+        try:
+            return [shlex.split(inline)]
+        except ValueError:
+            return [[]]
+    results: list[list[str]] = []
+    for branch in _consume_options(spec, argv[1:]):
+        rest = branch
+        if spec.subcommands:
+            if not rest or rest[0] not in spec.subcommands:
+                # `uv lock`, `yarn test`: the head is the real command.
+                return None
+            rest = _consume_options(spec, rest[1:])[0]
+        for _ in range(spec.positionals):
+            # Never consume the last token: it is the command, not the
+            # prefix's own argument (`flock -c 'make test'`).
+            if len(rest) > 1 and not rest[0].startswith("-"):
+                rest = rest[1:]
+            else:
+                break
+        results.append(_consume_options(spec, rest)[0])
+    return results
+
+
+def prefix_resolutions(argv: list[str]) -> list[list[str]]:
+    """Every plausible real command behind a chain of prefix commands.
+
+    ``resolutions[0]`` is the primary reading -- the one the table fully
+    describes. Any others are speculative readings of an unknown flag.
+    """
+    # No iteration cap: every layer returns a strict suffix of its input, so a
+    # chain of prefixes terminates on its own. A fixed budget just meant
+    # `env env env ... true` walked out the far side unscreened.
+    primary: list[str] = list(argv)
+    speculative: list[list[str]] = []
+    while primary:
+        stripped = _strip_one_prefix(primary)
+        if stripped is None:
+            break
+        primary, *rest = stripped
+        speculative.extend(rest)
+    resolved = [primary]
+    for candidate in speculative[:8]:
+        while candidate:
+            stripped = _strip_one_prefix(candidate)
+            if stripped is None:
+                break
+            candidate = stripped[0]
+        resolved.append(candidate)
+    return resolved
+
+
+def strip_prefix_commands(argv: list[str]) -> list[str]:
+    """The primary real command behind `env FOO=1 timeout 5 <command>`."""
+    return prefix_resolutions(argv)[0]
+
+
+def _shell_walk(argv: list[str]) -> tuple[str | None, list[str]]:
+    """Split a shell argv into (inline `-c` script, remaining operands).
+
+    Walks the shell's own options rather than stopping at the first token that
+    is not a bare `-x` flag, so `bash -o pipefail -c true` and
+    `bash --rcfile FILE -c true` still expose their inline script. Clustered
+    flags (`bash -lc`) and `sh -c -- SCRIPT` are handled; a long option is never
+    mistaken for a cluster containing `c` (`--rcfile`).
+    """
+    rest = argv[1:]
+    while rest:
+        token = rest[0]
+        if token == "--":
+            return None, rest[1:]
+        if token in {"-", "+"} or not token.startswith(("-", "+")):
+            return None, rest  # a script FILE operand, not an inline script
+        if token in SHELL_VALUE_FLAGS and len(rest) > 1 and _is_value(rest[1]):
+            rest = rest[2:]
+            continue
+        if token.startswith(("--", "++")):
+            rest = rest[1:]
+            continue
+        letters = token[1:]
+        if "c" in letters:
+            tail = rest[1:]
+            while tail and tail[0] == "--":
+                tail = tail[1:]
+            return (tail[0] if tail else ""), tail[1:]
+        if (
+            letters
+            and f"{token[0]}{letters[-1]}" in SHELL_VALUE_FLAGS
+            and len(rest) > 1
+            and _is_value(rest[1])
+        ):
+            rest = rest[2:]  # `sh -eo pipefail`
+            continue
+        rest = rest[1:]
+    return None, []
 
 
 def shell_inline_script(argv: list[str]) -> str | None:
-    """Return the inline script of a `sh -c SCRIPT` argv, else None.
-
-    Handles clustered flags (`bash -lc`, `sh -cx`) and `sh -c -- SCRIPT`, which
-    a literal `"-c" in argv` test misses.
-    """
-    rest = argv[1:]
-    for index, token in enumerate(rest):
-        if token == "--" or not token.startswith("-") or token == "-":
-            return None
-        if "c" in token[1:]:
-            tail = [t for t in rest[index + 1 :]]
-            while tail and tail[0] == "--":
-                tail = tail[1:]
-            return tail[0] if tail else ""
-    return None
+    """Return the inline script of a `sh -c SCRIPT` argv, else None."""
+    return _shell_walk(argv)[0]
 
 
 def interpreter_inline_script(argv: list[str]) -> str | None:
@@ -335,21 +587,39 @@ def interpreter_inline_script(argv: list[str]) -> str | None:
 
 def no_op_reason(argv: list[str], depth: int = 0) -> str | None:
     """Why this argv obviously does nothing, or None if it might be real."""
-    argv = strip_prefix_commands(argv)
+    resolutions = prefix_resolutions(argv)
+    reason = _resolved_no_op_reason(resolutions[0], depth)
+    if reason is not None:
+        return reason
+    for candidate in resolutions[1:]:
+        if candidate and Path(candidate[0]).name in SPECULATIVE_NO_OPS:
+            name = Path(candidate[0]).name
+            return (
+                f"read one way its options run {name!r}, which does no work"
+            )
+    return None
+
+
+def _resolved_no_op_reason(argv: list[str], depth: int) -> str | None:
     if not argv:
         return "it runs no command at all"
     head = Path(argv[0]).name
     if head in NO_OP_EXECUTABLES:
         return f"{head!r} does no work"
     if depth < 4 and head in SHELL_EXECUTABLES:
-        script = shell_inline_script(argv)
+        script, operands = _shell_walk(argv)
+        if script is None and not operands:
+            # `bash`, `bash -s`: no script argument at all, so the gate is
+            # whatever happens to be on stdin -- nothing, under land-work.
+            return f"{head!r} is given no script to run"
         if script is not None:
-            try:
-                inner = shlex.split(script)
-            except ValueError:
-                inner = []
-            if not script.strip():
+            if not script.strip(_SHELL_SEPARATORS):
                 return "its inline shell script is empty"
+            try:
+                tokens = shlex.split(script)
+            except ValueError:
+                tokens = []
+            inner = [t for t in tokens if t not in _SHELL_SEPARATOR_TOKENS]
             inner_reason = no_op_reason(inner, depth + 1) if inner else None
             if inner_reason:
                 return f"it wraps a shell command that does nothing ({inner_reason})"
@@ -372,7 +642,10 @@ def reject_no_ops(check: dict) -> None:
 
 
 def resolve_executable(check: dict, worktree: Path) -> None:
-    argv0 = check["argv"][0]
+    # Resolve past `env FOO=1` / `timeout 5` first: the executable that has to
+    # exist is the real command, not the prefix that runs it.
+    resolved = strip_prefix_commands(check["argv"])
+    argv0 = resolved[0] if resolved and not resolved[0].startswith("-") else check["argv"][0]
     if "/" in argv0:
         candidate = (worktree / argv0).resolve()
         if candidate.is_file() and os.access(candidate, os.X_OK):
@@ -595,34 +868,31 @@ def _trailing_json(stdout: str) -> dict | None:
     return None
 
 
-def validate(worktree: Path, timeout: int, force: bool = False) -> tuple[dict, int]:
+def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     staging, state = _read_state(worktree)
     runner = staging / "wrapper"
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
 
-    # Run from a copy at the real target path so the wrapper's REPO_ROOT
-    # (computed from its own depth) resolves the way it will once installed.
+    # Hash what is about to run, not what `draft` recorded: a wrapper edited by
+    # hand in staging is still a wrapper this run genuinely proved, and `apply`
+    # compares against the bytes on disk.
+    executed_fingerprint = _staged_fingerprint(staging, state)
+
+    # Run from a unique sibling of the real target rather than from the target
+    # itself. The wrapper's REPO_ROOT is computed from its own path depth, so
+    # any name in the same directory resolves identically -- and staging beside
+    # the user's file instead of on top of it means `validate` never reads,
+    # replaces, or has to restore anything the user wrote.
     wrapper_rel = Path(state["wrapper_rel"])
-    installed = worktree / wrapper_rel
-    if installed.exists() and not force:
-        # Staging over a user's file means their content and mode are only as
-        # safe as this process surviving the gate run. Mirror `apply`'s refusal.
-        raise WireError(
-            f"{wrapper_rel.as_posix()} already exists; `validate` would "
-            "temporarily replace it while the gate runs. Choose another "
-            "--wrapper-path, or re-run with --force to accept that risk"
-        )
-    preexisting: tuple[bytes, int] | None = None
-    if installed.exists():
-        info = installed.stat()
-        preexisting = (installed.read_bytes(), stat.S_IMODE(info.st_mode))
-    created_dirs = _missing_ancestors(installed.parent)
-    installed.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(runner, installed)
-    installed.chmod(installed.stat().st_mode | stat.S_IXUSR)
+    scratch = worktree / wrapper_rel.parent / f".{wrapper_rel.stem}.{os.getpid()}.tmp.py"
+    _sweep_stale_scratch(scratch.parent, wrapper_rel.stem)
+    created_dirs = _missing_ancestors(scratch.parent)
+    scratch.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(runner, scratch)
+    scratch.chmod(scratch.stat().st_mode | stat.S_IXUSR)
     try:
         result = subprocess.run(
-            [str(installed)],
+            [str(scratch)],
             cwd=worktree,
             capture_output=True,
             text=True,
@@ -634,7 +904,7 @@ def validate(worktree: Path, timeout: int, force: bool = False) -> tuple[dict, i
             "error": f"verifier did not finish within {timeout}s",
         }, 1
     finally:
-        _restore(installed, preexisting, created_dirs)
+        _discard_scratch(scratch, created_dirs)
 
     parsed = _trailing_json(result.stdout)
     problems: list[str] = []
@@ -666,12 +936,13 @@ def validate(worktree: Path, timeout: int, force: bool = False) -> tuple[dict, i
         "selected_check_count": len(selected_checks) if isinstance(selected_checks, list) else 0,
         "problems": problems,
         "exit_code": result.returncode,
+        "draft_edited": executed_fingerprint != state.get("fingerprint"),
         "stderr_tail": result.stderr[-2000:],
     }
 
     if schema_valid:
         state["receipt"] = {
-            "fingerprint": state["fingerprint"],
+            "fingerprint": executed_fingerprint,
             "status": payload["status"],
             "selected_check_count": payload["selected_check_count"],
         }
@@ -699,15 +970,30 @@ def _missing_ancestors(directory: Path) -> list[Path]:
     return missing
 
 
-def _restore(
-    path: Path, preexisting: tuple[bytes, int] | None, created_dirs: list[Path]
-) -> None:
-    if preexisting is None:
-        path.unlink(missing_ok=True)
-    else:
-        data, mode = preexisting
-        path.write_bytes(data)
-        os.chmod(path, mode)
+def _sweep_stale_scratch(directory: Path, stem: str) -> None:
+    """Drop scratch copies left by an earlier run that was killed mid-gate.
+
+    A killed `validate` cannot clean up after itself; the next one can, as long
+    as it leaves alone a copy some other live process is still running.
+    """
+    if not directory.is_dir():
+        return
+    for path in directory.glob(f".{stem}.*.tmp.py"):
+        try:
+            pid = int(path.name.split(".")[-3])
+        except (IndexError, ValueError):
+            continue
+        try:
+            os.kill(pid, 0)
+        except ProcessLookupError:
+            path.unlink(missing_ok=True)
+        except OSError:
+            continue
+
+
+def _discard_scratch(path: Path, created_dirs: list[Path]) -> None:
+    """Remove the scratch copy `validate` ran, and any directory it created."""
+    path.unlink(missing_ok=True)
     for directory in created_dirs:
         try:
             directory.rmdir()
@@ -738,6 +1024,13 @@ def _staged_fingerprint(staging: Path, state: dict) -> str:
     )
 
 
+def _replace(source: Path, target: Path) -> None:
+    """Install `source` AT `target`, replacing a symlink rather than following it."""
+    if target.is_symlink():
+        target.unlink()
+    shutil.copy2(source, target)
+
+
 def apply(worktree: Path, force: bool) -> dict:
     staging, state = _read_state(worktree)
     receipt = state.get("receipt")
@@ -759,25 +1052,29 @@ def apply(worktree: Path, force: bool) -> dict:
             "install a verifier that cannot gate a landing"
         )
 
+    # lexists, not exists: a symlink at either path is something the user put
+    # there, and a dangling one must still stop us. exists() follows the link,
+    # so it reports "nothing here" and copy2 would then write through the link
+    # to an undeclared path.
     manifest_path = worktree / MANIFEST_REL
-    if manifest_path.exists() and not force:
+    if os.path.lexists(manifest_path) and not force:
         raise WireError(
             f"{MANIFEST_REL} already exists; re-run with --force to replace it"
         )
 
     wrapper_path = worktree / Path(state["wrapper_rel"])
-    if wrapper_path.exists() and not force:
+    if os.path.lexists(wrapper_path) and not force:
         raise WireError(
             f"{state['wrapper_rel']} already exists; choose another --wrapper-path "
             "or re-run with --force"
         )
 
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(staging / "wrapper", wrapper_path)
+    _replace(staging / "wrapper", wrapper_path)
     wrapper_path.chmod(wrapper_path.stat().st_mode | 0o111)
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    shutil.copy2(staging / "verifier.json", manifest_path)
+    _replace(staging / "verifier.json", manifest_path)
 
     return {
         "worktree": str(worktree),
@@ -824,11 +1121,6 @@ def build_parser() -> argparse.ArgumentParser:
     validate_parser.add_argument(
         "--timeout", type=int, default=1800, help="seconds before giving up"
     )
-    validate_parser.add_argument(
-        "--force",
-        action="store_true",
-        help="stage over an existing file at the wrapper path",
-    )
 
     apply_parser = subparsers.add_parser(
         "apply", help="install the validated wrapper and manifest"
@@ -853,7 +1145,7 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "draft":
             payload, exit_code = draft(worktree, args.check, args.wrapper_path), 0
         elif args.command == "validate":
-            payload, exit_code = validate(worktree, args.timeout, args.force)
+            payload, exit_code = validate(worktree, args.timeout)
         else:
             payload, exit_code = apply(worktree, args.force), 0
     except WireError as error:
