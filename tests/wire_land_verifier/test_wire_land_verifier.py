@@ -1,6 +1,7 @@
 import json
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -376,7 +377,7 @@ class RepoRootTest(WireLandVerifierTestBase):
 
 
 class ValidateStagingSafetyTest(WireLandVerifierTestBase):
-    """validate briefly installs the wrapper; it must not damage a user file."""
+    """validate must never read, replace, or restore the user's wrapper path."""
 
     def existing_wrapper(self, mode: int = 0o600) -> Path:
         target = self.repo / "scripts/land-work-verifier.py"
@@ -385,20 +386,65 @@ class ValidateStagingSafetyTest(WireLandVerifierTestBase):
         target.chmod(mode)
         return target
 
-    def test_validate_refuses_to_stage_over_an_existing_file(self) -> None:
-        target = self.existing_wrapper()
-        self.wire("draft", "--check", self.passing_check())
-        result = self.wire("validate", check=False)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertIn("already exists", result.stderr + result.stdout)
-        self.assertIn("hand-written", target.read_text())
-
-    def test_validate_force_restores_original_bytes_and_mode(self) -> None:
+    def test_validate_leaves_an_existing_wrapper_untouched(self) -> None:
+        """MEDIUM 7: re-wiring must not refuse, and must not touch the file."""
         target = self.existing_wrapper(0o600)
         self.wire("draft", "--check", self.passing_check())
-        self.wire("validate", "--force")
+        result = self.wire("validate", check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
         self.assertIn("hand-written", target.read_text())
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def test_rewiring_an_applied_repo_validates_again_without_force(self) -> None:
+        """MEDIUM 7: the second wiring must not herd the user onto --force."""
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        self.wire("apply")
+        self.wire("draft", "--check", self.passing_check())
+        result = self.wire("validate", check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_validate_runs_from_a_scratch_sibling_not_the_target(self) -> None:
+        target = self.repo / "scripts/land-work-verifier.py"
+        probe = self.repo / "probe.sh"
+        write(probe, f"#!/bin/sh\ntest ! -e {target} || exit 7\nexit 0\n")
+        probe.chmod(0o755)
+        self.wire("draft", "--check", "gate::./probe.sh")
+        result = self.wire("validate", check=False)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_a_killed_validate_leaves_the_user_file_intact(self) -> None:
+        """HIGH 5: SIGTERM mid-gate must not strand the generated wrapper."""
+        target = self.existing_wrapper(0o600)
+        slow = self.repo / "slow.sh"
+        write(slow, "#!/bin/sh\nsleep 30\n")
+        slow.chmod(0o755)
+        self.wire("draft", "--check", "gate::./slow.sh")
+        process = subprocess.Popen(
+            [str(SCRIPT), "validate"],
+            cwd=self.repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not list(
+                (self.repo / "scripts").glob(".land-work-verifier.*.tmp.py")
+            ):
+                time.sleep(0.1)
+            process.terminate()
+        finally:
+            process.wait(timeout=20)
+        self.assertIn("hand-written", target.read_text())
+        self.assertEqual(target.stat().st_mode & 0o777, 0o600)
+
+    def test_a_later_validate_sweeps_a_dead_runs_scratch_copy(self) -> None:
+        stale = self.repo / "scripts/.land-work-verifier.999999999.tmp.py"
+        stale.parent.mkdir(parents=True, exist_ok=True)
+        write(stale, "#!/bin/sh\nexit 0\n")
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        self.assertFalse(stale.exists())
 
     def test_validate_cleans_up_directories_it_created(self) -> None:
         self.wire(
@@ -410,6 +456,140 @@ class ValidateStagingSafetyTest(WireLandVerifierTestBase):
         )
         self.wire("validate")
         self.assertFalse((self.repo / "tools").exists())
+
+
+class SymlinkTargetTest(WireLandVerifierTestBase):
+    """MEDIUM 6: a symlink at an install path must not be written through."""
+
+    def dangling_symlink(self) -> Path:
+        target = self.repo / "scripts/land-work-verifier.py"
+        target.parent.mkdir(parents=True, exist_ok=True)
+        (self.repo / "tools").mkdir()
+        target.symlink_to("../tools/real-verifier.py")
+        return target
+
+    def test_validate_does_not_write_through_a_dangling_symlink(self) -> None:
+        link = self.dangling_symlink()
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(list((self.repo / "tools").iterdir()), [])
+
+    def test_apply_refuses_a_dangling_symlink_without_force(self) -> None:
+        link = self.dangling_symlink()
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        result = self.wire("apply", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("already exists", result.stderr + result.stdout)
+        self.assertTrue(link.is_symlink())
+        self.assertEqual(list((self.repo / "tools").iterdir()), [])
+
+    def test_apply_force_replaces_the_symlink_instead_of_following_it(self) -> None:
+        link = self.dangling_symlink()
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        self.wire("apply", "--force")
+        self.assertFalse(link.is_symlink())
+        self.assertIn("REPO_ROOT", link.read_text())
+        self.assertEqual(list((self.repo / "tools").iterdir()), [])
+
+
+class ValidateReceiptTest(WireLandVerifierTestBase):
+    """LOW 4: the receipt must fingerprint the bytes validate actually ran."""
+
+    def staged_wrapper(self) -> Path:
+        git_dir = run(["git", "rev-parse", "--absolute-git-dir"], self.repo).stdout
+        return Path(git_dir.strip()) / "bento/wire-land-verifier/wrapper"
+
+    def test_apply_accepts_a_draft_edited_before_validation(self) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        wrapper = self.staged_wrapper()
+        wrapper.write_text(wrapper.read_text() + "# user tweak\n")
+        payload = self.payload(self.wire("validate"))
+        self.assertTrue(payload["draft_edited"])
+        self.wire("apply")
+        installed = self.repo / "scripts/land-work-verifier.py"
+        self.assertIn("# user tweak", installed.read_text())
+
+    def test_apply_still_rejects_a_draft_edited_after_validation(self) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        wrapper = self.staged_wrapper()
+        wrapper.write_text(wrapper.read_text() + "# swapped in later\n")
+        result = self.wire("apply", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("tampered", result.stderr + result.stdout)
+
+
+class PrefixScreeningTest(WireLandVerifierTestBase):
+    """HIGH 1-3, LOW 8: screening must resolve through prefix commands."""
+
+    NO_OPS = (
+        "timeout 5 true",
+        "sudo true",
+        "xargs true",
+        "doas true",
+        "chronic true",
+        "retry true",
+        "env -u FOO true",
+        "env --unset=FOO true",
+        "timeout -k 1 5 true",
+        "timeout 5 -- true",
+        "sudo -u root timeout 5 true",
+        "env env env env env env env env env true",
+        "uv run true",
+        "npm exec true",
+        "bundle exec true",
+        "flock /tmp/lock true",
+        "flock -c true",
+        "watch true",
+        "setarch x86_64 true",
+        "bash -o pipefail -c true",
+        "bash --rcfile /dev/null -c true",
+        "bash -eo pipefail -c true",
+        "bash -o -c true",
+        "bash -s",
+        'sh -c " ; "',
+    )
+
+    REAL = (
+        "make test",
+        "nice -5 make test",
+        "nice -n -5 make test",
+        "timeout 600 make ci",
+        "timeout 600 -- make ci",
+        "git status",
+        "npm test",
+        "flock /tmp/lock make test",
+        "flock -c 'make test'",
+        "watch -n 5 make test",
+        "setarch x86_64 make test",
+        "xargs -n1 make test",
+    )
+
+    def test_no_op_hidden_behind_a_prefix_is_rejected(self) -> None:
+        for command in self.NO_OPS:
+            with self.subTest(command=command):
+                result = self.wire("draft", "--check", f"gate::{command}", check=False)
+                self.assertNotEqual(result.returncode, 0, command)
+                self.assertIn("no-op", result.stderr + result.stdout, command)
+
+    def test_real_commands_behind_a_prefix_are_accepted(self) -> None:
+        for command in self.REAL:
+            with self.subTest(command=command):
+                result = self.wire("draft", "--check", f"gate::{command}", check=False)
+                self.assertEqual(
+                    result.returncode, 0, f"{command}: {result.stderr}{result.stdout}"
+                )
+
+    def test_executable_is_resolved_past_the_prefix(self) -> None:
+        """LOW 8: the executable that must exist is the real command."""
+        result = self.wire(
+            "draft", "--check", "gate::env FOO=1 ./nope.sh", check=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("./nope.sh", result.stderr + result.stdout)
 
 
 if __name__ == "__main__":
