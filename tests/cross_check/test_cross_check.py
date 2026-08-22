@@ -372,6 +372,18 @@ class RunDryRunTest(unittest.TestCase):
         self.assertIn("Read,Grep,Glob", out)
 
 
+class RunTimeoutDefaultTest(unittest.TestCase):
+    def test_default_timeout_accommodates_max_reasoning_effort(self) -> None:
+        # A 600s default clips codex reviews when the user's ~/.codex/config.toml
+        # sets model_reasoning_effort=max; a substantial diff review measured at
+        # under 1500s but over 600s in practice, so the default must clear 600s
+        # by a comfortable margin.
+        args = run.build_parser().parse_args(
+            ["--current-runtime", "claude", "--artifact-type", "code", "--slug", "x"]
+        )
+        self.assertGreaterEqual(args.timeout, 1800)
+
+
 class RunRenderOnlyTest(unittest.TestCase):
     def setUp(self) -> None:
         self.tmp = tempfile.TemporaryDirectory()
