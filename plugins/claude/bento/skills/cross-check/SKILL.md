@@ -70,6 +70,14 @@ is **review-only** — it never edits code or applies fixes.
    Use `--dry-run` to preview the exact counterpart command without running it.
    If you had to trim a large artifact to fit, add `--truncated` so the review
    file is marked as based on partial context.
+   The default `--timeout` is 1800s. A counterpart configured for high
+   reasoning effort (e.g. Codex's `model_reasoning_effort = "max"` in
+   `~/.codex/config.toml`) can take well over 10 minutes on a substantial
+   diff — a timeout that fires too early doesn't just run slower, it silently
+   discards a real cross-runtime review and falls back to a same-runtime one
+   that can miss findings the counterpart would have caught. If reviews keep
+   timing out even at the default, raise `--timeout` further rather than
+   treating the fallback as equivalent.
 4. **Fallback path** (exit `4`, or `recommended_path: fallback`) — dispatch an
    **independent same-runtime** reviewer using the mechanism in the platform
    overlay, with the matching prompt from
