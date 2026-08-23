@@ -28,6 +28,14 @@ EXIT_USAGE = 2
 EXIT_RECURSION_SKIP = 3  # already inside a cross-check; do nothing
 EXIT_FALLBACK_REQUIRED = 4  # cross run failed; caller must run same-runtime fallback
 
+# A counterpart configured for high reasoning effort (e.g. Codex's
+# model_reasoning_effort = "max" in ~/.codex/config.toml) can take well over
+# 10 minutes to review a substantial diff. 600s clips those runs and forces a
+# spurious same-runtime fallback -- silently losing genuine cross-runtime
+# review value, not just running slower. 1800s gives real reviews room to
+# finish; a hung or truly broken counterpart still gets caught, just later.
+DEFAULT_TIMEOUT_SECONDS = 1800
+
 
 def _bundled_prompts_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "references" / "prompts"
@@ -255,7 +263,10 @@ def build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument("--slug", required=True, help="kebab-case output filename slug")
     parser.add_argument("--model", help="override the reviewer model")
-    parser.add_argument("--timeout", type=int, default=600, help="seconds (default 600)")
+    parser.add_argument(
+        "--timeout", type=int, default=DEFAULT_TIMEOUT_SECONDS,
+        help=f"seconds (default {DEFAULT_TIMEOUT_SECONDS})",
+    )
     parser.add_argument("--scope", help="human-readable description of what was reviewed")
     parser.add_argument(
         "--truncated",
