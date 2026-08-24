@@ -36,6 +36,7 @@ import os
 import re
 import shlex
 import shutil
+import signal
 import stat
 import subprocess
 import sys
@@ -173,6 +174,24 @@ PREFIX_COMMANDS: dict[str, PrefixSpec] = {
     "watch": PrefixSpec(value_flags=frozenset({"-n", "--interval"})),
     "setarch": PrefixSpec(positionals=1),
 }
+
+# Prefixes that resolve their tail command inside a managed environment (a
+# venv, a lockfile-pinned toolchain) rather than on the host PATH. Requiring
+# their inner command to *also* resolve on the host PATH defeats the point of
+# using the launcher: `uv run pytest` is a perfectly real gate even when the
+# host has no `pytest` at all. Derived from PREFIX_COMMANDS so it can never
+# drift from the table that defines what "run/exec form" means.
+MANAGED_RUNTIME_LAUNCHERS = frozenset(
+    name for name, spec in PREFIX_COMMANDS.items() if spec.subcommands
+)
+
+# Shell operators that `shlex.split` tokenizes like ordinary words. Without a
+# shell to interpret them, `./test.sh && ./lint.sh` runs only `./test.sh`,
+# with `&&` and `./lint.sh` passed through as inert, literal arguments -- a
+# silently narrower check than the command looks like it performs.
+_SHELL_ONLY_TOKENS = frozenset(
+    {"&&", "||", ";", ";;", "|", "|&", "&", ">", ">>", "<", "<<"}
+)
 
 # Screening applied to *speculative* resolutions -- the branch taken when a
 # prefix is handed a flag the table does not know, which may or may not consume
@@ -396,6 +415,14 @@ def parse_check(raw: str) -> dict:
         raise WireError(f"--check {raw!r} is not parseable: {error}") from error
     if not argv:
         raise WireError(f"--check {raw!r} has no command")
+    shell_token = next((t for t in argv if t in _SHELL_ONLY_TOKENS), None)
+    if shell_token is not None:
+        raise WireError(
+            f"--check {raw!r} needs a shell to run as written: {shell_token!r} "
+            "would be passed as a literal, inert argument instead of being "
+            f"interpreted. Wrap it explicitly, e.g. {name}::bash -c "
+            f"{shlex.quote(command)}, so the shell semantics actually run."
+        )
     return {"name": name, "command": command, "argv": argv}
 
 
@@ -527,6 +554,25 @@ def strip_prefix_commands(argv: list[str]) -> list[str]:
     return prefix_resolutions(argv)[0]
 
 
+def _primary_chain_executables(argv: list[str]) -> list[str]:
+    """Executable basenames peeled off argv's primary reading, in order.
+
+    The last entry is the final resolved command; everything before it is a
+    prefix that ran it. Used to tell whether a managed-runtime launcher (`uv
+    run`, `hatch run`, ...) sits anywhere ahead of the final command, since
+    that changes how -- or whether -- its executable should be resolved.
+    """
+    names: list[str] = []
+    current = list(argv)
+    while current:
+        names.append(Path(current[0]).name)
+        stripped = _strip_one_prefix(current)
+        if stripped is None:
+            break
+        current = stripped[0]
+    return names
+
+
 def _shell_walk(argv: list[str]) -> tuple[str | None, list[str]]:
     """Split a shell argv into (inline `-c` script, remaining operands).
 
@@ -655,6 +701,13 @@ def resolve_executable(check: dict, worktree: Path) -> None:
             f"executable file in {worktree}"
         )
     if shutil.which(argv0) is None:
+        chain = _primary_chain_executables(check["argv"])
+        # A managed-runtime launcher (`uv run`, `hatch run`, ...) resolves its
+        # tail command inside its own environment, not the host PATH -- ahead
+        # of it in the chain means behind it, not the leading one, since the
+        # chain ends with the final command itself.
+        if any(name in MANAGED_RUNTIME_LAUNCHERS for name in chain[:-1]):
+            return
         raise WireError(
             f"--check {check['command']!r} starts with {argv0!r}, which is not on "
             "PATH. Wire a command this repo can actually run."
@@ -732,11 +785,54 @@ def render_manifest(wrapper_rel: Path, verified_noop: list | None = None) -> str
     )
 
 
+_GLOB_CHARS = frozenset("*?[]")
+
+
+def _verified_noop_problems(entries: list) -> list[str]:
+    """Structural problems in a `verified_noop` list, per the contract in
+    `catalog/skills/land-work/references/project-verifier.md`.
+
+    Mirrors the shape `land-work-run-verifier.py` and
+    `lifecycle_extensions._validate_verifier_shape` enforce at real landing
+    time. Carrying forward (or emitting) a shape they reject is false
+    confidence at setup time, not a working exemption.
+    """
+    problems: list[str] = []
+    for index, entry in enumerate(entries):
+        if not isinstance(entry, dict):
+            problems.append(
+                f"verified_noop[{index}] must be an object with 'path' and "
+                f"'reason', not {entry!r}"
+            )
+            continue
+        path_value = entry.get("path")
+        reason_value = entry.get("reason")
+        if not isinstance(path_value, str) or not path_value:
+            problems.append(f"verified_noop[{index}].path must be a nonempty string")
+        elif path_value.startswith("/"):
+            problems.append(f"verified_noop[{index}].path must not be absolute: {path_value!r}")
+        elif any(char in _GLOB_CHARS for char in path_value):
+            problems.append(f"verified_noop[{index}].path must not be a glob: {path_value!r}")
+        elif path_value.endswith("/"):
+            problems.append(
+                f"verified_noop[{index}].path must not be a directory/prefix "
+                f"entry: {path_value!r}"
+            )
+        elif ".." in path_value.split("/"):
+            problems.append(f"verified_noop[{index}].path must not contain '..': {path_value!r}")
+        if not isinstance(reason_value, str) or not reason_value:
+            problems.append(f"verified_noop[{index}].reason must be a nonempty string")
+    return problems
+
+
 def existing_verified_noop(worktree: Path) -> list:
     """Exemptions already recorded in the repo's manifest, if any.
 
     Re-wiring must not silently drop them: land-work would then fail closed on
-    paths the user had deliberately exempted, with no record of why.
+    paths the user had deliberately exempted, with no record of why. But
+    carrying forward a shape land-work's own contract already rejects is worse
+    than dropping it -- refuse instead so the problem is visible now rather
+    than as a mysterious landing failure later.
     """
     path = worktree / MANIFEST_REL
     if not path.is_file():
@@ -746,7 +842,18 @@ def existing_verified_noop(worktree: Path) -> list:
     except (json.JSONDecodeError, UnicodeDecodeError):
         return []
     existing = data.get("verified_noop")
-    return existing if isinstance(existing, list) else []
+    if not isinstance(existing, list):
+        return []
+    problems = _verified_noop_problems(existing)
+    if problems:
+        raise WireError(
+            f"{MANIFEST_REL}'s existing verified_noop entries do not satisfy "
+            "the verifier contract land-work enforces at landing time, so "
+            "carrying them forward would be false confidence:\n  "
+            + "\n  ".join(problems)
+            + "\nFix or remove them in the existing manifest before re-running draft."
+        )
+    return existing
 
 
 def require_repo_root(worktree: Path) -> Path:
@@ -787,10 +894,46 @@ def staging_dir(worktree: Path) -> Path:
     return Path(git_dir.stdout.strip()) / STAGING_REL
 
 
+def _reject_traversal(rel: Path) -> None:
+    if rel.is_absolute():
+        raise WireError(f"{rel} must be a relative path inside the worktree")
+    if ".." in rel.parts:
+        raise WireError(f"{rel} must not contain '..'")
+    if ".git" in rel.parts:
+        raise WireError(f"{rel} is inside .git, which wire-land-verifier refuses to touch")
+
+
+def _contained_path(worktree: Path, rel: Path) -> Path:
+    """Resolve `worktree / rel` and require it to stay inside the worktree.
+
+    `Path.resolve()` follows any symlink in an *existing* ancestor before
+    normalizing the rest, so a symlinked ancestor directory (e.g. `scripts`
+    pointed outside the repo) is caught here even though `rel`'s leaf does
+    not exist yet -- a purely lexical `..`/absolute check misses it entirely.
+    Called again at each write point (not just at `draft` time), since an
+    ancestor can be replaced with a symlink after drafting and before
+    `validate`/`apply` actually touch the filesystem.
+
+    Returns the literal, unresolved `worktree / rel` -- not the resolved
+    target. Containment is a precondition callers check before writing; the
+    write itself must still see the leaf as it literally is (a dangling
+    symlink included), so `lexists`/`is_symlink` checks downstream keep
+    working on what is actually at that path rather than on what it points to.
+    """
+    _reject_traversal(rel)
+    root = worktree.resolve()
+    target = (root / rel).resolve()
+    if target != root and root not in target.parents:
+        raise WireError(
+            f"{rel} resolves to {target}, which is outside the worktree {root} "
+            "-- an ancestor directory may be a symlink. Refusing to write there."
+        )
+    return worktree / rel
+
+
 def draft(worktree: Path, raw_checks: list[str], wrapper_path: str) -> dict:
     wrapper_rel = Path(wrapper_path)
-    if wrapper_rel.is_absolute() or ".." in wrapper_rel.parts:
-        raise WireError("--wrapper-path must be a relative path inside the worktree")
+    _contained_path(worktree, wrapper_rel)
 
     checks = [parse_check(raw) for raw in raw_checks]
     for check in checks:
@@ -884,6 +1027,7 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     # the user's file instead of on top of it means `validate` never reads,
     # replaces, or has to restore anything the user wrote.
     wrapper_rel = Path(state["wrapper_rel"])
+    _contained_path(worktree, wrapper_rel)
     scratch = worktree / wrapper_rel.parent / f".{wrapper_rel.stem}.{os.getpid()}.tmp.py"
     _sweep_stale_scratch(scratch.parent, wrapper_rel.stem)
     created_dirs = _missing_ancestors(scratch.parent)
@@ -891,18 +1035,34 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     shutil.copy2(runner, scratch)
     scratch.chmod(scratch.stat().st_mode | stat.S_IXUSR)
     try:
-        result = subprocess.run(
+        # A plain `subprocess.run(..., timeout=...)` only kills `scratch`
+        # itself; a gate that backgrounds work (`sleep 30 &`) keeps mutating
+        # the repo after this CLI has already reported failure and exited.
+        # `start_new_session=True` puts `scratch` and anything it spawns in
+        # their own process group, so a timeout can reach all of it.
+        proc = subprocess.Popen(
             [str(scratch)],
             cwd=worktree,
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout,
+            start_new_session=True,
         )
-    except subprocess.TimeoutExpired:
-        return {
-            "schema_valid": False,
-            "error": f"verifier did not finish within {timeout}s",
-        }, 1
+        try:
+            stdout, stderr = proc.communicate(timeout=timeout)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            proc.communicate()  # reap; the group is dead so this cannot hang
+            return {
+                "schema_valid": False,
+                "error": f"verifier did not finish within {timeout}s",
+            }, 1
+        result = subprocess.CompletedProcess(
+            [str(scratch)], proc.returncode, stdout, stderr
+        )
     finally:
         _discard_scratch(scratch, created_dirs)
 
@@ -926,6 +1086,27 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
             actual = [c.get("name") for c in checks if isinstance(c, dict)]
             if actual != expected:
                 problems.append(f"selected_checks names {actual} != drafted {expected}")
+            for entry in checks:
+                if not isinstance(entry, dict) or entry.get("status") not in {
+                    "passed", "failed",
+                }:
+                    problems.append(
+                        f"selected_checks entry {entry!r} has no valid 'status'"
+                    )
+            any_check_failed = any(
+                isinstance(c, dict) and c.get("status") == "failed" for c in checks
+            )
+            if any_check_failed and parsed.get("status") == "passed":
+                problems.append(
+                    "a selected check reports status 'failed' but the top-level "
+                    "status is 'passed' -- the wrapper is not honest about its own "
+                    "result"
+                )
+        if result.returncode != 0 and parsed.get("status") == "passed":
+            problems.append(
+                f"the wrapper exited {result.returncode} but reported status "
+                "'passed' -- the wrapper is not honest about its own result"
+            )
 
     schema_valid = not problems
     selected_checks = (parsed or {}).get("selected_checks")
@@ -1056,13 +1237,13 @@ def apply(worktree: Path, force: bool) -> dict:
     # there, and a dangling one must still stop us. exists() follows the link,
     # so it reports "nothing here" and copy2 would then write through the link
     # to an undeclared path.
-    manifest_path = worktree / MANIFEST_REL
+    manifest_path = _contained_path(worktree, MANIFEST_REL)
     if os.path.lexists(manifest_path) and not force:
         raise WireError(
             f"{MANIFEST_REL} already exists; re-run with --force to replace it"
         )
 
-    wrapper_path = worktree / Path(state["wrapper_rel"])
+    wrapper_path = _contained_path(worktree, Path(state["wrapper_rel"]))
     if os.path.lexists(wrapper_path) and not force:
         raise WireError(
             f"{state['wrapper_rel']} already exists; choose another --wrapper-path "
