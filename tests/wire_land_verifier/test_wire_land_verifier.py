@@ -183,14 +183,33 @@ class DraftTest(WireLandVerifierTestBase):
                 {
                     "schema_version": 1,
                     "command": ["./scripts/old.sh"],
-                    "verified_noop": ["docs/**", "*.md"],
+                    "verified_noop": [
+                        {"path": "docs/generated.json", "reason": "producer-verified"},
+                    ],
                 }
             ),
         )
         payload = self.payload(self.wire("draft", "--check", self.passing_check()))
         manifest = json.loads(payload["manifest_body"])
-        self.assertEqual(manifest["verified_noop"], ["docs/**", "*.md"])
-        self.assertEqual(payload["carried_verified_noop"], ["docs/**", "*.md"])
+        expected = [{"path": "docs/generated.json", "reason": "producer-verified"}]
+        self.assertEqual(manifest["verified_noop"], expected)
+        self.assertEqual(payload["carried_verified_noop"], expected)
+
+    def test_draft_refuses_to_carry_forward_invalid_verified_noop_shapes(self) -> None:
+        """bento-ei1p round 4: globs/strings satisfy no real contract land-work checks."""
+        write(
+            self.repo / MANIFEST_REL,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "command": ["./scripts/old.sh"],
+                    "verified_noop": ["docs/**", "*.md"],
+                }
+            ),
+        )
+        result = self.wire("draft", "--check", self.passing_check(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("verified_noop", result.stderr + result.stdout)
 
     def test_draft_rejects_unresolvable_executable(self) -> None:
         result = self.wire(
@@ -590,6 +609,137 @@ class PrefixScreeningTest(WireLandVerifierTestBase):
         )
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("./nope.sh", result.stderr + result.stdout)
+
+
+class PathContainmentTest(WireLandVerifierTestBase):
+    """bento-ei1p round 4 BLOCKER: wrapper/manifest paths must stay in the worktree."""
+
+    def test_draft_rejects_wrapper_path_under_a_symlinked_ancestor(self) -> None:
+        outside = Path(self.temp_dir.name) / "outside"
+        outside.mkdir()
+        (self.repo / "scripts").symlink_to(outside, target_is_directory=True)
+        result = self.wire(
+            "draft", "--check", self.passing_check(),
+            "--wrapper-path", "scripts/wrapper.py", check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((outside / "wrapper.py").exists())
+
+    def test_apply_rejects_a_symlinked_ancestor_created_after_draft(self) -> None:
+        """The check must be live at every command, not trusted from draft time."""
+        self.wire(
+            "draft", "--check", self.passing_check(),
+            "--wrapper-path", "scripts/wrapper.py",
+        )
+        self.wire("validate")
+        outside = Path(self.temp_dir.name) / "outside2"
+        outside.mkdir()
+        self.assertFalse((self.repo / "scripts").exists())
+        (self.repo / "scripts").symlink_to(outside, target_is_directory=True)
+        result = self.wire("apply", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(list(outside.iterdir()), [])
+
+    def test_draft_refuses_wrapper_path_inside_dot_git(self) -> None:
+        result = self.wire(
+            "draft", "--check", self.passing_check(),
+            "--wrapper-path", ".git/config", check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(".git", result.stderr + result.stdout)
+
+
+class ShellSyntaxCheckTest(WireLandVerifierTestBase):
+    """bento-ei1p round 4: a --check needing a shell must say so, not silently narrow."""
+
+    def test_compound_shell_command_is_rejected(self) -> None:
+        result = self.wire(
+            "draft", "--check", "gate::./test.sh && ./lint.sh", check=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("shell", (result.stderr + result.stdout).lower())
+
+    def test_wrapping_in_an_explicit_shell_is_accepted(self) -> None:
+        for name in ("test.sh", "lint.sh"):
+            script = self.repo / name
+            write(script, "#!/bin/sh\nexit 0\n")
+            script.chmod(0o755)
+        result = self.wire(
+            "draft", "--check", "gate::bash -c './test.sh && ./lint.sh'", check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+
+class ValidateHonestyTest(WireLandVerifierTestBase):
+    """bento-ei1p round 4: validate must cross-check exit code and per-check status."""
+
+    def staged_wrapper(self) -> Path:
+        git_dir = run(["git", "rev-parse", "--absolute-git-dir"], self.repo).stdout
+        return Path(git_dir.strip()) / "bento/wire-land-verifier/wrapper"
+
+    def test_validate_rejects_a_wrapper_that_exits_nonzero_but_claims_passed(self) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        write(
+            self.staged_wrapper(),
+            '#!/bin/sh\necho \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"unit tests","status":"passed"}]}\'\n'
+            "exit 1\n",
+        )
+        payload = self.payload(self.wire("validate", check=False))
+        self.assertFalse(payload["schema_valid"])
+
+    def test_validate_rejects_a_failed_check_under_a_passed_overall_status(self) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        write(
+            self.staged_wrapper(),
+            '#!/bin/sh\necho \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"unit tests","status":"failed"}]}\'\n'
+            "exit 0\n",
+        )
+        payload = self.payload(self.wire("validate", check=False))
+        self.assertFalse(payload["schema_valid"])
+
+
+class TimeoutProcessGroupTest(WireLandVerifierTestBase):
+    """bento-ei1p round 4: a timeout must reach children the gate backgrounds."""
+
+    def test_validate_timeout_kills_a_backgrounded_child(self) -> None:
+        marker = self.repo / "child.pid"
+        script = self.repo / "backgrounder.sh"
+        write(
+            script,
+            "#!/bin/sh\n"
+            f"sh -c 'echo $$ > {marker}; sleep 20' &\n"
+            "sleep 20\n",
+        )
+        script.chmod(0o755)
+        self.wire("draft", "--check", "gate::./backgrounder.sh")
+        result = self.wire("validate", "--timeout", "2", check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+        deadline = time.monotonic() + 5
+        child_pid = None
+        while time.monotonic() < deadline:
+            if marker.exists() and marker.read_text().strip():
+                child_pid = marker.read_text().strip()
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(child_pid, "backgrounded child never started")
+
+        time.sleep(1)
+        alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
+        self.assertFalse(alive, "backgrounded child survived the reported timeout")
+
+
+class ManagedRuntimeLauncherTest(WireLandVerifierTestBase):
+    """bento-ei1p round 4: a managed launcher's own resolution shouldn't be second-guessed."""
+
+    def test_uv_run_of_a_tool_not_on_host_path_is_accepted(self) -> None:
+        result = self.wire(
+            "draft", "--check", "gate::uv run definitely-not-on-host-path-xyz",
+            check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
 
 
 if __name__ == "__main__":
