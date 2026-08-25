@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import time
@@ -506,6 +507,42 @@ class ValidateStagingSafetyTest(WireLandVerifierTestBase):
         self.assertIn("hand-written", target.read_text())
         self.assertEqual(target.stat().st_mode & 0o777, 0o600)
 
+    def test_sigterm_to_validate_kills_the_gates_backgrounded_child(self) -> None:
+        """bento-ei1p round 7: start_new_session detaches the gate into its own
+        process group -- SIGTERM to just the outer CLI process must still
+        reach it via the SIGTERM handler, not only a reported --timeout."""
+        marker = self.repo / "child.pid"
+        script = self.repo / "backgrounder.sh"
+        write(
+            script,
+            "#!/bin/sh\n"
+            f"sh -c 'echo $$ > {marker}; sleep 30' &\n"
+            "sleep 30\n",
+        )
+        script.chmod(0o755)
+        self.wire("draft", "--check", "gate::./backgrounder.sh")
+        process = subprocess.Popen(
+            [str(SCRIPT), "validate"],
+            cwd=self.repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not (
+                marker.exists() and marker.read_text().strip()
+            ):
+                time.sleep(0.1)
+            child_pid = marker.read_text().strip()
+            process.terminate()
+        finally:
+            process.wait(timeout=20)
+
+        self.assertIsNotNone(child_pid)
+        time.sleep(1)
+        alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
+        self.assertFalse(alive, "backgrounded child survived SIGTERM to the parent")
+
     def test_a_later_validate_sweeps_a_dead_runs_scratch_copy(self) -> None:
         stale = self.repo / "scripts/.land-work-verifier.999999999.tmp.py"
         stale.parent.mkdir(parents=True, exist_ok=True)
@@ -837,6 +874,28 @@ class ApplyAtomicityTest(WireLandVerifierTestBase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("pre-existing", existing_wrapper.read_text())
 
+    def test_apply_rollback_restores_a_symlinked_wrapper_as_a_symlink(self) -> None:
+        """bento-ei1p round 7: rollback must not turn a symlink into a plain-
+        file copy of whatever it used to point at."""
+        real_target = self.repo / "real-gate.py"
+        write(real_target, "# the real target\n")
+        wrapper_path = self.repo / "scripts/land-work-verifier.py"
+        wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+        wrapper_path.symlink_to("../real-gate.py")
+
+        manifest_path = self.repo / MANIFEST_REL
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.mkdir()
+
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        result = self.wire("apply", "--force", check=False)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(wrapper_path.is_symlink())
+        self.assertEqual(os.readlink(wrapper_path), "../real-gate.py")
+        self.assertEqual(real_target.read_text(), "# the real target\n")
+
 
 class BareCommandColonTest(WireLandVerifierTestBase):
     """bento-ei1p round 5 MINOR: a bare command's own '::' (pytest/cargo node
@@ -869,6 +928,29 @@ class BareCommandColonTest(WireLandVerifierTestBase):
         self.assertEqual(
             payload["checks"][0]["command"], "./cargo test module::case"
         )
+
+
+class CompoundShellNoOpScreeningTest(WireLandVerifierTestBase):
+    """bento-ei1p round 7 MINOR: a compound shell script must be screened
+    statement by statement, not judged by its first word alone."""
+
+    def test_a_real_command_after_a_trivial_prefix_statement_is_accepted(self) -> None:
+        for command in (
+            "bash -c 'echo preparing; make test'",
+            "bash -c 'true && make test'",
+        ):
+            with self.subTest(command=command):
+                result = self.wire("draft", "--check", f"gate::{command}", check=False)
+                self.assertEqual(
+                    result.returncode, 0, f"{command}: {result.stderr}{result.stdout}"
+                )
+
+    def test_a_compound_script_of_only_no_ops_is_still_rejected(self) -> None:
+        result = self.wire(
+            "draft", "--check", "gate::bash -c 'echo hi; true'", check=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no-op", (result.stderr + result.stdout).lower())
 
 
 if __name__ == "__main__":

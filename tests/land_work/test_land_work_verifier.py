@@ -369,6 +369,45 @@ class LandWorkVerifierTest(unittest.TestCase):
         alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
         self.assertFalse(alive, "backgrounded child survived the reported timeout")
 
+    def test_sigterm_to_the_helper_kills_a_backgrounded_child(self) -> None:
+        """bento-ei1p round 7: start_new_session detaches the verifier command
+        into its own process group -- SIGTERM to just the helper's own PID
+        must still reach it via the SIGTERM handler, not only a --timeout."""
+        marker = self.repo / "child.pid"
+        self.install_verifier(
+            "#!/bin/sh\n"
+            f"sh -c 'echo $$ > {marker}; sleep 30' &\n"
+            "sleep 30\n"
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        process = subprocess.Popen(
+            [
+                str(VERIFIER_SCRIPT),
+                "--repo-root", str(self.repo),
+                "--candidate", str(self.worktree),
+                "--base-sha", self.base_sha,
+                "--head-sha", self.head_sha,
+            ],
+            cwd=self.repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not (
+                marker.exists() and marker.read_text().strip()
+            ):
+                time.sleep(0.1)
+            child_pid = marker.read_text().strip()
+            process.terminate()
+        finally:
+            process.wait(timeout=20)
+
+        self.assertIsNotNone(child_pid)
+        time.sleep(1)
+        alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
+        self.assertFalse(alive, "backgrounded child survived SIGTERM to the helper")
+
     # -- Git path union categories --------------------------------------- #
 
     def test_staged_change_enters_union(self) -> None:
