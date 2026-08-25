@@ -934,30 +934,36 @@ def _reject_traversal(rel: Path) -> None:
 
 
 def _contained_path(worktree: Path, rel: Path) -> Path:
-    """Resolve `worktree / rel` and require it to stay inside the worktree.
+    """Require every ancestor directory in `rel` to be real, not a symlink.
 
-    `Path.resolve()` follows any symlink in an *existing* ancestor before
-    normalizing the rest, so a symlinked ancestor directory (e.g. `scripts`
-    pointed outside the repo) is caught here even though `rel`'s leaf does
-    not exist yet -- a purely lexical `..`/absolute check misses it entirely.
+    A symlinked ancestor breaks two things at once, not just one: it can put
+    the write outside the worktree entirely (the original concern), but even
+    an ancestor symlinked to somewhere *else inside* the worktree is still
+    wrong -- the generated wrapper's `REPO_ROOT = Path(__file__).resolve()
+    .parents[N]` uses N from the *lexical* depth of the wrapper path, while
+    `resolve()` follows the symlink to the real physical depth, so the two
+    can silently disagree. It can also make two lexically different paths
+    (e.g. the wrapper path and MANIFEST_REL) alias the same real file,
+    defeating the lexical collision check in `draft`. Requiring every
+    ancestor to be a real directory rules out both at once and is simpler
+    than trying to compare resolved paths after the fact.
+
     Called again at each write point (not just at `draft` time), since an
     ancestor can be replaced with a symlink after drafting and before
-    `validate`/`apply` actually touch the filesystem.
-
-    Returns the literal, unresolved `worktree / rel` -- not the resolved
-    target. Containment is a precondition callers check before writing; the
-    write itself must still see the leaf as it literally is (a dangling
-    symlink included), so `lexists`/`is_symlink` checks downstream keep
-    working on what is actually at that path rather than on what it points to.
+    `validate`/`apply` actually touch the filesystem. The leaf itself is not
+    checked here: it may still be a symlink (a dangling one included) --
+    `_replace` unlinks it rather than writing through it, regardless of where
+    it points, so leaf symlinks are handled downstream, not here.
     """
     _reject_traversal(rel)
-    root = worktree.resolve()
-    target = (root / rel).resolve()
-    if target != root and root not in target.parents:
-        raise WireError(
-            f"{rel} resolves to {target}, which is outside the worktree {root} "
-            "-- an ancestor directory may be a symlink. Refusing to write there."
-        )
+    current = worktree
+    for part in rel.parts[:-1]:
+        current = current / part
+        if current.is_symlink():
+            raise WireError(
+                f"{rel} has a symlinked ancestor directory ({current}); "
+                "wire-land-verifier refuses to write through it"
+            )
     return worktree / rel
 
 
@@ -1338,8 +1344,8 @@ def apply(worktree: Path, force: bool) -> dict:
     _replace(staging / "wrapper", wrapper_path)
     wrapper_path.chmod(wrapper_path.stat().st_mode | 0o111)
 
-    manifest_path.parent.mkdir(parents=True, exist_ok=True)
     try:
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
         _replace(staging / "verifier.json", manifest_path)
     except OSError:
         _restore(wrapper_backup, wrapper_path)

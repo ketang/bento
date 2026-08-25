@@ -28,6 +28,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import signal
 import subprocess
 import sys
 from pathlib import Path
@@ -268,18 +270,35 @@ def main() -> int:
             return _fail(diagnostics, [f"invalid --timeout value: {args.timeout!r}"])
 
     try:
-        proc = subprocess.run(
+        # A plain `subprocess.run(..., timeout=...)` only kills the verifier
+        # command itself; a gate that backgrounds work (`sleep 30 &`) keeps
+        # running -- and can keep mutating the candidate -- after this helper
+        # has already reported a timeout and landing has stopped.
+        # `start_new_session=True` puts the command and anything it spawns in
+        # their own process group, so a timeout can reach all of it.
+        popen = subprocess.Popen(
             list(manifest.command),
             cwd=str(candidate),
-            capture_output=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             text=True,
-            timeout=timeout_seconds,
-            check=False,
+            start_new_session=True,
         )
     except FileNotFoundError as exc:
         return _fail(diagnostics, [f"verifier command not found: {exc}"])
+
+    try:
+        stdout, stderr = popen.communicate(timeout=timeout_seconds)
     except subprocess.TimeoutExpired:
+        try:
+            os.killpg(os.getpgid(popen.pid), signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        popen.communicate()  # reap; the group is dead so this cannot hang
         return _fail(diagnostics, ["verifier command timed out"])
+    proc = subprocess.CompletedProcess(
+        list(manifest.command), popen.returncode, stdout, stderr
+    )
 
     if proc.returncode != 0:
         return _fail(
