@@ -54,6 +54,16 @@ anything.
    `--wrapper-path <rel>` to place the generated wrapper somewhere other than
    the default shown under **Output**. Nothing is installed yet.
 
+   A bare command containing its own `::` (a pytest node id like
+   `tests/test_x.py::test_case`, a cargo test path like `module::case`) can
+   collide with the `NAME::COMMAND` split. A path-like segment before the
+   first `::` is detected and treated as evidence of a bare command
+   automatically; a slashless one (`module::case`) is not distinguishable
+   from an intentional `NAME::COMMAND` and needs an explicit name to
+   disambiguate: `--check 'citest::cargo test module::case'` (only the
+   *first* `::` is ever treated as the separator, so the rest of the string
+   is preserved whole).
+
 5. Show the user the drafted `wrapper_body` and `manifest_body`.
 6. Prove the draft actually runs:
 

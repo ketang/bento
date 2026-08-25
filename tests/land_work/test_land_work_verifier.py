@@ -3,6 +3,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -340,6 +341,33 @@ class LandWorkVerifierTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         payload = json.loads(result.stdout)
         self.assertTrue(any("timed out" in e for e in payload["errors"]))
+
+    def test_command_timeout_kills_a_backgrounded_child(self) -> None:
+        """This is land-work's REAL production landing path -- the timeout
+        here must reach children the verifier command backgrounds, not just
+        the verifier command itself. See bento-ei1p round 6."""
+        marker = self.repo / "child.pid"
+        self.install_verifier(
+            "#!/bin/sh\n"
+            f"sh -c 'echo $$ > {marker}; sleep 20' &\n"
+            "sleep 20\n"
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier(timeout="2")
+        self.assertEqual(result.returncode, 1)
+
+        deadline = time.monotonic() + 5
+        child_pid = None
+        while time.monotonic() < deadline:
+            if marker.exists() and marker.read_text().strip():
+                child_pid = marker.read_text().strip()
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(child_pid, "backgrounded child never started")
+
+        time.sleep(1)
+        alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
+        self.assertFalse(alive, "backgrounded child survived the reported timeout")
 
     # -- Git path union categories --------------------------------------- #
 

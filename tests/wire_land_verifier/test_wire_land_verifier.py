@@ -851,6 +851,25 @@ class BareCommandColonTest(WireLandVerifierTestBase):
         )
         self.assertEqual(payload["checks"][0]["command"], "./gate.sh subtest::case_a")
 
+    def test_a_slashless_bare_node_id_still_needs_an_explicit_name(self) -> None:
+        """bento-ei1p round 6: NAME::COMMAND vs. a bare command's own '::' is
+        fundamentally ambiguous once neither has a distinguishing marker like a
+        path separator -- `cargo test module::case` looks exactly like an
+        explicit NAME `cargo test module` with COMMAND `case`. This is not
+        solvable by a better heuristic without either false positives on real
+        NAME::COMMAND usage or a breaking delimiter change, so the documented
+        escape hatch is an explicit NAME:: prefix, which already disambiguates
+        correctly because only the FIRST '::' is ever treated as the split."""
+        gate = self.repo / "cargo"
+        write(gate, "#!/bin/sh\nexit 0\n")
+        gate.chmod(0o755)
+        payload = self.payload(
+            self.wire("draft", "--check", "citest::./cargo test module::case")
+        )
+        self.assertEqual(
+            payload["checks"][0]["command"], "./cargo test module::case"
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
