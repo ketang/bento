@@ -404,6 +404,13 @@ def discover(worktree: Path) -> dict:
 def parse_check(raw: str) -> dict:
     """Parse a ``NAME::COMMAND`` (or bare ``COMMAND``) --check value."""
     name, separator, command = raw.partition("::")
+    if separator and ("/" in name or name.strip().startswith(("./", "../"))):
+        # A path before the first "::" means this was never a NAME::COMMAND
+        # split at all -- it's a bare command whose own syntax uses "::", like
+        # a pytest node id (`tests/test_x.py::test_case`). Treat the whole
+        # string as the bare command instead of misparsing a path fragment as
+        # the name and a test id as the command.
+        separator = ""
     if not separator:
         name, command = raw.strip(), raw.strip()
     name, command = name.strip(), command.strip()
@@ -798,6 +805,7 @@ def _verified_noop_problems(entries: list) -> list[str]:
     confidence at setup time, not a working exemption.
     """
     problems: list[str] = []
+    seen_normalized: set[str] = set()
     for index, entry in enumerate(entries):
         if not isinstance(entry, dict):
             problems.append(
@@ -818,8 +826,30 @@ def _verified_noop_problems(entries: list) -> list[str]:
                 f"verified_noop[{index}].path must not be a directory/prefix "
                 f"entry: {path_value!r}"
             )
-        elif ".." in path_value.split("/"):
-            problems.append(f"verified_noop[{index}].path must not contain '..': {path_value!r}")
+        else:
+            # Mirror land-work-run-verifier.py's own normalization exactly: a
+            # path that is only "." segments and separators (".", "./", "./.")
+            # normalizes to nothing, which the real validator rejects as an
+            # empty path even though the raw string is nonempty here.
+            segments = [s for s in path_value.split("/") if s]
+            if any(s == ".." for s in segments):
+                problems.append(
+                    f"verified_noop[{index}].path must not contain '..': {path_value!r}"
+                )
+            else:
+                normalized = "/".join(s for s in segments if s != ".")
+                if not normalized:
+                    problems.append(
+                        f"verified_noop[{index}].path normalizes to an empty path: "
+                        f"{path_value!r}"
+                    )
+                elif normalized in seen_normalized:
+                    problems.append(
+                        f"verified_noop[{index}].path duplicates another entry once "
+                        f"normalized: {path_value!r}"
+                    )
+                else:
+                    seen_normalized.add(normalized)
         if not isinstance(reason_value, str) or not reason_value:
             problems.append(f"verified_noop[{index}].reason must be a nonempty string")
     return problems
@@ -934,6 +964,13 @@ def _contained_path(worktree: Path, rel: Path) -> Path:
 def draft(worktree: Path, raw_checks: list[str], wrapper_path: str) -> dict:
     wrapper_rel = Path(wrapper_path)
     _contained_path(worktree, wrapper_rel)
+    if not wrapper_rel.name or wrapper_rel == Path("."):
+        raise WireError(f"--wrapper-path {wrapper_path!r} must name a file, not a directory")
+    if wrapper_rel == MANIFEST_REL:
+        raise WireError(
+            f"--wrapper-path must not be {MANIFEST_REL.as_posix()!r}: apply would "
+            "overwrite the wrapper with the manifest right after installing it"
+        )
 
     checks = [parse_check(raw) for raw in raw_checks]
     for check in checks:
@@ -1015,6 +1052,22 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     staging, state = _read_state(worktree)
     runner = staging / "wrapper"
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
+
+    # The fingerprint covers the manifest's bytes, but only the wrapper file is
+    # actually executed below -- nothing else ties the manifest's `command` to
+    # what just ran. A manifest hand-edited in staging before this point (even
+    # though it still hashes correctly) could point `command` at some other,
+    # never-executed script and still receive a receipt. Refuse before running
+    # anything if the two have already drifted apart.
+    manifest = json.loads((staging / "verifier.json").read_text(encoding="utf-8"))
+    wrapper_rel_check = Path(state["wrapper_rel"])
+    expected_command = [f"./{wrapper_rel_check.as_posix()}"]
+    if manifest.get("command") != expected_command:
+        raise WireError(
+            f"the staged manifest's command {manifest.get('command')!r} does not "
+            f"match the wrapper being validated ({expected_command!r}); the draft "
+            "was edited inconsistently. Re-run `draft` before `validate`"
+        )
 
     # Hash what is about to run, not what `draft` recorded: a wrapper edited by
     # hand in staging is still a wrapper this run genuinely proved, and `apply`
@@ -1206,10 +1259,37 @@ def _staged_fingerprint(staging: Path, state: dict) -> str:
 
 
 def _replace(source: Path, target: Path) -> None:
-    """Install `source` AT `target`, replacing a symlink rather than following it."""
+    """Install `source` AT `target`, replacing a symlink rather than following it.
+
+    Copies through a same-directory temp file and renames it into place with
+    `os.replace` (atomic on the same filesystem) instead of copying directly
+    onto `target`: a crash or error mid-copy can then never leave a truncated
+    file there, only the old content or the new content.
+    """
     if target.is_symlink():
         target.unlink()
-    shutil.copy2(source, target)
+    tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
+    shutil.copy2(source, tmp)
+    os.replace(tmp, target)
+
+
+def _snapshot(path: Path) -> tuple[bytes, int] | None:
+    """The bytes and mode of an existing regular file at `path`, or None."""
+    if not path.is_file():
+        return None
+    return path.read_bytes(), path.stat().st_mode
+
+
+def _restore(snapshot: tuple[bytes, int] | None, path: Path) -> None:
+    """Put back what `_snapshot` captured -- prior content, or prior absence."""
+    if snapshot is None:
+        path.unlink(missing_ok=True)
+        return
+    data, mode = snapshot
+    tmp = path.with_name(f".{path.name}.{os.getpid()}.restore")
+    tmp.write_bytes(data)
+    tmp.chmod(mode)
+    os.replace(tmp, path)
 
 
 def apply(worktree: Path, force: bool) -> dict:
@@ -1250,12 +1330,20 @@ def apply(worktree: Path, force: bool) -> dict:
             "or re-run with --force"
         )
 
+    # Best-effort two-file consistency: if the manifest write fails after the
+    # wrapper is already replaced, put the wrapper back rather than leaving a
+    # new wrapper live under an unchanged (and now stale-pointing) manifest.
+    wrapper_backup = _snapshot(wrapper_path)
     wrapper_path.parent.mkdir(parents=True, exist_ok=True)
     _replace(staging / "wrapper", wrapper_path)
     wrapper_path.chmod(wrapper_path.stat().st_mode | 0o111)
 
     manifest_path.parent.mkdir(parents=True, exist_ok=True)
-    _replace(staging / "verifier.json", manifest_path)
+    try:
+        _replace(staging / "verifier.json", manifest_path)
+    except OSError:
+        _restore(wrapper_backup, wrapper_path)
+        raise
 
     return {
         "worktree": str(worktree),
@@ -1330,6 +1418,9 @@ def main(argv: list[str] | None = None) -> int:
         else:
             payload, exit_code = apply(worktree, args.force), 0
     except WireError as error:
+        print(f"error: {error}", file=sys.stderr)
+        return 2
+    except OSError as error:
         print(f"error: {error}", file=sys.stderr)
         return 2
 

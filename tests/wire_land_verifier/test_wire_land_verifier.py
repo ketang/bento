@@ -211,6 +211,55 @@ class DraftTest(WireLandVerifierTestBase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("verified_noop", result.stderr + result.stdout)
 
+    def test_draft_refuses_a_verified_noop_path_that_normalizes_to_empty(self) -> None:
+        """bento-ei1p round 5: '.' passes a naive check but land-work rejects it."""
+        write(
+            self.repo / MANIFEST_REL,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "command": ["./scripts/old.sh"],
+                    "verified_noop": [{"path": ".", "reason": "why"}],
+                }
+            ),
+        )
+        result = self.wire("draft", "--check", self.passing_check(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("verified_noop", result.stderr + result.stdout)
+
+    def test_draft_refuses_duplicate_verified_noop_paths_once_normalized(self) -> None:
+        write(
+            self.repo / MANIFEST_REL,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "command": ["./scripts/old.sh"],
+                    "verified_noop": [
+                        {"path": "docs/a.md", "reason": "why"},
+                        {"path": "./docs/a.md", "reason": "why again"},
+                    ],
+                }
+            ),
+        )
+        result = self.wire("draft", "--check", self.passing_check(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("verified_noop", result.stderr + result.stdout)
+
+    def test_draft_refuses_wrapper_path_equal_to_the_manifest_path(self) -> None:
+        """bento-ei1p round 5: apply would overwrite the wrapper with the manifest."""
+        result = self.wire(
+            "draft", "--check", self.passing_check(),
+            "--wrapper-path", MANIFEST_REL, check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+
+    def test_draft_refuses_a_directory_like_wrapper_path(self) -> None:
+        result = self.wire(
+            "draft", "--check", self.passing_check(),
+            "--wrapper-path", ".", check=False,
+        )
+        self.assertNotEqual(result.returncode, 0)
+
     def test_draft_rejects_unresolvable_executable(self) -> None:
         result = self.wire(
             "draft", "--check", "gate::./definitely-not-here.sh", check=False
@@ -740,6 +789,67 @@ class ManagedRuntimeLauncherTest(WireLandVerifierTestBase):
             check=False,
         )
         self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+
+
+class ManifestCommandConsistencyTest(WireLandVerifierTestBase):
+    """bento-ei1p round 5 BLOCKER: validate must prove the manifest points at
+    the wrapper it actually executed, not just that its bytes are unchanged."""
+
+    def staged_manifest(self) -> Path:
+        git_dir = run(["git", "rev-parse", "--absolute-git-dir"], self.repo).stdout
+        return Path(git_dir.strip()) / "bento/wire-land-verifier/verifier.json"
+
+    def test_validate_refuses_a_manifest_pointed_at_a_different_command(self) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        write(
+            self.staged_manifest(),
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "command": ["./other-unvalidated.sh"],
+                    "verified_noop": [],
+                }
+            ),
+        )
+        result = self.wire("validate", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("command", result.stderr + result.stdout)
+
+
+class ApplyAtomicityTest(WireLandVerifierTestBase):
+    """bento-ei1p round 5 MAJOR: apply must not leave a half-installed pair."""
+
+    def test_apply_restores_the_wrapper_if_the_manifest_write_fails(self) -> None:
+        existing_wrapper = self.repo / "scripts/land-work-verifier.py"
+        existing_wrapper.parent.mkdir(parents=True, exist_ok=True)
+        write(existing_wrapper, "#!/usr/bin/env python3\n# pre-existing\n")
+        manifest_path = self.repo / MANIFEST_REL
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        # A directory sitting where the manifest FILE must go: the wrapper
+        # install (a normal file replace) succeeds first, then the manifest
+        # install hits this and fails -- exactly the partial-apply scenario.
+        manifest_path.mkdir()
+
+        self.wire("draft", "--check", self.passing_check())
+        self.wire("validate")
+        result = self.wire("apply", "--force", check=False)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("pre-existing", existing_wrapper.read_text())
+
+
+class BareCommandColonTest(WireLandVerifierTestBase):
+    """bento-ei1p round 5 MINOR: a bare command's own '::' (pytest/cargo node
+    ids) must not be misparsed as an explicit NAME::COMMAND split."""
+
+    def test_bare_command_with_path_like_node_id_is_not_misparsed(self) -> None:
+        gate = self.repo / "gate.sh"
+        write(gate, "#!/bin/sh\nexit 0\n")
+        gate.chmod(0o755)
+        payload = self.payload(
+            self.wire("draft", "--check", "./gate.sh subtest::case_a")
+        )
+        self.assertEqual(payload["checks"][0]["command"], "./gate.sh subtest::case_a")
 
 
 if __name__ == "__main__":
