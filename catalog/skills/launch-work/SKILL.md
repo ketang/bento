@@ -152,6 +152,11 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     target and write or update the smallest relevant test so it fails against
     the current or missing behavior. Commit the failing test, then implement
     the change, make the test pass, and run the relevant verification gates.
+    Keep committing at each subsequent logical checkpoint as it is
+    reached — e.g. a schema change, then a handler, then docs — instead of
+    bundling the rest of the task into one commit before landing. Small,
+    frequent commits keep progress visible, make crash recovery cheap, and
+    keep diffs reviewable and bisectable.
 
 12. If the change touches a runtime-mediated integration surface that no
     automated test drives — browser-extension popup/service-worker/messaging,
@@ -258,6 +263,9 @@ unit tests.
 - For new work and behavioral changes with feasible automated coverage, use a
   red/green workflow: write or update the smallest relevant test so it fails
   before implementing the change, then make it pass.
+- Commit at each logical checkpoint reached during implementation (e.g.
+  schema, handler, tests, docs) rather than bundling the whole task into one
+  commit before landing.
 - Final task summaries should call out any automated test-suite additions or
   expansions, or explicitly state that test coverage was unchanged.
 - Follow the placement prohibitions in
@@ -286,6 +294,7 @@ unit tests.
 | "I'll claim or file the issue after I make progress." | Tracker claims prevent duplicate work and encode ownership before implementation. If the repo uses active-work claims, inspect and claim before editing. |
 | "The hook/action probably does not matter for this change." | Project extensions are part of the repo's local contract. Skipping them bypasses stop conditions and project-specific checks that the base skill cannot know. |
 | "I'll add tests after the implementation works." | For new work or behavioral changes with feasible coverage, the failing test is the specification checkpoint. Deferring it invites unverifiable changes and stale final summaries. |
+| "I'll commit everything together at the end; it's one task anyway." | A task still spans several logical checkpoints. Bundling them into one commit erases crash-recovery points, makes review harder, and turns `git bisect`/revert into an all-or-nothing operation. Commit as each checkpoint completes. |
 | "Unit tests pass, so the extension/mobile/CLI-auth flow works." | Runtime-mediated boundaries (message passing, capture pipelines, credential exchange) only connect when the real runtime wires them together; green artifact-level tests cannot exercise that wiring. Smoke the real entrypoint or record a named verification gap. |
 
 ## Stop Conditions
