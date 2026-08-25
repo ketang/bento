@@ -30,6 +30,7 @@ Subcommands: discover, draft, validate, apply.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import hashlib
 import json
 import os
@@ -218,6 +219,13 @@ _SHELL_SEPARATORS = " \t\n\r;&|"
 _SHELL_SEPARATOR_TOKENS = frozenset({";", ";;", "&", "&&", "|", "||"})
 
 _NEGATIVE_NUMBER_RE = re.compile(r"^-\d+$")
+
+# `shlex.split` only splits on whitespace, not shell metacharacters -- a
+# separator glued to a word with no surrounding space (`echo prep; make
+# test`) survives as one token ("prep;"). This peels a leading/trailing
+# separator run off a token so `_split_shell_statements` still sees it as its
+# own token, matching how a real shell lexer (not just shlex) would tokenize.
+_SEP_ATTACHED_RE = re.compile(r"(;;|&&|\|\||;|&|\|)")
 
 _TRIVIAL_SCRIPT_RE = re.compile(r"^[\s;]*(?:pass|None|0|true|1)?[\s;]*$")
 
@@ -653,6 +661,33 @@ def no_op_reason(argv: list[str], depth: int = 0) -> str | None:
     return None
 
 
+def _split_shell_statements(tokens: list[str]) -> list[list[str]]:
+    """Break a flat, already-`shlex.split` token list at shell separators.
+
+    `shlex.split` doesn't know `;`/`&&`/`|` are special -- they come out as
+    ordinary tokens. Splitting on them here (rather than discarding them and
+    judging the flattened remainder as one command) is what lets a compound
+    script be screened statement by statement instead of by its first word.
+    """
+    expanded: list[str] = []
+    for token in tokens:
+        pieces = [piece for piece in _SEP_ATTACHED_RE.split(token) if piece]
+        expanded.extend(pieces or [token])
+
+    statements: list[list[str]] = []
+    current: list[str] = []
+    for token in expanded:
+        if token in _SHELL_SEPARATOR_TOKENS:
+            if current:
+                statements.append(current)
+            current = []
+        else:
+            current.append(token)
+    if current:
+        statements.append(current)
+    return statements
+
+
 def _resolved_no_op_reason(argv: list[str], depth: int) -> str | None:
     if not argv:
         return "it runs no command at all"
@@ -672,10 +707,21 @@ def _resolved_no_op_reason(argv: list[str], depth: int) -> str | None:
                 tokens = shlex.split(script)
             except ValueError:
                 tokens = []
-            inner = [t for t in tokens if t not in _SHELL_SEPARATOR_TOKENS]
-            inner_reason = no_op_reason(inner, depth + 1) if inner else None
-            if inner_reason:
-                return f"it wraps a shell command that does nothing ({inner_reason})"
+            # Split on statement separators rather than stripping them and
+            # judging the flattened result as one command: `echo prep; make
+            # test` would otherwise be judged as starting with `echo` alone
+            # and rejected, even though `make test` -- the actual gate -- is
+            # right there. The whole script is a no-op only if EVERY
+            # statement is; one real statement makes the compound real.
+            statements = _split_shell_statements(tokens)
+            statement_reasons = [
+                no_op_reason(statement, depth + 1) for statement in statements
+            ]
+            if statements and all(reason is not None for reason in statement_reasons):
+                return (
+                    "it wraps a shell command that does nothing "
+                    f"({statement_reasons[0]})"
+                )
     if head in INTERPRETERS:
         program = interpreter_inline_script(argv)
         if program is not None and _TRIVIAL_SCRIPT_RE.match(program):
@@ -1054,6 +1100,44 @@ def _trailing_json(stdout: str) -> dict | None:
     return None
 
 
+def _kill_process_group(proc: subprocess.Popen) -> None:
+    """Kill the whole process group `start_new_session=True` created, and reap it.
+
+    Covers every exit from `communicate()`, not just a reported timeout: a
+    KeyboardInterrupt or other interruption must still reach the group, or a
+    gate that backgrounds work keeps running -- and can keep mutating the
+    repo -- detached from this process after it's gone.
+    """
+    try:
+        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
+    except ProcessLookupError:
+        pass
+    proc.communicate()  # reap; the group is dead so this cannot hang
+
+
+@contextlib.contextmanager
+def _reap_group_on_sigterm(proc: subprocess.Popen):
+    """Kill the process group on SIGTERM too, not just our own exceptions.
+
+    `start_new_session=True` detaches `proc` into its own process group, so
+    an external SIGTERM aimed only at *this* process's PID -- not a
+    foreground Ctrl-C, which the terminal sends to the whole group -- never
+    reaches it on its own. A Python exception handler cannot catch that
+    either: the default SIGTERM disposition terminates the process before any
+    `except`/`finally` gets a chance to run. Installing a handler for the
+    duration of the call is what actually closes the gap.
+    """
+    def _on_term(signum: int, _frame: object) -> None:
+        _kill_process_group(proc)
+        raise SystemExit(128 + signum)
+
+    previous = signal.signal(signal.SIGTERM, _on_term)
+    try:
+        yield
+    finally:
+        signal.signal(signal.SIGTERM, previous)
+
+
 def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     staging, state = _read_state(worktree)
     runner = staging / "wrapper"
@@ -1107,18 +1191,22 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
             text=True,
             start_new_session=True,
         )
-        try:
-            stdout, stderr = proc.communicate(timeout=timeout)
-        except subprocess.TimeoutExpired:
+        with _reap_group_on_sigterm(proc):
             try:
-                os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-            except ProcessLookupError:
-                pass
-            proc.communicate()  # reap; the group is dead so this cannot hang
-            return {
-                "schema_valid": False,
-                "error": f"verifier did not finish within {timeout}s",
-            }, 1
+                stdout, stderr = proc.communicate(timeout=timeout)
+            except subprocess.TimeoutExpired:
+                _kill_process_group(proc)
+                return {
+                    "schema_valid": False,
+                    "error": f"verifier did not finish within {timeout}s",
+                }, 1
+            except BaseException:
+                # Not just TimeoutExpired: a KeyboardInterrupt or other
+                # in-process interruption during communicate() must still
+                # reach the group, or the gate (and whatever it backgrounds)
+                # keeps running detached from this process after it's gone.
+                _kill_process_group(proc)
+                raise
         result = subprocess.CompletedProcess(
             [str(scratch)], proc.returncode, stdout, stderr
         )
@@ -1279,21 +1367,34 @@ def _replace(source: Path, target: Path) -> None:
     os.replace(tmp, target)
 
 
-def _snapshot(path: Path) -> tuple[bytes, int] | None:
-    """The bytes and mode of an existing regular file at `path`, or None."""
-    if not path.is_file():
-        return None
-    return path.read_bytes(), path.stat().st_mode
+def _snapshot(path: Path) -> tuple[str, str | bytes, int | None] | None:
+    """What is at `path`, captured well enough to put back exactly.
+
+    `is_file()` follows a symlink: naively snapshotting via `read_bytes()` on
+    a symlinked path would capture the *target's* content and mode, and
+    restoring that later would replace the symlink with a plain-file copy --
+    silently changing the repo's structure instead of restoring it. A symlink
+    (dangling or not) is captured by its link target instead.
+    """
+    if path.is_symlink():
+        return "symlink", os.readlink(path), None
+    if path.is_file():
+        return "file", path.read_bytes(), path.stat().st_mode
+    return None
 
 
-def _restore(snapshot: tuple[bytes, int] | None, path: Path) -> None:
-    """Put back what `_snapshot` captured -- prior content, or prior absence."""
+def _restore(snapshot: tuple[str, str | bytes, int | None] | None, path: Path) -> None:
+    """Put back what `_snapshot` captured -- prior content, symlink, or absence."""
     if snapshot is None:
         path.unlink(missing_ok=True)
         return
-    data, mode = snapshot
+    kind, payload, mode = snapshot
+    path.unlink(missing_ok=True)
+    if kind == "symlink":
+        path.symlink_to(payload)
+        return
     tmp = path.with_name(f".{path.name}.{os.getpid()}.restore")
-    tmp.write_bytes(data)
+    tmp.write_bytes(payload)
     tmp.chmod(mode)
     os.replace(tmp, path)
 
