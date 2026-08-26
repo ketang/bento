@@ -953,5 +953,89 @@ class CompoundShellNoOpScreeningTest(WireLandVerifierTestBase):
         self.assertIn("no-op", (result.stderr + result.stdout).lower())
 
 
+class SessionEscapeTest(WireLandVerifierTestBase):
+    """bento-ei1p round 8 MAJOR: setsid escapes the process-group containment
+    validate() and land-work's own landing-time timeout both rely on."""
+
+    def test_setsid_is_refused_outright(self) -> None:
+        for command in ("setsid make test", "timeout 5 setsid make test"):
+            with self.subTest(command=command):
+                result = self.wire("draft", "--check", f"gate::{command}", check=False)
+                self.assertNotEqual(result.returncode, 0, command)
+                self.assertIn("setsid", result.stderr + result.stdout)
+
+
+class StaleReceiptTest(WireLandVerifierTestBase):
+    """bento-ei1p round 8 MINOR: a failed re-validation must invalidate an
+    earlier successful receipt, not leave it usable by apply."""
+
+    def test_apply_refuses_after_a_later_validate_fails_even_with_unchanged_bytes(
+        self,
+    ) -> None:
+        slow = self.repo / "slow.sh"
+        write(slow, "#!/bin/sh\nsleep 2\nexit 0\n")
+        slow.chmod(0o755)
+        self.wire("draft", "--check", "gate::./slow.sh")
+        payload = self.payload(self.wire("validate", "--timeout", "10"))
+        self.assertTrue(payload["schema_valid"])
+
+        # Re-validate the SAME staged bytes with a timeout too tight to
+        # finish -- the only thing that changed is that the latest
+        # validate() attempt failed.
+        result = self.wire("validate", "--timeout", "1", check=False)
+        self.assertNotEqual(result.returncode, 0)
+
+        result = self.wire("apply", check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse((self.repo / MANIFEST_REL).exists())
+
+
+class MalformedExistingManifestTest(WireLandVerifierTestBase):
+    """bento-ei1p round 8 MINOR: a broken existing manifest must be refused,
+    not silently treated as having no exemptions to carry forward."""
+
+    def test_draft_refuses_when_the_existing_manifest_is_not_valid_json(self) -> None:
+        write(self.repo / MANIFEST_REL, "{not valid json")
+        result = self.wire("draft", "--check", self.passing_check(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn(MANIFEST_REL, result.stderr + result.stdout)
+
+    def test_draft_refuses_when_verified_noop_is_not_a_list(self) -> None:
+        write(
+            self.repo / MANIFEST_REL,
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "command": ["./scripts/old.sh"],
+                    "verified_noop": "docs/a.md",
+                }
+            ),
+        )
+        result = self.wire("draft", "--check", self.passing_check(), check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("verified_noop", result.stderr + result.stdout)
+
+
+class ReverseHonestyCheckTest(WireLandVerifierTestBase):
+    """bento-ei1p round 8 MINOR: the honesty check must be symmetric."""
+
+    def staged_wrapper(self) -> Path:
+        git_dir = run(["git", "rev-parse", "--absolute-git-dir"], self.repo).stdout
+        return Path(git_dir.strip()) / "bento/wire-land-verifier/wrapper"
+
+    def test_validate_rejects_failed_status_when_every_check_actually_passed(
+        self,
+    ) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        write(
+            self.staged_wrapper(),
+            '#!/bin/sh\necho \'{"schema_version":1,"status":"failed",'
+            '"selected_checks":[{"name":"unit tests","status":"passed"}]}\'\n'
+            "exit 0\n",
+        )
+        payload = self.payload(self.wire("validate", check=False))
+        self.assertFalse(payload["schema_valid"])
+
+
 if __name__ == "__main__":
     unittest.main()
