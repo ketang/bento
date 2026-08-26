@@ -3,6 +3,7 @@ import os
 import stat
 import subprocess
 import tempfile
+import time
 import unittest
 from pathlib import Path
 from unittest.mock import patch
@@ -340,6 +341,72 @@ class LandWorkVerifierTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         payload = json.loads(result.stdout)
         self.assertTrue(any("timed out" in e for e in payload["errors"]))
+
+    def test_command_timeout_kills_a_backgrounded_child(self) -> None:
+        """This is land-work's REAL production landing path -- the timeout
+        here must reach children the verifier command backgrounds, not just
+        the verifier command itself. See bento-ei1p round 6."""
+        marker = self.repo / "child.pid"
+        self.install_verifier(
+            "#!/bin/sh\n"
+            f"sh -c 'echo $$ > {marker}; sleep 20' &\n"
+            "sleep 20\n"
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier(timeout="2")
+        self.assertEqual(result.returncode, 1)
+
+        deadline = time.monotonic() + 5
+        child_pid = None
+        while time.monotonic() < deadline:
+            if marker.exists() and marker.read_text().strip():
+                child_pid = marker.read_text().strip()
+                break
+            time.sleep(0.1)
+        self.assertIsNotNone(child_pid, "backgrounded child never started")
+
+        time.sleep(1)
+        alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
+        self.assertFalse(alive, "backgrounded child survived the reported timeout")
+
+    def test_sigterm_to_the_helper_kills_a_backgrounded_child(self) -> None:
+        """bento-ei1p round 7: start_new_session detaches the verifier command
+        into its own process group -- SIGTERM to just the helper's own PID
+        must still reach it via the SIGTERM handler, not only a --timeout."""
+        marker = self.repo / "child.pid"
+        self.install_verifier(
+            "#!/bin/sh\n"
+            f"sh -c 'echo $$ > {marker}; sleep 30' &\n"
+            "sleep 30\n"
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        process = subprocess.Popen(
+            [
+                str(VERIFIER_SCRIPT),
+                "--repo-root", str(self.repo),
+                "--candidate", str(self.worktree),
+                "--base-sha", self.base_sha,
+                "--head-sha", self.head_sha,
+            ],
+            cwd=self.repo,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        try:
+            deadline = time.monotonic() + 20
+            while time.monotonic() < deadline and not (
+                marker.exists() and marker.read_text().strip()
+            ):
+                time.sleep(0.1)
+            child_pid = marker.read_text().strip()
+            process.terminate()
+        finally:
+            process.wait(timeout=20)
+
+        self.assertIsNotNone(child_pid)
+        time.sleep(1)
+        alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
+        self.assertFalse(alive, "backgrounded child survived SIGTERM to the helper")
 
     # -- Git path union categories --------------------------------------- #
 

@@ -4,6 +4,10 @@
 that a real diff can never land against a zero-check result. It is separate from
 generic `pre` hooks: a hook's exit 0 is never project verification.
 
+To create the manifest and its wrapper in a repo that has none, use the
+`bento:wire-land-verifier` skill rather than hand-authoring both under time
+pressure mid-landing.
+
 ## Manifest location and precedence
 
 The manifest is `verifier.json` under the land-work extension root, discovered

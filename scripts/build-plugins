@@ -88,6 +88,7 @@ PLUGIN_DEFS = {
             "closure",
             "launch-work",
             "land-work",
+            "wire-land-verifier",
             "handoff",
             "cross-check",
             "swarm",

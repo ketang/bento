@@ -1,6 +1,6 @@
 # Intent Story Index
 
-17 stories — generated 2026-08-10T00:00:00Z
+18 stories — generated 2026-08-14T00:00:00Z
 
 - [beads-issue-lifecycle](beads-issue-lifecycle.md) — Beads Issue Lifecycle Management *(active, observed, low)*
 - [bentobug-capture-report](bentobug-capture-report.md) — Bentobug Captures a Structured Bug Report *(active, observed, low)*
@@ -19,3 +19,4 @@
 - [maintain-web-demo-sync-after-change](maintain-web-demo-sync-after-change.md) — Maintain Web Demo Syncs Demo After Product Changes *(active, observed, medium)*
 - [project-memory-durable-knowledge](project-memory-durable-knowledge.md) — Project Memory Captures and Maintains Durable Repo Knowledge *(active, observed, low)*
 - [swarm-parallel-task-batching](swarm-parallel-task-batching.md) — Swarm Batches and Executes Parallel Tasks *(active, observed, medium)*
+- [wire-land-verifier-scaffold](wire-land-verifier-scaffold.md) — Wire Land Verifier Scaffolds A Real Landing Gate *(active, observed, high)*
