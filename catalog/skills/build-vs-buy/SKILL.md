@@ -21,7 +21,8 @@ build-from-scratch path.
 This skill includes `build-vs-buy/scripts/build-vs-buy-discover.py` to collect
 a repo-specific base layer before the model starts external research. Invoke
 this helper by script path, not `python3 <script>`, so approvals stay scoped
-to the script.
+to the script. The `build-vs-buy/` prefix resolves relative to this skill's
+own directory, not the repo root or process cwd.
 
 Run it first with a short feature brief:
 

@@ -24,7 +24,8 @@ purpose of the prompt.
 ## When NOT to use
 
 - A long-idle resumption ("pick up next week"). `/handoff` is not designed for
-  state that must survive long gaps.
+  state that must survive long gaps. Start a fresh session and rebuild
+  context from the tracker and project memory instead.
 - Subagent dispatch. The skill writes a file the user will read or copy; it
   does not invoke a subagent or teammate directly.
 - Inside an active expedition. Defer to the expedition skill's session-end

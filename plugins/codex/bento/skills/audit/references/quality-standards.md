@@ -1,8 +1,3 @@
----
-name: quality-standards
-description: Concrete thresholds and named code smell catalog for the code quality audit phase
----
-
 # Quality Standards
 
 This reference is loaded during the audit to govern the **code quality** phase.

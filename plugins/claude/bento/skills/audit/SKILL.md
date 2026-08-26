@@ -25,7 +25,8 @@ facts before the model starts judging quality:
 - interface, schema, config, workflow, and demo surfaces
 - disabled-test signals, risk hotspots, and static-analysis tool detection
 
-Invoke by script path so approvals stay scoped.
+Invoke by script path so approvals stay scoped. The `audit/` prefix resolves
+relative to this skill's own directory, not the repo root or process cwd.
 
 ```bash
 audit/scripts/audit-discover.py

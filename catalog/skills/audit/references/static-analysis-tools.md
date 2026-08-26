@@ -1,8 +1,3 @@
----
-name: static-analysis-tools
-description: Per-tool run commands, output interpretation, and recommendation guidance for the static analysis audit phase
----
-
 # Static Analysis Tools
 
 This reference is loaded during the audit to govern the **static analysis**

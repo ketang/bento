@@ -37,7 +37,8 @@ meta-skill: it produces a reviewable plan, not immediate edits.
 
 ## Phase 1: Discovery
 
-Run the helper from the repository root:
+Run the helper from the repository root. The `compress-docs/` prefix resolves
+relative to this skill's own directory, not the repo root or process cwd.
 
 ```bash
 compress-docs/scripts/compress-discover.py
