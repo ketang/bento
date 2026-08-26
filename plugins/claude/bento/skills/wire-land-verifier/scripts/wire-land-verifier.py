@@ -85,7 +85,6 @@ PREFIX_COMMANDS: dict[str, PrefixSpec] = {
         assignments=True,
     ),
     "nohup": PrefixSpec(),
-    "setsid": PrefixSpec(),
     "nice": PrefixSpec(value_flags=frozenset({"-n", "--adjustment"})),
     "ionice": PrefixSpec(
         value_flags=frozenset(
@@ -185,6 +184,15 @@ PREFIX_COMMANDS: dict[str, PrefixSpec] = {
 MANAGED_RUNTIME_LAUNCHERS = frozenset(
     name for name, spec in PREFIX_COMMANDS.items() if spec.subcommands
 )
+
+# Commands that detach their child into a NEW session (and process group) of
+# its own, escaping the killpg-based containment `validate` and the generated
+# wrapper's real production execution (land-work-run-verifier.py) both rely
+# on for their timeout to actually stop a hung or backgrounding gate. Unlike
+# every other prefix (screened for no-op-ness, otherwise trusted to run),
+# this one is refused outright: once a child has re-parented into its own
+# session, there is no pgid left to recover and kill after the fact.
+SESSION_ESCAPING_EXECUTABLES = frozenset({"setsid"})
 
 # Shell operators that `shlex.split` tokenizes like ordinary words. Without a
 # shell to interpret them, `./test.sh && ./lint.sh` runs only `./test.sh`,
@@ -740,6 +748,17 @@ def reject_no_ops(check: dict) -> None:
     )
 
 
+def reject_session_escape(check: dict) -> None:
+    chain = _primary_chain_executables(check["argv"])
+    if any(name in SESSION_ESCAPING_EXECUTABLES for name in chain):
+        raise WireError(
+            f"--check {check['command']!r} uses setsid, which starts a new "
+            "session and escapes the process-group containment validate() "
+            "(and land-work's own landing-time timeout) rely on to stop a hung "
+            "or backgrounding gate. Wire the command without it."
+        )
+
+
 def resolve_executable(check: dict, worktree: Path) -> None:
     # Resolve past `env FOO=1` / `timeout 5` first: the executable that has to
     # exist is the real command, not the prefix that runs it.
@@ -915,11 +934,23 @@ def existing_verified_noop(worktree: Path) -> list:
         return []
     try:
         data = json.loads(path.read_text(encoding="utf-8"))
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        return []
+    except (json.JSONDecodeError, UnicodeDecodeError) as error:
+        # Silently returning [] here would be the exact silent-drop this
+        # function's docstring says it refuses to do -- it would just be
+        # triggered by a broken manifest instead of a broken entry.
+        raise WireError(
+            f"{MANIFEST_REL} exists but could not be read as JSON ({error}); "
+            "fix or remove it before re-running draft, so its verified_noop "
+            "entries are not silently dropped"
+        ) from error
     existing = data.get("verified_noop")
-    if not isinstance(existing, list):
+    if existing is None:
         return []
+    if not isinstance(existing, list):
+        raise WireError(
+            f"{MANIFEST_REL}'s verified_noop must be a list, not "
+            f"{type(existing).__name__}; fix it before re-running draft"
+        )
     problems = _verified_noop_problems(existing)
     if problems:
         raise WireError(
@@ -1027,6 +1058,7 @@ def draft(worktree: Path, raw_checks: list[str], wrapper_path: str) -> dict:
     checks = [parse_check(raw) for raw in raw_checks]
     for check in checks:
         reject_no_ops(check)
+        reject_session_escape(check)
         resolve_executable(check, worktree)
 
     carried = existing_verified_noop(worktree)
@@ -1143,6 +1175,16 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     runner = staging / "wrapper"
     runner.chmod(runner.stat().st_mode | stat.S_IXUSR)
 
+    # Invalidate any receipt from an earlier successful run before attempting
+    # this one. Without this, a validate() that times out or comes back
+    # schema-invalid leaves the OLD receipt sitting in state.json; if the
+    # staged bytes happen to be unchanged since that earlier success, `apply`
+    # would accept it even though the *latest* validation attempt failed.
+    # Only a run that itself succeeds below is allowed to set a new one.
+    if "receipt" in state:
+        del state["receipt"]
+        _write_state(staging, state)
+
     # The fingerprint covers the manifest's bytes, but only the wrapper file is
     # actually executed below -- nothing else ties the manifest's `command` to
     # what just ran. A manifest hand-edited in staging before this point (even
@@ -1240,14 +1282,28 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
                     problems.append(
                         f"selected_checks entry {entry!r} has no valid 'status'"
                     )
-            any_check_failed = any(
-                isinstance(c, dict) and c.get("status") == "failed" for c in checks
+            all_dict_entries = all(isinstance(c, dict) for c in checks)
+            any_check_failed = all_dict_entries and any(
+                c.get("status") == "failed" for c in checks
+            )
+            all_checks_passed = all_dict_entries and all(
+                c.get("status") == "passed" for c in checks
             )
             if any_check_failed and parsed.get("status") == "passed":
                 problems.append(
                     "a selected check reports status 'failed' but the top-level "
                     "status is 'passed' -- the wrapper is not honest about its own "
                     "result"
+                )
+            if (
+                all_checks_passed
+                and result.returncode == 0
+                and parsed.get("status") == "failed"
+            ):
+                problems.append(
+                    "every selected check passed and the wrapper exited 0, but "
+                    "the top-level status is 'failed' -- the wrapper is not "
+                    "honest about its own result"
                 )
         if result.returncode != 0 and parsed.get("status") == "passed":
             problems.append(
@@ -1353,15 +1409,17 @@ def _staged_fingerprint(staging: Path, state: dict) -> str:
 
 
 def _replace(source: Path, target: Path) -> None:
-    """Install `source` AT `target`, replacing a symlink rather than following it.
+    """Install `source` AT `target`, atomically and without following a symlink.
 
-    Copies through a same-directory temp file and renames it into place with
-    `os.replace` (atomic on the same filesystem) instead of copying directly
-    onto `target`: a crash or error mid-copy can then never leave a truncated
-    file there, only the old content or the new content.
+    Copies to a same-directory temp file, then `os.replace`s it onto
+    `target`. `os.replace` (`rename(2)`) never dereferences a symlink at the
+    destination -- it atomically swaps whatever directory entry is currently
+    there, symlink or not, for the temp file in one step. That means there is
+    no separate "unlink the symlink, then copy" sequence: an early explicit
+    unlink here would leave `target` briefly gone entirely if the copy that
+    follows then failed, destroying the original with nothing in its place --
+    exactly the non-atomic window this function exists to avoid.
     """
-    if target.is_symlink():
-        target.unlink()
     tmp = target.with_name(f".{target.name}.{os.getpid()}.tmp")
     shutil.copy2(source, tmp)
     os.replace(tmp, target)
@@ -1437,18 +1495,22 @@ def apply(worktree: Path, force: bool) -> dict:
             "or re-run with --force"
         )
 
-    # Best-effort two-file consistency: if the manifest write fails after the
-    # wrapper is already replaced, put the wrapper back rather than leaving a
-    # new wrapper live under an unchanged (and now stale-pointing) manifest.
+    # Best-effort two-file consistency: if anything from here on fails --
+    # writing the wrapper, chmodding it, or installing the manifest -- put the
+    # wrapper back rather than leaving a new wrapper live under an unchanged
+    # (and now stale-pointing, or altogether missing) manifest. One guarded
+    # block covers all three steps, not just the manifest install, and
+    # BaseException (not just OSError) so an interruption mid-install rolls
+    # back too, not only a filesystem error.
     wrapper_backup = _snapshot(wrapper_path)
-    wrapper_path.parent.mkdir(parents=True, exist_ok=True)
-    _replace(staging / "wrapper", wrapper_path)
-    wrapper_path.chmod(wrapper_path.stat().st_mode | 0o111)
-
     try:
+        wrapper_path.parent.mkdir(parents=True, exist_ok=True)
+        _replace(staging / "wrapper", wrapper_path)
+        wrapper_path.chmod(wrapper_path.stat().st_mode | 0o111)
+
         manifest_path.parent.mkdir(parents=True, exist_ok=True)
         _replace(staging / "verifier.json", manifest_path)
-    except OSError:
+    except BaseException:
         _restore(wrapper_backup, wrapper_path)
         raise
 
