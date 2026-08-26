@@ -152,11 +152,12 @@ launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-wo
     target and write or update the smallest relevant test so it fails against
     the current or missing behavior. Commit the failing test, then implement
     the change, make the test pass, and run the relevant verification gates.
-    Keep committing at each subsequent logical checkpoint as it is
-    reached — e.g. a schema change, then a handler, then docs — instead of
-    bundling the rest of the task into one commit before landing. Small,
-    frequent commits keep progress visible, make crash recovery cheap, and
-    keep diffs reviewable and bisectable.
+
+11a. Regardless of whether this task has automated test coverage, commit at
+    each logical checkpoint as it is reached — e.g. a schema change, then a
+    handler, then docs — instead of bundling the rest of the task into one
+    commit before landing. Small, frequent commits keep progress visible,
+    make crash recovery cheap, and keep diffs reviewable and bisectable.
 
 12. If the change touches a runtime-mediated integration surface that no
     automated test drives — browser-extension popup/service-worker/messaging,
