@@ -103,8 +103,8 @@ EXCLUDED_GENERATED_EXACT_NAMES = {
 EXCLUDED_GENERATED_NAME_PATTERNS = (
     "*.pb.go",
     "*_generated.go",
-    "*_gen.go",
-    "zz_generated*.go",
+    "*_*gen.go",
+    "zz_*generated*.go",
     "*_pb2.py",
     "*_pb2_grpc.py",
     "*.min.js",

@@ -584,6 +584,15 @@ class IsExcludedGeneratedTest(unittest.TestCase):
         self.assertFalse(self.module.is_excluded_generated("app.min.css"))
         self.assertFalse(self.module.is_text_like("app.min.css"))
 
+    def test_pattern_matches_with_characters_between_anchors(self) -> None:
+        # Regression guard: "*_**gen.go"/"zz_**generated*.go" must simplify
+        # to a single "*" between the anchors (fnmatch treats ** as *), not
+        # collapse to zero wildcards — that would silently narrow matching to
+        # only the exact "_gen.go"/"zz_generated" spelling.
+        for name in ("foo_xgen.go", "zz_deepcopy_generated_types.go"):
+            with self.subTest(name=name):
+                self.assertTrue(self.module.is_excluded_generated(name))
+
 
 class DemoWalkthroughSignalsTest(unittest.TestCase):
     def test_demo_walkthrough_signals_detect_demo_surfaces(self) -> None:
