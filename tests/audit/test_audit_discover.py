@@ -202,8 +202,9 @@ class AuditDiscoverTest(unittest.TestCase):
     def test_skips_large_text_files_with_warning(self) -> None:
         huge_test = self.repo / "src/huge_test.py"
         huge_test.parent.mkdir(exist_ok=True)
+        # 9 bytes/line * 64k reps ≈ 576KB, safely over the 512KB Tier 2 backstop.
         huge_test.write_text(
-            "# filler\n" * (32 * 1024) + "@pytest.mark.skip(reason='too large')\n",
+            "# filler\n" * (64 * 1024) + "@pytest.mark.skip(reason='too large')\n",
             encoding="utf-8",
         )
 
@@ -212,6 +213,46 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertIn("skipped large text file: src/huge_test.py", payload["warnings"])
         signals = payload["test_automation_health"]["disabled_signals"]
         self.assertNotIn("src/huge_test.py", {entry["path"] for entry in signals})
+
+    def test_excludes_known_generated_files_before_content_read(self) -> None:
+        # Suffixes .json/.go/.js are text-like, so these reach the read path
+        # (unlike go.sum/Cargo.lock, which is_text_like() already filters out
+        # by suffix regardless of this exclusion tier).
+        write(
+            self.repo / "package-lock.json",
+            json.dumps({"name": "test", "lockfileVersion": 3}) + "\n@pytest.mark.skip(reason='should not be scanned')\n",
+        )
+        write(
+            self.repo / "api/service.pb.go",
+            "package api\n// @pytest.mark.skip(reason='nope')\n",
+        )
+        write(self.repo / "assets/app.min.js", "!function(){/*@pytest.mark.skip(reason='nope')*/}();\n")
+
+        payload = self.run_helper()
+
+        signals = payload["test_automation_health"]["disabled_signals"]
+        scanned_paths = {entry["path"] for entry in signals}
+        self.assertNotIn("package-lock.json", scanned_paths)
+        self.assertNotIn("api/service.pb.go", scanned_paths)
+        self.assertNotIn("assets/app.min.js", scanned_paths)
+
+        warnings = payload["warnings"]
+        self.assertIn("excluded generated file: package-lock.json", warnings)
+        self.assertIn("excluded generated file: api/service.pb.go", warnings)
+        self.assertIn("excluded generated file: assets/app.min.js", warnings)
+
+    def test_warnings_distinguish_excluded_generated_from_oversized(self) -> None:
+        write(self.repo / "package-lock.json", json.dumps({"name": "test", "lockfileVersion": 3}) + "\n")
+        huge_test = self.repo / "src/huge_test.py"
+        huge_test.parent.mkdir(exist_ok=True)
+        huge_test.write_text("# filler\n" * (64 * 1024), encoding="utf-8")
+
+        payload = self.run_helper()
+
+        warnings = payload["warnings"]
+        self.assertIn("excluded generated file: package-lock.json", warnings)
+        self.assertIn("skipped large text file: src/huge_test.py", warnings)
+
 
     def test_disabled_signal_scanning_caches_splitlines_once_per_file(self) -> None:
         module = load_module(SCRIPT)
@@ -491,6 +532,50 @@ class AuditDiscoverTest(unittest.TestCase):
 
         signals = payload["static_analysis"]["language_signals"]["Go"]["concurrency_signals"]
         self.assertEqual(signals, [])
+
+
+class IsExcludedGeneratedTest(unittest.TestCase):
+    """Unit-level coverage for every Tier 1 exclusion category, independent
+    of whether the current is_text_like() suffix gate would ever route that
+    filename through read_text_if_reasonable() in practice (e.g. go.sum)."""
+
+    def setUp(self) -> None:
+        self.module = load_module(SCRIPT)
+
+    def test_exact_name_matches(self) -> None:
+        for name in (
+            "package-lock.json",
+            "yarn.lock",
+            "pnpm-lock.yaml",
+            "npm-shrinkwrap.json",
+            "Gemfile.lock",
+            "Cargo.lock",
+            "poetry.lock",
+            "composer.lock",
+            "go.sum",
+            "go.work.sum",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(self.module.is_excluded_generated(name))
+
+    def test_pattern_matches(self) -> None:
+        for name in (
+            "service.pb.go",
+            "client_generated.go",
+            "types_gen.go",
+            "zz_generated.deepcopy.go",
+            "models_pb2.py",
+            "models_pb2_grpc.py",
+            "app.min.js",
+            "app.min.css",
+        ):
+            with self.subTest(name=name):
+                self.assertTrue(self.module.is_excluded_generated(name))
+
+    def test_ordinary_files_not_excluded(self) -> None:
+        for name in ("package.json", "main.go", "app.js", "app.css", "models.py"):
+            with self.subTest(name=name):
+                self.assertFalse(self.module.is_excluded_generated(name))
 
 
 class DemoWalkthroughSignalsTest(unittest.TestCase):
