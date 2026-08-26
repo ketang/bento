@@ -11,8 +11,14 @@ import hashlib
 import os
 import re
 import secrets
+import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Mapping
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR.parents[1] / "launch-work" / "scripts"))
+import agent_plugins_resolver  # noqa: E402
 
 
 MARKETPLACE = "bento"
@@ -171,7 +177,7 @@ def resolve_prompt(
     artifact_type: str,
     *,
     repo_root: Path | None,
-    xdg_config_home: Path | None,
+    env: Mapping[str, str] | None = None,
     bundled_dir: Path,
     home: Path | None = None,
 ) -> Path:
@@ -182,20 +188,30 @@ def resolve_prompt(
             f"unknown artifact type {artifact_type!r}; expected one of {ARTIFACT_TYPES}"
         )
     rel = Path(SKILL_NAME) / "prompts" / f"review-{artifact_type}.md"
-    candidates: list[Path] = []
-    if repo_root is not None:
-        candidates.append(repo_root / ".agent-plugins" / MARKETPLACE / PLUGIN_NAME / rel)
-    base = xdg_config_home if xdg_config_home is not None else (home or Path.home()) / ".config"
-    candidates.append(base / "agent-plugins" / MARKETPLACE / PLUGIN_NAME / rel)
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
     bundled = bundled_dir / f"review-{artifact_type}.md"
-    if bundled.is_file():
-        return bundled
+    candidate = agent_plugins_resolver.resolve_customization_file(
+        marketplace=MARKETPLACE,
+        plugin=PLUGIN_NAME,
+        rel_path=rel,
+        repo_root=repo_root,
+        bundled_default_path=bundled,
+        env=env,
+        home=home,
+    )
+    if candidate is not None:
+        return candidate.path
+    candidates = agent_plugins_resolver.candidate_paths(
+        marketplace=MARKETPLACE,
+        plugin=PLUGIN_NAME,
+        rel_path=rel,
+        repo_root=repo_root,
+        bundled_default_path=bundled,
+        env=env,
+        home=home,
+    )
     raise FileNotFoundError(
         f"no review prompt for {artifact_type!r} at any candidate path: "
-        f"{candidates + [bundled]}"
+        f"{[c.path for c in candidates]}"
     )
 
 

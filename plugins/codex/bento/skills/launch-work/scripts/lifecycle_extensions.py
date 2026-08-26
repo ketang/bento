@@ -15,7 +15,6 @@ hook-skills.
 from __future__ import annotations
 
 import json
-import os
 import re
 import stat
 import subprocess
@@ -23,6 +22,8 @@ import sys
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Optional
+
+import agent_plugins_resolver
 
 
 PREFIX_RE = re.compile(r"^(\d{2})-(.+)$")
@@ -82,18 +83,11 @@ def discover_directory(directory: Path, kind: str) -> DiscoveryResult:
 
 
 def _candidate_roots(repo_root: Path) -> list[Path]:
-    """Return the ordered XDG chain of agent-plugins roots."""
-    roots: list[Path] = []
-    repo_root_dir = (repo_root / ".agent-plugins/bento/bento").resolve()
-    roots.append(repo_root_dir)
-
-    xdg = os.environ.get("XDG_CONFIG_HOME")
-    if xdg:
-        roots.append(Path(xdg) / "agent-plugins/bento/bento")
-    else:
-        roots.append(Path.home() / ".config/agent-plugins/bento/bento")
-
-    return roots
+    """Return the ordered agent-plugins roots: repo scope, then home scope."""
+    return [
+        (repo_root / ".agent-plugins/bento/bento").resolve(),
+        agent_plugins_resolver.home_scope_base() / "bento" / "bento",
+    ]
 
 
 def discover(

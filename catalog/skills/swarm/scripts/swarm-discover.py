@@ -2,11 +2,15 @@
 
 import argparse
 import json
-import os
 import sys
 from pathlib import Path
 
 from git_state import detect_checkout_root, detect_primary_branch, is_linked_worktree, primary_checkout_root
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+_LAUNCH_SCRIPTS = SCRIPT_DIR.parents[1] / "launch-work" / "scripts"
+sys.path.insert(0, str(_LAUNCH_SCRIPTS))
+import agent_plugins_resolver  # noqa: E402
 
 
 ROOT_CONFIG = Path("swarm-config.json")
@@ -46,25 +50,10 @@ def read_config(path: Path) -> dict:
         return json.load(fh)
 
 
-def home_config_root() -> Path:
-    xdg_config_home = os.environ.get("XDG_CONFIG_HOME")
-    if xdg_config_home:
-        return Path(xdg_config_home).expanduser()
-    if sys.platform == "darwin":
-        return Path.home() / "Library" / "Application Support"
-    if os.name == "nt":
-        app_data = os.environ.get("APPDATA")
-        if app_data:
-            return Path(app_data)
-        return Path.home() / "AppData" / "Roaming"
-    return Path.home() / ".config"
-
-
 def resolve_teammate_config(repo_root: Path) -> Path:
     candidates = (
         repo_root / ".agent-plugins" / MARKETPLACE / PLUGIN_NAME / TEAMMATE_CONFIG_REL,
-        home_config_root()
-        / "agent-plugins"
+        agent_plugins_resolver.home_scope_base()
         / MARKETPLACE
         / PLUGIN_NAME
         / TEAMMATE_CONFIG_REL,

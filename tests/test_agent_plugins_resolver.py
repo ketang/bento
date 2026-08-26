@@ -7,7 +7,7 @@ from tests.script_test_utils import load_module, write
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RESOLVER = load_module(
-    REPO_ROOT / "docs" / "specs" / "reference" / "agent_plugins_resolver.py"
+    REPO_ROOT / "catalog" / "skills" / "launch-work" / "scripts" / "agent_plugins_resolver.py"
 )
 
 
