@@ -62,15 +62,45 @@ def is_suppressed(root: str) -> bool:
     return False
 
 
+def current_branch(root: str) -> str:
+    return _git(root, "branch", "--show-current").stdout.strip()
+
+
+def is_registered_worktree(root: str) -> bool:
+    """True when root is a live entry in its repo's ``git worktree list``.
+
+    A worktree that a failed/interrupted land-work landing leaked (bento-gd2)
+    and a manual sweep has not yet removed is still registered; one that has
+    since been pruned or replaced is not.
+    """
+    result = _git(root, "worktree", "list", "--porcelain")
+    if result.returncode != 0:
+        return False
+    root_resolved = str(Path(root).resolve())
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            path = line[len("worktree "):].strip()
+            if str(Path(path).resolve()) == root_resolved:
+                return True
+    return False
+
+
 def is_land_work_preview(root: str) -> bool:
-    """True when root is a land-work merge-preview worktree.
+    """True when root is a live, still-detached land-work merge-preview worktree.
 
     ``land-work-create-preview.py`` materializes previews via
     ``tempfile.mkdtemp(prefix="land-work-preview-", dir="/tmp")`` and
-    ``git worktree add --detach``; the toplevel directory name carries that
-    prefix directly, so matching the basename is sufficient.
+    ``git worktree add --detach``. The name prefix alone is not sufficient:
+    a leaked preview directory (bento-gd2) could be reused later for real,
+    attached-branch work before a closure sweep removes it, so this also
+    requires HEAD to still be detached and the path to still be a registered
+    worktree before treating it as a live preview.
     """
-    return Path(root).name.startswith("land-work-preview-")
+    if not Path(root).name.startswith("land-work-preview-"):
+        return False
+    if current_branch(root):
+        return False
+    return is_registered_worktree(root)
 
 
 def has_in_progress_operation(root: str) -> bool:
@@ -88,10 +118,6 @@ def has_in_progress_operation(root: str) -> bool:
         (git_dir / marker).exists()
         for marker in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
     )
-
-
-def current_branch(root: str) -> str:
-    return _git(root, "branch", "--show-current").stdout.strip()
 
 
 def is_dirty(root: str) -> bool:

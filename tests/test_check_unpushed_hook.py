@@ -237,6 +237,26 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_blocks_reused_leaked_preview_directory(self) -> None:
+        # A failed/interrupted landing can leak a land-work-preview-* worktree
+        # (bento-gd2) that survives until a manual closure sweep. If that
+        # directory is reused for real work — checked out to an attached
+        # branch and committed to — before the sweep runs, the basename alone
+        # must not make the hook skip it: HEAD is attached, so this is not a
+        # live preview and genuinely unpushed work here must still block.
+        repo = self._init_repo()
+        self._add_remote(repo)
+
+        leaked_dir = self.root / "land-work-preview-leaked1"
+        self._git(repo, "worktree", "add", "--detach", str(leaked_dir), "main")
+        self._git(leaked_dir, "checkout", "-b", "reused-feature")
+        (leaked_dir / "README.md").write_text("reused-work\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=leaked_dir)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
     def test_allows_in_progress_rebase_in_linked_worktree(self) -> None:
         # A rebase mid-replay detaches HEAD and stages files in the linked
         # worktree; that is normal in-protocol state, not abandoned work.
