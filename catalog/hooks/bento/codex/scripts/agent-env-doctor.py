@@ -60,14 +60,21 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
 
 # .agent-mode.local also carries syntax owned by dotfiles' agent-mode launcher
 # (bashrc.agent-mode.sh), not by Bento: a bare "dangerous" token, a quoted
-# `mode = "..."` assignment, and an optional `tools = [...]` assignment. These
+# `mode = "..."` assignment, and an optional `tools = ...` assignment. These
 # are recognized as valid launcher grammar regardless of the quoted value —
 # the launcher itself decides whether a given mode/tool activates anything —
-# so Bento must not flag them as unknown. Anything that doesn't match this
-# grammar or Bento's own key=value keys still warns.
+# so Bento must not flag them as unknown. The tools line is matched exactly as
+# permissively as the launcher's own parser: any line whose key is `tools`
+# followed by `=` is recognized, with no requirement on bracket/comma
+# strictness, since the launcher itself only greps for quoted tokens anywhere
+# on that line (`_agent_mode_tools_line` / `_agent_mode_tool_enabled` in
+# bashrc.agent-mode.sh) — so `tools = ["claude" "codex"]` (missing comma) or a
+# trailing comma are both real, effective launcher config, not malformed
+# input. Anything that doesn't match this grammar or Bento's own key=value
+# keys still warns.
 _LAUNCHER_DANGEROUS_TOKEN = "dangerous"
 _LAUNCHER_MODE_RE = re.compile(r'^mode\s*=\s*"[^"]+"\s*$')
-_LAUNCHER_TOOLS_RE = re.compile(r'^tools\s*=\s*\[\s*(?:"[^"]*"(?:\s*,\s*"[^"]*")*\s*)?\]\s*$')
+_LAUNCHER_TOOLS_RE = re.compile(r"^tools\s*=")
 
 # @import tokens: an "@" at line start or after whitespace, then a path token.
 _IMPORT_RE = re.compile(r"(?:^|\s)@(\S+)")

@@ -322,6 +322,22 @@ class AgentEnvDoctorTest(unittest.TestCase):
         )
         self.assertIsNone(self._evaluate())
 
+    def test_launcher_tools_missing_comma_is_silent(self) -> None:
+        # The real launcher greps for quoted tokens anywhere on a `tools =`
+        # line (_agent_mode_tools_line / _agent_mode_tool_enabled) — a
+        # missing comma between entries is still real, effective config, not
+        # malformed input.
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["claude" "codex"]\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_tools_trailing_comma_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["claude", "codex",]\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
     def test_launcher_mode_non_dangerous_value_is_silent(self) -> None:
         # The launcher itself decides whether a given mode value activates
         # anything; any quoted value is valid launcher syntax for Bento.
