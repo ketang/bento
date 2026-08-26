@@ -10,7 +10,7 @@
     {
       "name": "bento",
       "description": "Complete Bento skill pack with workflow, tracker, and repository cleanup skills",
-      "version": "2.3.8",
+      "version": "2.3.9",
       "source": "./plugins/claude/bento",
       "author": {
         "name": "Ketan Gangatirkar"

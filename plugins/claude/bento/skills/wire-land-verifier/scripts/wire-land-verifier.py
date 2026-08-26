@@ -224,16 +224,8 @@ INTERPRETERS = frozenset(
 # Inline interpreter bodies that evaluate to "do nothing".
 # Shell punctuation that runs nothing on its own.
 _SHELL_SEPARATORS = " \t\n\r;&|"
-_SHELL_SEPARATOR_TOKENS = frozenset({";", ";;", "&", "&&", "|", "||"})
 
 _NEGATIVE_NUMBER_RE = re.compile(r"^-\d+$")
-
-# `shlex.split` only splits on whitespace, not shell metacharacters -- a
-# separator glued to a word with no surrounding space (`echo prep; make
-# test`) survives as one token ("prep;"). This peels a leading/trailing
-# separator run off a token so `_split_shell_statements` still sees it as its
-# own token, matching how a real shell lexer (not just shlex) would tokenize.
-_SEP_ATTACHED_RE = re.compile(r"(;;|&&|\|\||;|&|\|)")
 
 _TRIVIAL_SCRIPT_RE = re.compile(r"^[\s;]*(?:pass|None|0|true|1)?[\s;]*$")
 
@@ -669,31 +661,64 @@ def no_op_reason(argv: list[str], depth: int = 0) -> str | None:
     return None
 
 
-def _split_shell_statements(tokens: list[str]) -> list[list[str]]:
-    """Break a flat, already-`shlex.split` token list at shell separators.
+def _split_shell_statements(script: str) -> list[list[str]]:
+    """Break a shell script into per-statement token lists.
 
-    `shlex.split` doesn't know `;`/`&&`/`|` are special -- they come out as
-    ordinary tokens. Splitting on them here (rather than discarding them and
-    judging the flattened remainder as one command) is what lets a compound
-    script be screened statement by statement instead of by its first word.
+    Splits on `;`/`&&`/`||`/`&`/`|` in the RAW string, tracking quote state,
+    *before* any tokenizing -- not by handing the whole script to
+    `shlex.split` and then splitting the result. Doing it post-tokenization
+    can't tell a `;` that was inside real shell quotes (content, not a
+    separator) from one that wasn't, since shlex has already stripped the
+    quotes by then: `echo 'a;b'` is one statement with one literal argument,
+    but splitting the shlex output on any token containing `;` would fabricate
+    a second, nonexistent statement -- and since that phantom statement isn't
+    itself a no-op, the real no-op (`echo`) would sail through screening
+    entirely. Scanning the raw string respects quoting the way a real shell
+    lexer does, and also catches a separator with no surrounding whitespace
+    (`echo prep; make test`), which `shlex.split` alone would leave glued to
+    the preceding word.
     """
-    expanded: list[str] = []
-    for token in tokens:
-        pieces = [piece for piece in _SEP_ATTACHED_RE.split(token) if piece]
-        expanded.extend(pieces or [token])
-
-    statements: list[list[str]] = []
+    statements: list[str] = []
     current: list[str] = []
-    for token in expanded:
-        if token in _SHELL_SEPARATOR_TOKENS:
-            if current:
-                statements.append(current)
+    quote: str | None = None
+    i, n = 0, len(script)
+    while i < n:
+        char = script[i]
+        if quote:
+            current.append(char)
+            if char == quote:
+                quote = None
+            i += 1
+            continue
+        if char in "'\"":
+            quote = char
+            current.append(char)
+            i += 1
+            continue
+        pair = script[i : i + 2]
+        if pair in (";;", "&&", "||"):
+            statements.append("".join(current))
             current = []
-        else:
-            current.append(token)
-    if current:
-        statements.append(current)
-    return statements
+            i += 2
+            continue
+        if char in ";&|":
+            statements.append("".join(current))
+            current = []
+            i += 1
+            continue
+        current.append(char)
+        i += 1
+    statements.append("".join(current))
+
+    result: list[list[str]] = []
+    for statement in statements:
+        try:
+            tokens = shlex.split(statement)
+        except ValueError:
+            tokens = []
+        if tokens:
+            result.append(tokens)
+    return result
 
 
 def _resolved_no_op_reason(argv: list[str], depth: int) -> str | None:
@@ -711,17 +736,13 @@ def _resolved_no_op_reason(argv: list[str], depth: int) -> str | None:
         if script is not None:
             if not script.strip(_SHELL_SEPARATORS):
                 return "its inline shell script is empty"
-            try:
-                tokens = shlex.split(script)
-            except ValueError:
-                tokens = []
             # Split on statement separators rather than stripping them and
             # judging the flattened result as one command: `echo prep; make
             # test` would otherwise be judged as starting with `echo` alone
             # and rejected, even though `make test` -- the actual gate -- is
             # right there. The whole script is a no-op only if EVERY
             # statement is; one real statement makes the compound real.
-            statements = _split_shell_statements(tokens)
+            statements = _split_shell_statements(script)
             statement_reasons = [
                 no_op_reason(statement, depth + 1) for statement in statements
             ]
@@ -748,9 +769,31 @@ def reject_no_ops(check: dict) -> None:
     )
 
 
+def _contains_session_escape(argv: list[str], depth: int = 0) -> bool:
+    """Whether `argv`, or a shell script it hands off to, uses setsid.
+
+    Checking only the top-level prefix chain misses `setsid` hidden inside a
+    `bash -c '...'` inline script -- the same recursive-descent gap
+    `no_op_reason` already handles for no-op detection. Reuses the same shell
+    walk and depth cap (4) for the same reason: no fixed budget would leave a
+    chain of prefixes unscreened past the cap.
+    """
+    if any(name in SESSION_ESCAPING_EXECUTABLES for name in _primary_chain_executables(argv)):
+        return True
+    if not argv:
+        return False
+    head = Path(argv[0]).name
+    if depth < 4 and head in SHELL_EXECUTABLES:
+        script, _operands = _shell_walk(argv)
+        if script is not None:
+            for statement in _split_shell_statements(script):
+                if _contains_session_escape(statement, depth + 1):
+                    return True
+    return False
+
+
 def reject_session_escape(check: dict) -> None:
-    chain = _primary_chain_executables(check["argv"])
-    if any(name in SESSION_ESCAPING_EXECUTABLES for name in chain):
+    if _contains_session_escape(check["argv"]):
         raise WireError(
             f"--check {check['command']!r} uses setsid, which starts a new "
             "session and escapes the process-group containment validate() "
