@@ -110,11 +110,28 @@ def _resolves_to_commit(root: str, ref_or_sha: str) -> bool:
     return result.returncode == 0
 
 
-def _read_stripped(path: Path) -> str:
+def _is_ancestor_of_head(root: str, sha: str) -> bool:
+    result = _git(root, "merge-base", "--is-ancestor", sha, "HEAD")
+    return result.returncode == 0
+
+
+def _read_text(path: Path) -> str:
     try:
-        return path.read_text(encoding="utf-8").strip()
+        return path.read_text(encoding="utf-8")
     except OSError:
         return ""
+
+
+def _is_incoming_merge_parent(root: str, sha: str) -> bool:
+    """True when sha resolves to a real commit that is not already reachable
+    from HEAD.
+
+    A real incoming merge/cherry-pick parent is never already an ancestor of
+    (or equal to) HEAD. A faked marker such as ``git rev-parse HEAD >
+    .git/MERGE_HEAD`` resolves to a real commit but is HEAD's own ancestor,
+    so this closes that bypass without needing reflog archaeology.
+    """
+    return _resolves_to_commit(root, sha) and not _is_ancestor_of_head(root, sha)
 
 
 def has_in_progress_operation(root: str) -> bool:
@@ -123,8 +140,11 @@ def has_in_progress_operation(root: str) -> bool:
     Marker *existence* alone is gameable: a bare ``touch .git/MERGE_HEAD`` or
     ``mkdir .git/rebase-merge`` would otherwise bypass the whole check. Each
     marker is only trusted once it correlates with real git state that a
-    trivial fake file cannot reproduce: MERGE_HEAD/CHERRY_PICK_HEAD must
-    contain a SHA that resolves to a real commit, and a rebase directory must
+    trivial fake file cannot reproduce.
+
+    MERGE_HEAD/CHERRY_PICK_HEAD hold one SHA per line (an octopus merge lists
+    one per non-first parent) — every non-empty line must resolve to a real
+    commit that is not already an ancestor of HEAD. A rebase directory must
     both carry the ``onto`` file a real ``git rebase`` always writes (also
     resolving to a real commit) and have detached HEAD, since a real rebase
     always detaches HEAD to replay commits.
@@ -141,14 +161,17 @@ def has_in_progress_operation(root: str) -> bool:
 
     for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD"):
         marker_path = git_dir / marker
-        if marker_path.exists() and _resolves_to_commit(root, _read_stripped(marker_path)):
+        if not marker_path.exists():
+            continue
+        shas = [line.strip() for line in _read_text(marker_path).splitlines() if line.strip()]
+        if shas and all(_is_incoming_merge_parent(root, sha) for sha in shas):
             return True
 
     for rebase_dir in ("rebase-merge", "rebase-apply"):
         rebase_path = git_dir / rebase_dir
         if not rebase_path.is_dir():
             continue
-        onto = _read_stripped(rebase_path / "onto")
+        onto = _read_text(rebase_path / "onto").strip()
         if onto and _resolves_to_commit(root, onto) and not current_branch(root):
             return True
 
