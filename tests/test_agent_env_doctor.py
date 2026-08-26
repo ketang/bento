@@ -298,11 +298,47 @@ class AgentEnvDoctorTest(unittest.TestCase):
 
     # --- check 4: .agent-mode.local -----------------------------------------
 
-    def test_bare_token_in_agent_mode_flagged(self) -> None:
+    def test_bare_dangerous_token_is_silent(self) -> None:
+        # "dangerous" is real launcher grammar (bashrc.agent-mode.sh) that
+        # enables --dangerously-skip-permissions; it is not a Bento no-op.
         (self.repo / ".agent-mode.local").write_text("dangerous\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_other_bare_token_still_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text("yolo\n", encoding="utf-8")
         context = self._context(self._evaluate())
-        self.assertIn("dangerous", context)
+        self.assertIn("yolo", context)
         self.assertIn("not a key=value", context)
+
+    def test_launcher_mode_assignment_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_mode_and_tools_assignment_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["claude", "codex"]\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_mode_non_dangerous_value_is_silent(self) -> None:
+        # The launcher itself decides whether a given mode value activates
+        # anything; any quoted value is valid launcher syntax for Bento.
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "safe"\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_unquoted_mode_assignment_still_flagged(self) -> None:
+        # The launcher's own parser requires quotes; unquoted values are not
+        # recognized launcher syntax, so this remains a genuine Bento warning.
+        (self.repo / ".agent-mode.local").write_text(
+            "mode=dangerous\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown key", context)
+        self.assertIn("mode", context)
 
     def test_unknown_key_in_agent_mode_flagged(self) -> None:
         (self.repo / ".agent-mode.local").write_text("bypass=true\n", encoding="utf-8")
@@ -316,6 +352,26 @@ class AgentEnvDoctorTest(unittest.TestCase):
             encoding="utf-8",
         )
         self.assertIsNone(self._evaluate())
+
+    def test_launcher_and_bento_settings_coexist(self) -> None:
+        # Launcher-owned mode/tools lines and Bento's own key=value settings
+        # can appear in the same file without tripping each other's checks.
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\n'
+            'tools = ["claude"]\n'
+            "require_worktree=false\n"
+            "hygiene_check=false\n",
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_settings_do_not_mask_real_bento_problem(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\nbypass=true\n', encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown key", context)
+        self.assertIn("bypass", context)
 
     # --- orchestration / contract ------------------------------------------
 

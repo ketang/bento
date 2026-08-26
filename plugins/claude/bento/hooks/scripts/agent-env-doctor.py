@@ -57,6 +57,17 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
     }
 )
 
+# .agent-mode.local also carries syntax owned by dotfiles' agent-mode launcher
+# (bashrc.agent-mode.sh), not by Bento: a bare "dangerous" token, a quoted
+# `mode = "..."` assignment, and an optional `tools = [...]` assignment. These
+# are recognized as valid launcher grammar regardless of the quoted value —
+# the launcher itself decides whether a given mode/tool activates anything —
+# so Bento must not flag them as unknown. Anything that doesn't match this
+# grammar or Bento's own key=value keys still warns.
+_LAUNCHER_DANGEROUS_TOKEN = "dangerous"
+_LAUNCHER_MODE_RE = re.compile(r'^mode\s*=\s*"[^"]+"\s*$')
+_LAUNCHER_TOOLS_RE = re.compile(r'^tools\s*=\s*\[\s*(?:"[^"]*"(?:\s*,\s*"[^"]*")*\s*)?\]\s*$')
+
 # Plugins that install guardrails gated behind a repo-local precondition. When
 # the plugin is installed but its precondition file/dir is absent, the plugin
 # is dormant: its skills never trigger. Data-driven so a new plugin registers
@@ -453,6 +464,10 @@ def check_agent_mode(root: Path) -> list[str]:
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
+            continue
+        if stripped == _LAUNCHER_DANGEROUS_TOKEN:
+            continue
+        if _LAUNCHER_MODE_RE.match(stripped) or _LAUNCHER_TOOLS_RE.match(stripped):
             continue
         if "=" not in stripped:
             warnings.append(

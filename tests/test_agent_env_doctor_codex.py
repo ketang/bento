@@ -82,6 +82,38 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
         context = self._context(self._evaluate())
         self.assertIn("unknown key", context)
 
+    def test_bare_dangerous_token_is_silent(self) -> None:
+        # "dangerous" is real launcher grammar (bashrc.agent-mode.sh) that
+        # enables --dangerously-bypass-approvals-and-sandbox for Codex.
+        (self.repo / ".agent-mode.local").write_text("dangerous\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_other_bare_token_still_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text("yolo\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
+    def test_launcher_mode_and_tools_assignment_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["claude", "codex"]\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_and_bento_settings_coexist(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["codex"]\nrequire_worktree=false\n',
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_settings_do_not_mask_real_bento_problem(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\nbypass=true\n', encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown key", context)
+        self.assertIn("bypass", context)
+
     def test_recognized_keys_silent(self) -> None:
         (self.repo / ".agent-mode.local").write_text(
             "require_worktree=false\n", encoding="utf-8"

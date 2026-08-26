@@ -58,6 +58,17 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
     }
 )
 
+# .agent-mode.local also carries syntax owned by dotfiles' agent-mode launcher
+# (bashrc.agent-mode.sh), not by Bento: a bare "dangerous" token, a quoted
+# `mode = "..."` assignment, and an optional `tools = [...]` assignment. These
+# are recognized as valid launcher grammar regardless of the quoted value —
+# the launcher itself decides whether a given mode/tool activates anything —
+# so Bento must not flag them as unknown. Anything that doesn't match this
+# grammar or Bento's own key=value keys still warns.
+_LAUNCHER_DANGEROUS_TOKEN = "dangerous"
+_LAUNCHER_MODE_RE = re.compile(r'^mode\s*=\s*"[^"]+"\s*$')
+_LAUNCHER_TOOLS_RE = re.compile(r'^tools\s*=\s*\[\s*(?:"[^"]*"(?:\s*,\s*"[^"]*")*\s*)?\]\s*$')
+
 # @import tokens: an "@" at line start or after whitespace, then a path token.
 _IMPORT_RE = re.compile(r"(?:^|\s)@(\S+)")
 
@@ -223,6 +234,10 @@ def check_agent_mode(root: Path) -> list[str]:
     for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
+            continue
+        if stripped == _LAUNCHER_DANGEROUS_TOKEN:
+            continue
+        if _LAUNCHER_MODE_RE.match(stripped) or _LAUNCHER_TOOLS_RE.match(stripped):
             continue
         if "=" not in stripped:
             warnings.append(

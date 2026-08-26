@@ -41,6 +41,13 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
   `agent_env_doctor_skip_plugin=<name>[,<name>...]` instead. A Codex peer runs the
   runtime-agnostic subset (the `@import` and `.agent-mode.local` checks); the
   hook-binary and dormant-plugin checks are Claude-only.
+  `.agent-mode.local` has two owners sharing one file: Bento's own
+  `key=value` settings above, and dotfiles' `bashrc.agent-mode.sh` shell
+  launcher, which owns a bare `dangerous` token, a quoted `mode = "..."`
+  assignment, and an optional `tools = [...]` assignment (these enable
+  `--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox`
+  at process launch, outside of any hook). The doctor recognizes both
+  grammars in the same file and only flags lines that match neither.
 - `session-id` — persists the Claude Code session id and a per-session scratch
   directory (`SessionStart`).
 - `telemetry` — opt-in Bash telemetry capture.
