@@ -1,6 +1,8 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from tests.script_test_utils import load_module, write
 
@@ -57,6 +59,34 @@ class AgentPluginsResolverTest(unittest.TestCase):
             ),
             Path("C:/Users/K") / "AppData" / "Roaming",
         )
+
+    def test_xdg_config_home_wins_over_windows_platform_default(self) -> None:
+        # XDG_CONFIG_HOME is honored regardless of platform, even when a
+        # Windows-specific candidate (APPDATA) is also set.
+        home = self.tmp_path / "home"
+        xdg = self.tmp_path / "xdg"
+        self.assertEqual(
+            RESOLVER.home_config_root(
+                env={
+                    "XDG_CONFIG_HOME": str(xdg),
+                    "APPDATA": "C:/Users/K/AppData/Roaming",
+                },
+                platform="win32",
+                home=home,
+            ),
+            xdg,
+        )
+
+    def test_xdg_config_home_expands_tilde(self) -> None:
+        real_home = self.tmp_path / "real-home"
+        real_home.mkdir()
+        with patch.dict(os.environ, {"HOME": str(real_home)}, clear=False):
+            self.assertEqual(
+                RESOLVER.home_config_root(
+                    env={"XDG_CONFIG_HOME": "~/.config"}, platform="linux"
+                ),
+                real_home / ".config",
+            )
 
     def test_repo_scope_overrides_home_and_bundled(self) -> None:
         repo = self.tmp_path / "repo"

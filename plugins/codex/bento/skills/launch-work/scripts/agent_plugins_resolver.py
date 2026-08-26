@@ -42,6 +42,10 @@ def home_config_root(
     platform = sys.platform if platform is None else platform
     home_path = Path(home) if home is not None else Path.home()
 
+    xdg_config_home = env.get("XDG_CONFIG_HOME")
+    if xdg_config_home:
+        return Path(xdg_config_home).expanduser()
+
     if platform.startswith("win"):
         appdata = env.get("APPDATA")
         if appdata:
@@ -50,10 +54,6 @@ def home_config_root(
         if userprofile:
             return Path(userprofile) / "AppData" / "Roaming"
         return home_path / "AppData" / "Roaming"
-
-    xdg_config_home = env.get("XDG_CONFIG_HOME")
-    if xdg_config_home:
-        return Path(xdg_config_home)
 
     if platform == "darwin":
         return home_path / "Library" / "Application Support"
