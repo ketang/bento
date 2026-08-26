@@ -567,7 +567,6 @@ class IsExcludedGeneratedTest(unittest.TestCase):
             "models_pb2.py",
             "models_pb2_grpc.py",
             "app.min.js",
-            "app.min.css",
         ):
             with self.subTest(name=name):
                 self.assertTrue(self.module.is_excluded_generated(name))
@@ -576,6 +575,14 @@ class IsExcludedGeneratedTest(unittest.TestCase):
         for name in ("package.json", "main.go", "app.js", "app.css", "models.py"):
             with self.subTest(name=name):
                 self.assertFalse(self.module.is_excluded_generated(name))
+
+    def test_min_css_has_no_tier1_entry_since_css_is_already_non_text_like(self) -> None:
+        # .css is not in TEXT_FILE_SUFFIXES, so is_text_like() already keeps
+        # every .css file (minified or not) out of the content-read path this
+        # exclusion tier guards. A "*.min.css" Tier 1 pattern would be dead
+        # code — assert both halves of that reasoning stay true together.
+        self.assertFalse(self.module.is_excluded_generated("app.min.css"))
+        self.assertFalse(self.module.is_text_like("app.min.css"))
 
 
 class DemoWalkthroughSignalsTest(unittest.TestCase):

@@ -103,12 +103,15 @@ EXCLUDED_GENERATED_EXACT_NAMES = {
 EXCLUDED_GENERATED_NAME_PATTERNS = (
     "*.pb.go",
     "*_generated.go",
-    "*_**gen.go",
-    "zz_**generated*.go",
+    "*_gen.go",
+    "zz_generated*.go",
     "*_pb2.py",
     "*_pb2_grpc.py",
     "*.min.js",
-    "*.min.css",
+    # No "*.min.css" entry: .css is not in TEXT_FILE_SUFFIXES, so
+    # is_text_like() already keeps every .css file out of the content-read
+    # path this exclusion tier guards. A Tier 1 entry for it would be dead
+    # code implying coverage that doesn't exist.
 )
 
 # Tier 2 — size backstop. Primary exclusions for known generated formats are
