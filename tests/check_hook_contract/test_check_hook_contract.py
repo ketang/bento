@@ -713,7 +713,7 @@ class LiteralOnlyDecoyTest(unittest.TestCase):
         self.assertEqual(checker.check_python_source(src, FAKE), [])
 
     def test_get_accessor_with_arg_over_literal_temp_var_is_a_decoy(self) -> None:
-        """`_decoy_root_name`'s read-only-accessor branch must not require
+        """`_decoy_dependencies`'s read-only-accessor branch must not require
         zero arguments -- `D2 = DEFAULTS.get('env')` is exactly as literal as
         `DEFAULTS`, the same as the inline `DEFAULTS.get('env')['cwd']` chain
         `_is_decoy_base` already accepts with no arity restriction."""
@@ -727,7 +727,7 @@ class LiteralOnlyDecoyTest(unittest.TestCase):
         )
 
     def test_subscript_rhs_over_literal_temp_var_is_a_decoy(self) -> None:
-        """`_decoy_root_name` must recurse through a Subscript-shaped RHS,
+        """`_decoy_dependencies` must recurse through a Subscript-shaped RHS,
         not just Call-shaped ones -- `X = DEFAULTS['env']` is exactly as
         literal as `DEFAULTS`, mirroring the Subscript-base recursion
         `_is_decoy_base` already does for inline chains."""
@@ -739,6 +739,37 @@ class LiteralOnlyDecoyTest(unittest.TestCase):
             + self.EXEMPT
             + "    return os.getcwd()\n"
         )
+
+    def test_multi_arg_factory_over_literal_temp_var_is_a_decoy(self) -> None:
+        """`_decoy_dependencies`'s factory branch must accept any number of
+        decoy-shaped positional/keyword arguments, not just a single bare
+        name -- `D2 = dict(DEFAULTS, extra=1)` is exactly as literal as the
+        inline `dict(DEFAULTS, extra=1).get('cwd')` chain `_is_decoy_base`
+        already accepts."""
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    D2 = dict(DEFAULTS, extra=1)\n"
+            "    unrelated = D2.get('cwd')\n"
+            + self.EXEMPT
+            + "    return os.getcwd()\n"
+        )
+
+    def test_multi_arg_factory_with_dynamic_arg_over_temp_var_satisfies_check(
+        self,
+    ) -> None:
+        """A multi-arg factory call is only a decoy if *every* argument is --
+        one dynamic argument must rescue the whole temp-variable binding."""
+        src = (
+            "import json, os, sys\n\n"
+            "DEFAULTS = {'cwd': '/tmp'}\n"
+            "payload = json.load(sys.stdin)\n\n\n"
+            "def f():\n"
+            "    D2 = dict(DEFAULTS, extra=payload)\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return D2.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
 
     def test_shadowed_dict_factory_is_not_treated_as_literal(self) -> None:
         """If `dict` is rebound in the file, `dict(...)` is an ordinary call,
