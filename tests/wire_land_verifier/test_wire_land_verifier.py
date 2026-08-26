@@ -952,6 +952,18 @@ class CompoundShellNoOpScreeningTest(WireLandVerifierTestBase):
         self.assertNotEqual(result.returncode, 0)
         self.assertIn("no-op", (result.stderr + result.stdout).lower())
 
+    def test_a_literal_separator_inside_real_quotes_is_not_a_statement_split(self) -> None:
+        """A prior fix split statements on the ALREADY-tokenized shlex output,
+        so a ';' that was inside real shell quotes (and thus a literal
+        argument character, not a separator) got misread as one -- fabricating
+        a second, nonexistent statement that let this pure no-op slip past
+        screening (`echo` with one literal argument, not a compound script)."""
+        result = self.wire(
+            "draft", "--check", "gate::bash -c \"echo 'a;b'\"", check=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("no-op", (result.stderr + result.stdout).lower())
+
 
 class SessionEscapeTest(WireLandVerifierTestBase):
     """bento-ei1p round 8 MAJOR: setsid escapes the process-group containment
@@ -963,6 +975,15 @@ class SessionEscapeTest(WireLandVerifierTestBase):
                 result = self.wire("draft", "--check", f"gate::{command}", check=False)
                 self.assertNotEqual(result.returncode, 0, command)
                 self.assertIn("setsid", result.stderr + result.stdout)
+
+    def test_setsid_hidden_inside_an_inline_shell_script_is_also_refused(self) -> None:
+        """A prior fix only checked the top-level prefix chain, so setsid
+        inside `bash -c '...'` slipped straight past it."""
+        result = self.wire(
+            "draft", "--check", "gate::bash -c 'setsid sleep 999 &'", check=False
+        )
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("setsid", result.stderr + result.stdout)
 
 
 class StaleReceiptTest(WireLandVerifierTestBase):
