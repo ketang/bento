@@ -103,8 +103,32 @@ def is_land_work_preview(root: str) -> bool:
     return is_registered_worktree(root)
 
 
+def _resolves_to_commit(root: str, ref_or_sha: str) -> bool:
+    if not ref_or_sha:
+        return False
+    result = _git(root, "cat-file", "-e", f"{ref_or_sha}^{{commit}}")
+    return result.returncode == 0
+
+
+def _read_stripped(path: Path) -> str:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return ""
+
+
 def has_in_progress_operation(root: str) -> bool:
-    """True when root's worktree has a rebase, merge, or cherry-pick underway."""
+    """True when root's worktree has a rebase, merge, or cherry-pick underway.
+
+    Marker *existence* alone is gameable: a bare ``touch .git/MERGE_HEAD`` or
+    ``mkdir .git/rebase-merge`` would otherwise bypass the whole check. Each
+    marker is only trusted once it correlates with real git state that a
+    trivial fake file cannot reproduce: MERGE_HEAD/CHERRY_PICK_HEAD must
+    contain a SHA that resolves to a real commit, and a rebase directory must
+    both carry the ``onto`` file a real ``git rebase`` always writes (also
+    resolving to a real commit) and have detached HEAD, since a real rebase
+    always detaches HEAD to replay commits.
+    """
     result = _git(root, "rev-parse", "--git-dir")
     if result.returncode != 0:
         return False
@@ -114,10 +138,21 @@ def has_in_progress_operation(root: str) -> bool:
     git_dir = Path(git_dir_raw)
     if not git_dir.is_absolute():
         git_dir = Path(root) / git_dir
-    return any(
-        (git_dir / marker).exists()
-        for marker in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
-    )
+
+    for marker in ("MERGE_HEAD", "CHERRY_PICK_HEAD"):
+        marker_path = git_dir / marker
+        if marker_path.exists() and _resolves_to_commit(root, _read_stripped(marker_path)):
+            return True
+
+    for rebase_dir in ("rebase-merge", "rebase-apply"):
+        rebase_path = git_dir / rebase_dir
+        if not rebase_path.is_dir():
+            continue
+        onto = _read_stripped(rebase_path / "onto")
+        if onto and _resolves_to_commit(root, onto) and not current_branch(root):
+            return True
+
+    return False
 
 
 def is_dirty(root: str) -> bool:

@@ -257,6 +257,32 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 2, msg=result.stderr)
         self.assertIn("uncommitted changes", result.stderr)
 
+    def test_blocks_fake_merge_head_marker(self) -> None:
+        # A bare `touch .git/MERGE_HEAD` must not bypass the check: the
+        # marker's content has to resolve to a real commit, not just exist.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        (repo / ".git" / "MERGE_HEAD").write_text("not-a-real-sha\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_blocks_fake_rebase_merge_marker(self) -> None:
+        # A bare `mkdir .git/rebase-merge` (no real rebase state, HEAD still
+        # attached) must not bypass the check either.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        (repo / ".git" / "rebase-merge").mkdir()
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
     def test_allows_in_progress_rebase_in_linked_worktree(self) -> None:
         # A rebase mid-replay detaches HEAD and stages files in the linked
         # worktree; that is normal in-protocol state, not abandoned work.
