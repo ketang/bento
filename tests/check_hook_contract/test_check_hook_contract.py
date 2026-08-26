@@ -50,6 +50,23 @@ class RealHooksComplyTest(unittest.TestCase):
             f"check-hook-contract failed on committed hooks:\n{result.stderr}",
         )
 
+    def test_decoy_filtering_does_not_erase_genuine_payload_reads(self) -> None:
+        """Guard against the fix vacuously passing by rejecting every Python
+        hook's `cwd` read: exactly the same 8 of 18 catalog Python hooks that
+        reference the payload `cwd` field before the Subscript-recursion and
+        temp-variable fixes must still reference it after."""
+        import ast
+
+        scripts = checker.find_hook_scripts(REPO_ROOT)
+        py_scripts = [p for p in scripts if p.suffix == ".py"]
+        self.assertEqual(len(py_scripts), 18)
+        referencing = sum(
+            1
+            for p in py_scripts
+            if checker._references_payload_cwd_ast(ast.parse(p.read_text()))
+        )
+        self.assertEqual(referencing, 8)
+
     def test_finds_the_hook_scripts(self) -> None:
         scripts = checker.find_hook_scripts(REPO_ROOT)
         self.assertTrue(scripts, "expected to discover hook scripts under catalog/hooks")
@@ -618,6 +635,80 @@ class LiteralOnlyDecoyTest(unittest.TestCase):
             "def f():\n"
             "    # hook-cwd-exempt: last-resort fallback only.\n"
             "    return d.get('cwd') or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+    def test_subscript_of_literal_name_is_a_decoy(self) -> None:
+        """`_is_decoy_base` must recurse through `Subscript` bases, not just
+        read-only method chains, so indexing into a literal-only name stays a
+        decoy."""
+        self._assert_flagged(
+            "DEFAULTS = {'env': {'cwd': '/tmp'}}\n\n\n"
+            "def f():\n"
+            "    unrelated = DEFAULTS['env']['cwd']\n"
+            + self.EXEMPT
+            + "    return os.getcwd()\n"
+        )
+
+    def test_subscript_of_literal_list_element_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "L = [{'cwd': '/t'}]\n\n\n"
+            "def f():\n"
+            "    unrelated = L[0]['cwd']\n" + self.EXEMPT + "    return os.getcwd()\n"
+        )
+
+    def test_inline_nested_subscript_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "\ndef f():\n"
+            "    unrelated = {'e': {'cwd': '/t'}}['e']['cwd']\n"
+            + self.EXEMPT
+            + "    return os.getcwd()\n"
+        )
+
+    def test_subscript_of_dynamic_name_satisfies_check(self) -> None:
+        """The Subscript recursion must not turn a genuine payload read into
+        a false positive."""
+        src = (
+            "import json, os, sys\n\n"
+            "payload = json.load(sys.stdin)\n\n\n"
+            "def f():\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return payload['nested']['cwd'] or os.getcwd()\n"
+        )
+        self.assertEqual(checker.check_python_source(src, FAKE), [])
+
+    def test_dict_factory_over_literal_temp_var_is_a_decoy(self) -> None:
+        """`D2 = dict(DEFAULTS)` must not bypass the `_is_decoy_base`
+        recursion just because it is assigned to a temp variable first."""
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    D2 = dict(DEFAULTS)\n"
+            "    unrelated = D2.get('cwd')\n"
+            + self.EXEMPT
+            + "    return os.getcwd()\n"
+        )
+
+    def test_copy_accessor_over_literal_temp_var_is_a_decoy(self) -> None:
+        self._assert_flagged(
+            "DEFAULTS = {'cwd': '/tmp'}\n\n\n"
+            "def f():\n"
+            "    D2 = DEFAULTS.copy()\n"
+            "    unrelated = D2.get('cwd')\n"
+            + self.EXEMPT
+            + "    return os.getcwd()\n"
+        )
+
+    def test_dict_factory_over_dynamic_temp_var_satisfies_check(self) -> None:
+        """The alias tracing for `dict(NAME)` / `NAME.copy()` must not rescue
+        a temp variable derived from a genuine payload."""
+        src = (
+            "import json, os, sys\n\n"
+            "payload = json.load(sys.stdin)\n\n\n"
+            "def f():\n"
+            "    D2 = dict(payload)\n"
+            "    # hook-cwd-exempt: last-resort fallback only.\n"
+            "    return D2.get('cwd') or os.getcwd()\n"
         )
         self.assertEqual(checker.check_python_source(src, FAKE), [])
 

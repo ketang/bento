@@ -254,13 +254,51 @@ def _bound_names(tree: ast.AST) -> set[str]:
     return names
 
 
+def _alias_source_from_decoy_call(
+    value: ast.AST, bound: set[str]
+) -> str | None:
+    """If `value` is a factory or read-only-accessor call over a single bare
+    name -- `dict(NAME)`, `NAME.copy()` -- returns `NAME`.
+
+    Neither shape can populate its operand from external input (a factory
+    copies it, a read-only accessor only reads it), so the assigned target is
+    exactly as literal as `NAME`. Returning it as an alias source -- rather
+    than deciding literalness here -- lets the existing fixpoint in
+    `_literal_only_names` resolve it, regardless of whether `NAME`'s own
+    binding is seen before or after this one during the walk.
+    """
+    if not isinstance(value, ast.Call):
+        return None
+    func = value.func
+    if (
+        isinstance(func, ast.Attribute)
+        and func.attr in _READ_ONLY_METHODS
+        and isinstance(func.value, ast.Name)
+        and not value.args
+        and not value.keywords
+    ):
+        return func.value.id
+    if (
+        isinstance(func, ast.Name)
+        and func.id in _LITERAL_FACTORY_NAMES
+        and func.id not in bound
+        and len(value.args) == 1
+        and isinstance(value.args[0], ast.Name)
+        and not value.keywords
+    ):
+        return value.args[0].id
+    return None
+
+
 def _binding_kind(
     value: ast.AST, bound: set[str]
 ) -> tuple[str, str | None]:
     """Classify an assigned value as one of:
 
     ("literal", None)  - a hardcoded literal container or literal factory call
-    ("alias", name)    - a bare reference to another name
+    ("alias", name)    - a bare reference to another name, or a factory /
+                          read-only-accessor call over one (see
+                          `_alias_source_from_decoy_call`)
     ("dynamic", None)  - anything else (a call, attribute access, ...)
     """
     if _is_literal_container(value):
@@ -276,6 +314,9 @@ def _binding_kind(
         and all(_is_literal_container(kw.value) for kw in value.keywords)
     ):
         return ("literal", None)
+    alias_source = _alias_source_from_decoy_call(value, bound)
+    if alias_source is not None:
+        return ("alias", alias_source)
     return ("dynamic", None)
 
 
@@ -469,6 +510,12 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
             return True
         if isinstance(node, ast.Name):
             return node.id in literal_only
+        if isinstance(node, ast.Subscript):
+            # Indexing cannot turn a decoy base into payload data, so the
+            # chain stays a decoy: `DEFAULTS['env']['cwd']`,
+            # `{'e': {'cwd': '/t'}}['e']['cwd']`. Mirrors the read-only
+            # method recursion below, just for `[]` instead of `.get()`.
+            return _is_decoy_base(node.value)
         if isinstance(node, ast.Call):
             func = node.func
             # A read-only accessor cannot turn a decoy into payload data, so
