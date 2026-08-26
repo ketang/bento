@@ -11,8 +11,12 @@ that have not pushed a first commit yet must not be trapped, so a clean
 no-upstream branch passes. A dirty tree still blocks regardless of upstream.
 
 Silent no-op cases (exit 0): no/invalid cwd, a non-git cwd, a repo that opts
-out via ``require_pushed=false`` in ``.agent-mode.local``, and re-entrant Stop
-invocations (``stop_hook_active``) so a block never loops forever.
+out via ``require_pushed=false`` in ``.agent-mode.local``, re-entrant Stop
+invocations (``stop_hook_active``) so a block never loops forever, a
+land-work merge-preview worktree (its staged changes are the merge candidate
+being verified, not stranded work), and a worktree with an in-progress
+rebase/merge/cherry-pick (its detached HEAD and staged files are normal
+mid-operation state, not abandoned work).
 
 Claude Code runs hook processes from $HOME, not the project root, so the
 session directory is read from the stdin JSON payload's ``cwd`` field, never
@@ -58,6 +62,34 @@ def is_suppressed(root: str) -> bool:
     return False
 
 
+def is_land_work_preview(root: str) -> bool:
+    """True when root is a land-work merge-preview worktree.
+
+    ``land-work-create-preview.py`` materializes previews via
+    ``tempfile.mkdtemp(prefix="land-work-preview-", dir="/tmp")`` and
+    ``git worktree add --detach``; the toplevel directory name carries that
+    prefix directly, so matching the basename is sufficient.
+    """
+    return Path(root).name.startswith("land-work-preview-")
+
+
+def has_in_progress_operation(root: str) -> bool:
+    """True when root's worktree has a rebase, merge, or cherry-pick underway."""
+    result = _git(root, "rev-parse", "--git-dir")
+    if result.returncode != 0:
+        return False
+    git_dir_raw = result.stdout.strip()
+    if not git_dir_raw:
+        return False
+    git_dir = Path(git_dir_raw)
+    if not git_dir.is_absolute():
+        git_dir = Path(root) / git_dir
+    return any(
+        (git_dir / marker).exists()
+        for marker in ("rebase-merge", "rebase-apply", "MERGE_HEAD", "CHERRY_PICK_HEAD")
+    )
+
+
 def current_branch(root: str) -> str:
     return _git(root, "branch", "--show-current").stdout.strip()
 
@@ -98,6 +130,12 @@ def block_reason(hook_input: dict) -> str | None:
         return None
 
     if is_suppressed(root):
+        return None
+
+    if is_land_work_preview(root):
+        return None
+
+    if has_in_progress_operation(root):
         return None
 
     problems: list[str] = []

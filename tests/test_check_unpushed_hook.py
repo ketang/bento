@@ -219,6 +219,73 @@ class CheckUnpushedHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
+    def test_allows_land_work_preview_worktree(self) -> None:
+        # A land-work merge preview is a detached-HEAD worktree whose staged
+        # changes are the merge candidate under review, not stranded work.
+        # land-work-create-preview.py names it "land-work-preview-<random>".
+        repo = self._init_repo()
+        self._add_remote(repo)
+
+        preview_dir = self.root / "land-work-preview-abc123"
+        self._git(repo, "worktree", "add", "--detach", str(preview_dir), "main")
+        self._git(preview_dir, "merge", "--no-ff", "--no-commit", "main")
+        (preview_dir / "stray.txt").write_text("staged\n", encoding="utf-8")
+        self._git(preview_dir, "add", "stray.txt")
+
+        result = self._run(payload_cwd=preview_dir)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_allows_in_progress_rebase_in_linked_worktree(self) -> None:
+        # A rebase mid-replay detaches HEAD and stages files in the linked
+        # worktree; that is normal in-protocol state, not abandoned work.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._git(repo, "checkout", "-b", "feature")
+        (repo / "README.md").write_text("feature-change\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "feature commit")
+        self._git(repo, "checkout", "main")
+        (repo / "README.md").write_text("main-change\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "main commit")
+
+        worktree_dir = self.root / "feature-worktree"
+        self._git(repo, "worktree", "add", str(worktree_dir), "feature")
+        # Both branches touched README.md differently, so rebasing feature
+        # onto main conflicts and stops mid-replay with a detached HEAD and
+        # unresolved/staged changes in the linked worktree.
+        subprocess.run(
+            ["git", "rebase", "main"],
+            cwd=worktree_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        result = self._run(payload_cwd=worktree_dir)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_blocks_unpushed_commits_in_linked_worktree(self) -> None:
+        # A linked worktree on an attached branch with real unpushed commits
+        # is exactly the case the preview/rebase skips must not swallow.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._git(repo, "branch", "feature", "main")
+        self._git(repo, "push", "-q", "-u", "origin", "feature")
+
+        worktree_dir = self.root / "feature-worktree"
+        self._git(repo, "worktree", "add", str(worktree_dir), "feature")
+        (worktree_dir / "README.md").write_text("feature-work\n", encoding="utf-8")
+        self._git(worktree_dir, "commit", "-aqm", "feature commit")
+
+        result = self._run(payload_cwd=worktree_dir)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("1 unpushed commit", result.stderr)
+        self.assertIn("feature", result.stderr)
+
     def test_uses_payload_cwd_not_process_cwd(self) -> None:
         # Process CWD is a neutral non-git temp dir; the dirty repo is carried
         # only in the payload cwd, mirroring Claude Code spawning hooks from
