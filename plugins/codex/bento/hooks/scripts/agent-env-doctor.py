@@ -242,7 +242,11 @@ def check_agent_mode(root: Path) -> list[str]:
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
-        if stripped == _LAUNCHER_DANGEROUS_TOKEN:
+        # The launcher's bash `case "$line" in "dangerous")` matches the raw
+        # line from `IFS= read -r line` with zero whitespace tolerance — a
+        # leading/trailing-space-padded "dangerous " does NOT activate it, so
+        # this comparison must use the unstripped line, not `stripped`.
+        if line == _LAUNCHER_DANGEROUS_TOKEN:
             continue
         if _LAUNCHER_MODE_RE.match(stripped) or _LAUNCHER_TOOLS_RE.match(stripped):
             continue

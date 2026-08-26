@@ -93,6 +93,18 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
         context = self._context(self._evaluate())
         self.assertIn("not a key=value", context)
 
+    def test_whitespace_padded_dangerous_token_still_flagged(self) -> None:
+        # The launcher's bash `case "$line" in "dangerous")` matches the raw
+        # line from `IFS= read -r line` with zero whitespace tolerance.
+        (self.repo / ".agent-mode.local").write_text("dangerous \n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
+    def test_leading_whitespace_padded_dangerous_token_still_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text("  dangerous\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
     def test_launcher_mode_and_tools_assignment_is_silent(self) -> None:
         (self.repo / ".agent-mode.local").write_text(
             'mode = "dangerous"\ntools = ["claude", "codex"]\n', encoding="utf-8"

@@ -310,6 +310,21 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIn("yolo", context)
         self.assertIn("not a key=value", context)
 
+    def test_whitespace_padded_dangerous_token_still_flagged(self) -> None:
+        # The launcher's bash `case "$line" in "dangerous")` matches the raw
+        # line from `IFS= read -r line` with zero whitespace tolerance — a
+        # trailing-space-padded "dangerous " does NOT activate dangerous mode
+        # in the real launcher, so Bento must still warn on it rather than
+        # silently accept it as valid launcher grammar.
+        (self.repo / ".agent-mode.local").write_text("dangerous \n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
+    def test_leading_whitespace_padded_dangerous_token_still_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text("  dangerous\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
     def test_launcher_mode_assignment_is_silent(self) -> None:
         (self.repo / ".agent-mode.local").write_text(
             'mode = "dangerous"\n', encoding="utf-8"
