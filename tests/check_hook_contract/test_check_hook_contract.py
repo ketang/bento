@@ -712,6 +712,34 @@ class LiteralOnlyDecoyTest(unittest.TestCase):
         )
         self.assertEqual(checker.check_python_source(src, FAKE), [])
 
+    def test_get_accessor_with_arg_over_literal_temp_var_is_a_decoy(self) -> None:
+        """`_decoy_root_name`'s read-only-accessor branch must not require
+        zero arguments -- `D2 = DEFAULTS.get('env')` is exactly as literal as
+        `DEFAULTS`, the same as the inline `DEFAULTS.get('env')['cwd']` chain
+        `_is_decoy_base` already accepts with no arity restriction."""
+        self._assert_flagged(
+            "DEFAULTS = {'env': {'cwd': '/tmp'}}\n\n\n"
+            "def f():\n"
+            "    D2 = DEFAULTS.get('env')\n"
+            "    unrelated = D2['cwd']\n"
+            + self.EXEMPT
+            + "    return os.getcwd()\n"
+        )
+
+    def test_subscript_rhs_over_literal_temp_var_is_a_decoy(self) -> None:
+        """`_decoy_root_name` must recurse through a Subscript-shaped RHS,
+        not just Call-shaped ones -- `X = DEFAULTS['env']` is exactly as
+        literal as `DEFAULTS`, mirroring the Subscript-base recursion
+        `_is_decoy_base` already does for inline chains."""
+        self._assert_flagged(
+            "DEFAULTS = {'env': {'cwd': '/tmp'}}\n\n\n"
+            "def f():\n"
+            "    X = DEFAULTS['env']\n"
+            "    unrelated = X['cwd']\n"
+            + self.EXEMPT
+            + "    return os.getcwd()\n"
+        )
+
     def test_shadowed_dict_factory_is_not_treated_as_literal(self) -> None:
         """If `dict` is rebound in the file, `dict(...)` is an ordinary call,
         so the name stays dynamic and its read is accepted."""

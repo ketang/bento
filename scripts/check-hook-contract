@@ -254,39 +254,38 @@ def _bound_names(tree: ast.AST) -> set[str]:
     return names
 
 
-def _alias_source_from_decoy_call(
-    value: ast.AST, bound: set[str]
-) -> str | None:
-    """If `value` is a factory or read-only-accessor call over a single bare
-    name -- `dict(NAME)`, `NAME.copy()` -- returns `NAME`.
+def _decoy_root_name(node: ast.AST, bound: set[str]) -> str | None:
+    """If `node` is built entirely from Subscript indexing, read-only
+    accessor calls, and/or a single-argument literal-factory call -- e.g.
+    `NAME.get('env')`, `NAME['env']`, `dict(NAME)` -- returns the terminal
+    `NAME`, however deep the chain.
 
-    Neither shape can populate its operand from external input (a factory
-    copies it, a read-only accessor only reads it), so the assigned target is
-    exactly as literal as `NAME`. Returning it as an alias source -- rather
-    than deciding literalness here -- lets the existing fixpoint in
-    `_literal_only_names` resolve it, regardless of whether `NAME`'s own
-    binding is seen before or after this one during the walk.
+    None of these operations can populate their operand from external input
+    (indexing and read-only accessors only read; a factory copies), so the
+    result is exactly as literal as `NAME`. This mirrors the recursive
+    structure `_is_decoy_base` uses to decide decoy-ness, but returns the
+    terminal name instead of a bool, so a temp-variable assignment
+    `D2 = <this shape>` can be tied into the alias-resolution fixpoint in
+    `_literal_only_names` exactly like a bare-name alias is -- regardless of
+    whether `NAME`'s own binding is seen before or after this one during the
+    walk.
     """
-    if not isinstance(value, ast.Call):
-        return None
-    func = value.func
-    if (
-        isinstance(func, ast.Attribute)
-        and func.attr in _READ_ONLY_METHODS
-        and isinstance(func.value, ast.Name)
-        and not value.args
-        and not value.keywords
-    ):
-        return func.value.id
-    if (
-        isinstance(func, ast.Name)
-        and func.id in _LITERAL_FACTORY_NAMES
-        and func.id not in bound
-        and len(value.args) == 1
-        and isinstance(value.args[0], ast.Name)
-        and not value.keywords
-    ):
-        return value.args[0].id
+    if isinstance(node, ast.Name):
+        return node.id
+    if isinstance(node, ast.Subscript):
+        return _decoy_root_name(node.value, bound)
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in _READ_ONLY_METHODS:
+            return _decoy_root_name(func.value, bound)
+        if (
+            isinstance(func, ast.Name)
+            and func.id in _LITERAL_FACTORY_NAMES
+            and func.id not in bound
+            and len(node.args) == 1
+            and not node.keywords
+        ):
+            return _decoy_root_name(node.args[0], bound)
     return None
 
 
@@ -296,9 +295,9 @@ def _binding_kind(
     """Classify an assigned value as one of:
 
     ("literal", None)  - a hardcoded literal container or literal factory call
-    ("alias", name)    - a bare reference to another name, or a factory /
-                          read-only-accessor call over one (see
-                          `_alias_source_from_decoy_call`)
+    ("alias", name)    - a bare reference to another name, or a Subscript /
+                          read-only-accessor / factory chain over one (see
+                          `_decoy_root_name`)
     ("dynamic", None)  - anything else (a call, attribute access, ...)
     """
     if _is_literal_container(value):
@@ -314,7 +313,7 @@ def _binding_kind(
         and all(_is_literal_container(kw.value) for kw in value.keywords)
     ):
         return ("literal", None)
-    alias_source = _alias_source_from_decoy_call(value, bound)
+    alias_source = _decoy_root_name(value, bound)
     if alias_source is not None:
         return ("alias", alias_source)
     return ("dynamic", None)
