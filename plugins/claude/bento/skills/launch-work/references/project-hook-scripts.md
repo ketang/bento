@@ -9,8 +9,11 @@ matching executable files behave exactly as if no hook scripts were configured.
 Hook scripts live under one of these roots, in order of precedence:
 
 1. `<repo-root>/.agent-plugins/bento/bento/`
-2. `$XDG_CONFIG_HOME/agent-plugins/bento/bento/`
-3. `~/.config/agent-plugins/bento/bento/` when `XDG_CONFIG_HOME` is unset
+2. `<home-config-root>/agent-plugins/bento/bento/` — see
+   [docs/specs/2026-04-24-agent-plugins-convention-design.md](../../../../docs/specs/2026-04-24-agent-plugins-convention-design.md)
+   for the platform-specific home config root (`$XDG_CONFIG_HOME` if set,
+   else `~/.config` on Linux, `~/Library/Application Support` on macOS, or
+   `%APPDATA%` on Windows)
 
 Within each root, hook scripts are organized by skill, then position:
 
@@ -30,9 +33,8 @@ For example, repo-scoped hook scripts may live at
 `<repo-root>/.agent-plugins/bento/bento/land-work/hook-scripts/pre/`.
 
 User-global hook scripts may live at
-`~/.config/agent-plugins/bento/bento/launch-work/hook-scripts/pre/` when
-`XDG_CONFIG_HOME` is unset, or under `$XDG_CONFIG_HOME/agent-plugins/bento/bento/`
-otherwise.
+`<home-config-root>/agent-plugins/bento/bento/launch-work/hook-scripts/pre/`
+(see the home config root resolution linked above).
 
 ## When hook scripts fire
 

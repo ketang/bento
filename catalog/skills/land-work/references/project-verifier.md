@@ -14,8 +14,11 @@ The manifest is `verifier.json` under the land-work extension root, discovered
 across the same candidate-root chain as other project extensions:
 
 1. `<repo-root>/.agent-plugins/bento/bento/land-work/verifier.json` (repo-local)
-2. `$XDG_CONFIG_HOME/agent-plugins/bento/bento/land-work/verifier.json`
-   (or `~/.config/agent-plugins/bento/bento/land-work/verifier.json`)
+2. `<home-config-root>/agent-plugins/bento/bento/land-work/verifier.json` — see
+   [docs/specs/2026-04-24-agent-plugins-convention-design.md](../../../../docs/specs/2026-04-24-agent-plugins-convention-design.md)
+   for the platform-specific home config root (`$XDG_CONFIG_HOME` if set,
+   else `~/.config` on Linux, `~/Library/Application Support` on macOS, or
+   `%APPDATA%` on Windows)
 
 The **first existing manifest wins as a whole** — repo-local overrides
 user-global. Commands and exemptions are never merged across roots, and a
