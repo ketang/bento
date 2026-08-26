@@ -58,6 +58,10 @@ _PATH_CWD_TARGETS = {"pathlib.Path.cwd"}
 _ENVIRON_PWD_SUBSCRIPT_TARGETS = {"os.environ"}
 _ENVIRON_PWD_GET_TARGETS = {"os.environ.get"}
 
+# `os.environ` bases recognized as decoys by `_decoy_dependencies` -- shared
+# by both callers so they can't drift on which environ spellings count.
+_ENVIRON_CWD_TARGETS = _ENVIRON_PWD_SUBSCRIPT_TARGETS | _ENVIRON_PWD_GET_TARGETS
+
 # Process-CWD primitives detectable in shell (and inline python) via regex.
 SHELL_PRIMITIVE_RES = [
     (re.compile(r"\$\{?PWD\b"), "$PWD"),
@@ -254,29 +258,94 @@ def _bound_names(tree: ast.AST) -> set[str]:
     return names
 
 
+def _decoy_dependencies(
+    node: ast.AST,
+    bound: set[str],
+    environ_targets: frozenset[str],
+    import_aliases: dict[str, str],
+) -> frozenset[str] | None:
+    """Structural decoy-shape recognizer shared by `_is_decoy_base` (the
+    post-pass check inside `_references_payload_cwd_ast`, run once
+    `literal_only` is known) and the pre-pass alias tracing inside
+    `_binding_kind` (run while `_literal_only_names` is still computing
+    `literal_only`). The two paths independently re-deriving "what counts as
+    decoy-shaped" is exactly how prior holes crept in one shape at a time
+    (Subscript bases, arg-taking accessors, multi-arg factory calls); this
+    function is the single source of truth for both, so a shape recognized
+    by one is automatically recognized by the other.
+
+    Returns `None` when `node` is not one of the recognized decoy shapes.
+    Otherwise returns the set of leaf `Name` ids the shape's decoy-ness
+    depends on -- empty when the shape is unconditionally a decoy (an inline
+    literal container, or `os.environ`/`os.environ.get`). A node is a decoy
+    exactly when every name in its dependency set is itself literal-only:
+    `_is_decoy_base` checks that directly against `literal_only`, while
+    `_binding_kind` instead feeds the dependency set into the
+    alias-resolution fixpoint in `_literal_only_names`, since `literal_only`
+    doesn't exist yet at that point.
+
+    Recognized shapes:
+    * an inline literal container (dict/list/set/tuple/constant, checked
+      recursively -- see `_is_literal_container`);
+    * `os.environ` / `os.environ.get`, resolved through import aliases;
+    * a bare name;
+    * `Subscript` indexing over another decoy shape (`DEFAULTS['env']`);
+    * a read-only accessor call, any arity, over another decoy shape
+      (`DEFAULTS.get('env')`, `DEFAULTS.copy()`);
+    * a literal-factory call (`dict(...)`, `list(...)`, ...) whose every
+      positional and keyword argument is itself a decoy shape -- the
+      dependency set is the union of theirs, so `dict(DEFAULTS, extra=X)` is
+      only a decoy if both `DEFAULTS` and `X` are.
+    """
+    if _is_literal_container(node):
+        return frozenset()
+    if _resolve_dotted(node, import_aliases) in environ_targets:
+        return frozenset()
+    if isinstance(node, ast.Name):
+        return frozenset({node.id})
+    if isinstance(node, ast.Subscript):
+        return _decoy_dependencies(node.value, bound, environ_targets, import_aliases)
+    if isinstance(node, ast.Call):
+        func = node.func
+        if isinstance(func, ast.Attribute) and func.attr in _READ_ONLY_METHODS:
+            return _decoy_dependencies(
+                func.value, bound, environ_targets, import_aliases
+            )
+        if (
+            isinstance(func, ast.Name)
+            and func.id in _LITERAL_FACTORY_NAMES
+            and func.id not in bound
+        ):
+            deps: set[str] = set()
+            for arg in (*node.args, *(kw.value for kw in node.keywords)):
+                sub = _decoy_dependencies(arg, bound, environ_targets, import_aliases)
+                if sub is None:
+                    return None
+                deps.update(sub)
+            return frozenset(deps)
+    return None
+
+
 def _binding_kind(
-    value: ast.AST, bound: set[str]
-) -> tuple[str, str | None]:
+    value: ast.AST,
+    bound: set[str],
+    environ_targets: frozenset[str],
+    import_aliases: dict[str, str],
+) -> tuple[str, frozenset[str] | None]:
     """Classify an assigned value as one of:
 
-    ("literal", None)  - a hardcoded literal container or literal factory call
-    ("alias", name)    - a bare reference to another name
-    ("dynamic", None)  - anything else (a call, attribute access, ...)
+    ("literal", None)  - unconditionally a decoy shape (see
+                          `_decoy_dependencies`) with no name dependencies
+    ("alias", deps)     - a decoy shape whose decoy-ness depends on every
+                          name in `deps` being literal-only
+    ("dynamic", None)  - not a recognized decoy shape at all
     """
-    if _is_literal_container(value):
+    deps = _decoy_dependencies(value, bound, environ_targets, import_aliases)
+    if deps is None:
+        return ("dynamic", None)
+    if not deps:
         return ("literal", None)
-    if isinstance(value, ast.Name):
-        return ("alias", value.id)
-    if (
-        isinstance(value, ast.Call)
-        and isinstance(value.func, ast.Name)
-        and value.func.id in _LITERAL_FACTORY_NAMES
-        and value.func.id not in bound
-        and all(_is_literal_container(arg) for arg in value.args)
-        and all(_is_literal_container(kw.value) for kw in value.keywords)
-    ):
-        return ("literal", None)
-    return ("dynamic", None)
+    return ("alias", deps)
 
 
 def _literal_only_names(tree: ast.AST) -> set[str]:
@@ -315,6 +384,7 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
     scope. Tracked as a follow-up rather than fixed here.
     """
     bound = _bound_names(tree)
+    import_aliases = _collect_import_aliases(tree)
 
     param_names: set[str] = set()
     literal_names: set[str] = set()
@@ -349,12 +419,12 @@ def _literal_only_names(tree: ast.AST) -> set[str]:
         for target in targets:
             if not isinstance(target, ast.Name):
                 continue
-            kind, source = _binding_kind(value, bound)
+            kind, deps = _binding_kind(value, bound, _ENVIRON_CWD_TARGETS, import_aliases)
             if kind == "literal":
                 literal_names.add(target.id)
                 assign_targets.add(id(target))
-            elif kind == "alias" and source is not None:
-                alias_sources.setdefault(target.id, set()).add(source)
+            elif kind == "alias":
+                alias_sources.setdefault(target.id, set()).update(deps)
                 assign_targets.add(id(target))
             else:
                 dynamic_names.add(target.id)
@@ -460,40 +530,15 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
     literal_only = _literal_only_names(tree)
     import_aliases = _collect_import_aliases(tree)
     bound = _bound_names(tree)
-    environ_targets = _ENVIRON_PWD_SUBSCRIPT_TARGETS | _ENVIRON_PWD_GET_TARGETS
 
     def _is_decoy_base(node: ast.AST) -> bool:
-        if _is_literal_container(node):
-            return True
-        if _resolve_dotted(node, import_aliases) in environ_targets:
-            return True
-        if isinstance(node, ast.Name):
-            return node.id in literal_only
-        if isinstance(node, ast.Call):
-            func = node.func
-            # A read-only accessor cannot turn a decoy into payload data, so
-            # the chain stays a decoy: `DEFAULTS.copy().get("cwd")`. The
-            # recursion is what keeps `payload.copy().get("cwd")` accepted --
-            # `payload` is not a decoy base, so neither is the chain.
-            if (
-                isinstance(func, ast.Attribute)
-                and func.attr in _READ_ONLY_METHODS
-                and _is_decoy_base(func.value)
-            ):
-                return True
-            # Same literal-factory rule `_binding_kind` applies to assignments,
-            # so `dict(cwd="/tmp").get("cwd")` is a decoy inline exactly as it
-            # is once assigned to a name. Decoy arguments (not just inline
-            # literals) count, which also covers `dict(DEFAULTS)`.
-            if (
-                isinstance(func, ast.Name)
-                and func.id in _LITERAL_FACTORY_NAMES
-                and func.id not in bound
-                and all(_is_decoy_base(arg) for arg in node.args)
-                and all(_is_decoy_base(kw.value) for kw in node.keywords)
-            ):
-                return True
-        return False
+        # Delegates the shape recognition to `_decoy_dependencies`, the same
+        # function `_binding_kind` uses for temp-variable alias tracing, so
+        # the two paths can't recognize different sets of decoy shapes.
+        deps = _decoy_dependencies(node, bound, _ENVIRON_CWD_TARGETS, import_aliases)
+        if deps is None:
+            return False
+        return all(name in literal_only for name in deps)
 
     for node in ast.walk(tree):
         if isinstance(node, ast.Subscript):
