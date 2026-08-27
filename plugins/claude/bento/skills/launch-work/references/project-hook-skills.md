@@ -10,11 +10,11 @@ gate). Hook skills are optional.
 Hook skills live in the same agent-plugins precedence chain as hook scripts:
 
 1. `<repo-root>/.agent-plugins/bento/bento/`
-2. `<home-config-root>/agent-plugins/bento/bento/` — see
-   [docs/specs/2026-04-24-agent-plugins-convention-design.md](../../../../docs/specs/2026-04-24-agent-plugins-convention-design.md)
-   for the platform-specific home config root (`$XDG_CONFIG_HOME` if set,
-   else `~/.config` on Linux, `~/Library/Application Support` on macOS, or
-   `%APPDATA%` on Windows)
+2. `<home-config-root>/agent-plugins/bento/bento/` — `$XDG_CONFIG_HOME` if
+   set, else the platform default (`~/.config` on Linux,
+   `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); see
+   [`home_config_root()`](../scripts/agent_plugins_resolver.py) for the
+   exact resolution
 
 Within each root:
 

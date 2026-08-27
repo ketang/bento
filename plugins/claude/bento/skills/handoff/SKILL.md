@@ -69,11 +69,12 @@ write content under whatever headings the resolved template provides.
 The template is resolved through the `agent-plugins` convention:
 
 1. `<repo-root>/.agent-plugins/bento/bento/handoff/template.md`
-2. `<home-config-root>/agent-plugins/bento/bento/handoff/template.md` — see
-   [docs/specs/2026-04-24-agent-plugins-convention-design.md](../../../docs/specs/2026-04-24-agent-plugins-convention-design.md)
-   for the platform-specific home config root (`$XDG_CONFIG_HOME` if set,
-   else `~/.config` on Linux, `~/Library/Application Support` on macOS, or
-   `%APPDATA%` on Windows).
+2. `<home-config-root>/agent-plugins/bento/bento/handoff/template.md` —
+   `$XDG_CONFIG_HOME` if set, else the platform default (`~/.config` on
+   Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on
+   Windows); see
+   [`home_config_root()`](../launch-work/scripts/agent_plugins_resolver.py)
+   for the exact resolution.
 3. The plugin-bundled default at `handoff/references/templates/handoff.md`.
 
 First match wins. Lookup is per-file. Users override only the file they want

@@ -104,10 +104,11 @@ per file):
 
 1. `<repo-root>/.agent-plugins/bento/bento/cross-check/prompts/review-<type>.md`
 2. `<home-config-root>/agent-plugins/bento/bento/cross-check/prompts/review-<type>.md` —
-   see [docs/specs/2026-04-24-agent-plugins-convention-design.md](../../../docs/specs/2026-04-24-agent-plugins-convention-design.md)
-   for the platform-specific home config root (`$XDG_CONFIG_HOME` if set,
-   else `~/.config` on Linux, `~/Library/Application Support` on macOS, or
-   `%APPDATA%` on Windows).
+   `$XDG_CONFIG_HOME` if set, else the platform default (`~/.config` on
+   Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on
+   Windows); see
+   [`home_config_root()`](../launch-work/scripts/agent_plugins_resolver.py)
+   for the exact resolution.
 3. The plugin-bundled default under `cross-check/references/prompts/`.
 
 ## Non-Negotiable Rules
