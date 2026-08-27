@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import re
@@ -84,8 +85,48 @@ TEXT_FILE_SUFFIXES = {
     ".kt",
     ".swift",
 }
-MAX_TEXT_SCAN_BYTES = 256 * 1024
+# Tier 1 — name-based exclusions (primary gate). Known generated/vendored
+# formats are skipped before any content read, regardless of size.
+EXCLUDED_GENERATED_EXACT_NAMES = {
+    "package-lock.json",
+    "yarn.lock",
+    "pnpm-lock.yaml",
+    "npm-shrinkwrap.json",
+    "Gemfile.lock",
+    "Cargo.lock",
+    "poetry.lock",
+    "composer.lock",
+    "go.sum",
+    "go.work.sum",
+}
+
+EXCLUDED_GENERATED_NAME_PATTERNS = (
+    "*.pb.go",
+    "*_generated.go",
+    "*_*gen.go",
+    "zz_*generated*.go",
+    "*_pb2.py",
+    "*_pb2_grpc.py",
+    "*.min.js",
+    # No "*.min.css" entry: .css is not in TEXT_FILE_SUFFIXES, so
+    # is_text_like() already keeps every .css file out of the content-read
+    # path this exclusion tier guards. A Tier 1 entry for it would be dead
+    # code implying coverage that doesn't exist.
+)
+
+# Tier 2 — size backstop. Primary exclusions for known generated formats are
+# above (EXCLUDED_GENERATED_EXACT_NAMES, EXCLUDED_GENERATED_NAME_PATTERNS).
+# This cap catches unknown large files — generated API clients, fixture
+# dumps, build artifacts that slipped past SKIP_DIRS.
+MAX_TEXT_SCAN_BYTES = 512 * 1024
+_excluded_generated_skips: set[Path] = set()
 _large_file_skips: set[Path] = set()
+
+
+def is_excluded_generated(name: str) -> bool:
+    if name in EXCLUDED_GENERATED_EXACT_NAMES:
+        return True
+    return any(fnmatch.fnmatch(name, pattern) for pattern in EXCLUDED_GENERATED_NAME_PATTERNS)
 
 DOC_COMMAND_LANGUAGES = {"bash", "sh", "shell", "zsh", "console", "shellscript"}
 
@@ -274,6 +315,9 @@ def is_text_like(path: str) -> bool:
 
 
 def read_text_if_reasonable(path: Path) -> str | None:
+    if is_excluded_generated(path.name):
+        _excluded_generated_skips.add(path)
+        return None
     try:
         if path.stat().st_size > MAX_TEXT_SCAN_BYTES:
             _large_file_skips.add(path)
@@ -290,12 +334,17 @@ def read_text_if_reasonable(path: Path) -> str | None:
 
 
 def large_text_file_warnings(repo_root: Path) -> list[str]:
-    result: list[str] = []
-    for path in _large_file_skips:
+    def relative(path: Path) -> Path | str:
         try:
-            result.append(f"skipped large text file: {path.relative_to(repo_root)}")
+            return path.relative_to(repo_root)
         except ValueError:
-            result.append(f"skipped large text file: {path}")
+            return path
+
+    result: list[str] = []
+    # Excluded generated files are expected skips, not a coverage gap.
+    result.extend(f"excluded generated file: {relative(path)}" for path in _excluded_generated_skips)
+    # Oversized files that slipped past Tier 1 may be a real coverage gap.
+    result.extend(f"skipped large text file: {relative(path)}" for path in _large_file_skips)
     return sorted(result)
 
 
@@ -1192,6 +1241,7 @@ def main() -> int:
     repo_root = detect_repo_root(cwd)
     primary_branch, warnings = detect_primary_branch(repo_root)
     rel_files = [str(path) for path in walk_repo(repo_root)]
+    _excluded_generated_skips.clear()
     _large_file_skips.clear()
     file_set = set(rel_files)
 
@@ -1220,7 +1270,6 @@ def main() -> int:
     doc_commands = extract_doc_commands(repo_root, docs)
     repo_commands = known_repo_commands(rel_files, project_commands, static_analysis)
     doc_command_consistency = evaluate_doc_commands(doc_commands, repo_commands, rel_files)
-    warnings.extend(large_text_file_warnings(repo_root))
 
     payload = {
         "repo_root": str(repo_root),
@@ -1252,8 +1301,14 @@ def main() -> int:
         },
         "demo_walkthrough_signals": demo_walkthrough_signals(repo_root, rel_files, package_json, project_commands),
         "static_analysis": static_analysis,
-        "warnings": warnings,
     }
+
+    # Collected only after every payload field above has run — those calls are
+    # what populate _excluded_generated_skips/_large_file_skips via
+    # read_text_if_reasonable(); computing this any earlier would miss skips
+    # from later fields (a post-hoc re-scan would double the file walk instead).
+    warnings.extend(large_text_file_warnings(repo_root))
+    payload["warnings"] = warnings
 
     json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
