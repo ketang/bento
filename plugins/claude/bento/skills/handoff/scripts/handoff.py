@@ -76,6 +76,7 @@ def resolve_template(
         plugin=PLUGIN_NAME,
         rel_path=TEMPLATE_REL,
         repo_root=repo_root,
+        bundled_default_path=bundled,
         env=env,
         home=home,
     )
