@@ -103,8 +103,12 @@ Review prompts resolve through the `agent-plugins` convention (first match wins,
 per file):
 
 1. `<repo-root>/.agent-plugins/bento/bento/cross-check/prompts/review-<type>.md`
-2. `$XDG_CONFIG_HOME/agent-plugins/bento/bento/cross-check/prompts/review-<type>.md`
-   (default `~/.config/...` when `XDG_CONFIG_HOME` is unset)
+2. `<home-config-root>/agent-plugins/bento/bento/cross-check/prompts/review-<type>.md` —
+   `$XDG_CONFIG_HOME` if set, else the platform default (`~/.config` on
+   Linux, `~/Library/Application Support` on macOS, `%APPDATA%` on
+   Windows); see
+   [`home_config_root()`](../launch-work/scripts/agent_plugins_resolver.py)
+   for the exact resolution.
 3. The plugin-bundled default under `cross-check/references/prompts/`.
 
 ## Non-Negotiable Rules

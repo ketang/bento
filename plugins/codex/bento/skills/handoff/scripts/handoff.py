@@ -16,9 +16,14 @@ import subprocess
 import sys
 from datetime import datetime
 from pathlib import Path
+from typing import Mapping
 
-sys.path.insert(0, str(Path(__file__).resolve().parent))
+SCRIPT_DIR = Path(__file__).resolve().parent
+sys.path.insert(0, str(SCRIPT_DIR))
 import git_state  # noqa: E402
+
+sys.path.insert(0, str(SCRIPT_DIR.parents[1] / "launch-work" / "scripts"))
+import agent_plugins_resolver  # noqa: E402
 
 
 MARKETPLACE = "bento"
@@ -51,36 +56,48 @@ def derive_suffix(*, current: str, primary: str, slug: str | None) -> str:
 def resolve_template(
     *,
     repo_root: Path | None,
-    xdg_config_home: Path | None,
+    env: Mapping[str, str] | None = None,
     bundled: Path,
     home: Path | None = None,
 ) -> Path:
-    candidates: list[Path] = []
-    if repo_root is not None:
-        candidates.append(
-            repo_root / ".agent-plugins" / MARKETPLACE / PLUGIN_NAME / TEMPLATE_REL
-        )
-    if xdg_config_home is not None:
-        base = xdg_config_home
-    else:
-        base = (home or Path.home()) / ".config"
-    candidates.append(base / "agent-plugins" / MARKETPLACE / PLUGIN_NAME / TEMPLATE_REL)
-    for candidate in candidates:
-        if candidate.is_file():
-            return candidate
-    if bundled.is_file():
-        return bundled
-    raise HandoffError(f"no template found at any candidate path: {candidates}")
+    candidate = agent_plugins_resolver.resolve_customization_file(
+        marketplace=MARKETPLACE,
+        plugin=PLUGIN_NAME,
+        rel_path=TEMPLATE_REL,
+        repo_root=repo_root,
+        bundled_default_path=bundled,
+        env=env,
+        home=home,
+    )
+    if candidate is not None:
+        return candidate.path
+    candidates = agent_plugins_resolver.candidate_paths(
+        marketplace=MARKETPLACE,
+        plugin=PLUGIN_NAME,
+        rel_path=TEMPLATE_REL,
+        repo_root=repo_root,
+        bundled_default_path=bundled,
+        env=env,
+        home=home,
+    )
+    raise HandoffError(
+        f"no template found at any candidate path: {[c.path for c in candidates]}"
+    )
+
+
+def _home_scope_target(*, env: Mapping[str, str] | None, home: Path | None) -> Path:
+    return (
+        agent_plugins_resolver.home_scope_base(env=env, home=home)
+        / MARKETPLACE
+        / PLUGIN_NAME
+        / TEMPLATE_REL
+    )
 
 
 def self_heal_home_template(
-    *, xdg_config_home: Path | None, bundled: Path, home: Path | None = None
+    *, env: Mapping[str, str] | None = None, bundled: Path, home: Path | None = None
 ) -> bool:
-    if xdg_config_home is not None:
-        base = xdg_config_home
-    else:
-        base = (home or Path.home()) / ".config"
-    target = base / "agent-plugins" / MARKETPLACE / PLUGIN_NAME / TEMPLATE_REL
+    target = _home_scope_target(env=env, home=home)
     if target.is_file():
         return False
     if not bundled.is_file():
@@ -108,13 +125,6 @@ def _bundled_template_path() -> Path:
         / "templates"
         / "handoff.md"
     )
-
-
-def _xdg_config_home() -> Path | None:
-    raw = os.environ.get("XDG_CONFIG_HOME")
-    if not raw:
-        return None
-    return Path(raw)
 
 
 def _tmp_root() -> Path:
@@ -249,11 +259,10 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     bundled = _bundled_template_path()
-    xdg = _xdg_config_home()
-    self_heal_home_template(xdg_config_home=xdg, bundled=bundled)
+    self_heal_home_template(env=os.environ, bundled=bundled)
 
     try:
-        resolve_template(repo_root=checkout_root, xdg_config_home=xdg, bundled=bundled)
+        resolve_template(repo_root=checkout_root, env=os.environ, bundled=bundled)
     except HandoffError as exc:
         print(f"/handoff: {exc}", file=sys.stderr)
         return 2

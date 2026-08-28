@@ -204,7 +204,7 @@ class HandoffTemplateResolutionTest(unittest.TestCase):
         bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
         resolved = self.handoff.resolve_template(
             repo_root=repo_root,
-            xdg_config_home=self.tmp_path / "home",
+            env={"XDG_CONFIG_HOME": str(self.tmp_path / "home")},
             bundled=bundled,
         )
         self.assertEqual(resolved, repo_template)
@@ -219,7 +219,7 @@ class HandoffTemplateResolutionTest(unittest.TestCase):
         bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
         resolved = self.handoff.resolve_template(
             repo_root=repo_root,
-            xdg_config_home=self.tmp_path / "home",
+            env={"XDG_CONFIG_HOME": str(self.tmp_path / "home")},
             bundled=bundled,
         )
         self.assertEqual(resolved, home_template)
@@ -230,7 +230,7 @@ class HandoffTemplateResolutionTest(unittest.TestCase):
         bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
         resolved = self.handoff.resolve_template(
             repo_root=repo_root,
-            xdg_config_home=self.tmp_path / "home",
+            env={"XDG_CONFIG_HOME": str(self.tmp_path / "home")},
             bundled=bundled,
         )
         self.assertEqual(resolved, bundled)
@@ -244,7 +244,7 @@ class HandoffTemplateResolutionTest(unittest.TestCase):
         bundled = self._write(self.tmp_path / "bundled.md", "BUNDLED\n")
         resolved = self.handoff.resolve_template(
             repo_root=self.tmp_path / "repo-not-existing",
-            xdg_config_home=None,
+            env={},
             bundled=bundled,
             home=fake_home,
         )
@@ -267,7 +267,7 @@ class HandoffSelfHealTest(unittest.TestCase):
         target = xdg / "agent-plugins" / "bento" / "bento" / "handoff" / "template.md"
         self.assertFalse(target.exists())
         created = self.handoff.self_heal_home_template(
-            xdg_config_home=xdg, bundled=self.bundled
+            env={"XDG_CONFIG_HOME": str(xdg)}, bundled=self.bundled
         )
         self.assertTrue(created)
         self.assertEqual(target.read_text(encoding="utf-8"), "BUNDLED\n")
@@ -278,7 +278,7 @@ class HandoffSelfHealTest(unittest.TestCase):
         target.parent.mkdir(parents=True)
         target.write_text("CUSTOM\n", encoding="utf-8")
         created = self.handoff.self_heal_home_template(
-            xdg_config_home=xdg, bundled=self.bundled
+            env={"XDG_CONFIG_HOME": str(xdg)}, bundled=self.bundled
         )
         self.assertFalse(created)
         self.assertEqual(target.read_text(encoding="utf-8"), "CUSTOM\n")
@@ -287,7 +287,7 @@ class HandoffSelfHealTest(unittest.TestCase):
         xdg = self.tmp_path / "xdg"
         missing_bundle = self.tmp_path / "does-not-exist.md"
         created = self.handoff.self_heal_home_template(
-            xdg_config_home=xdg, bundled=missing_bundle
+            env={"XDG_CONFIG_HOME": str(xdg)}, bundled=missing_bundle
         )
         self.assertFalse(created)
 

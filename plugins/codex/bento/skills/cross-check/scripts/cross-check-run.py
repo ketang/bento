@@ -41,11 +41,6 @@ def _bundled_prompts_dir() -> Path:
     return Path(__file__).resolve().parent.parent / "references" / "prompts"
 
 
-def _xdg_config_home() -> Path | None:
-    raw = os.environ.get("XDG_CONFIG_HOME")
-    return Path(raw) if raw else None
-
-
 def _read_artifact(artifact: str | None) -> str:
     if artifact is None or artifact == "-":
         return sys.stdin.read()
@@ -107,7 +102,7 @@ def run_cross(
         prompt_path = common.resolve_prompt(
             artifact_type,
             repo_root=repo_root,
-            xdg_config_home=_xdg_config_home(),
+            env=os.environ,
             bundled_dir=_bundled_prompts_dir(),
         )
     except (FileNotFoundError, ValueError) as exc:

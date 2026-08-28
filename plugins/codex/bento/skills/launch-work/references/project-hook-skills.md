@@ -7,11 +7,14 @@ gate). Hook skills are optional.
 
 ## Layout
 
-Hook skills live in the same XDG-precedence chain as hook scripts:
+Hook skills live in the same agent-plugins precedence chain as hook scripts:
 
 1. `<repo-root>/.agent-plugins/bento/bento/`
-2. `$XDG_CONFIG_HOME/agent-plugins/bento/bento/`
-3. `~/.config/agent-plugins/bento/bento/`
+2. `<home-config-root>/agent-plugins/bento/bento/` — `$XDG_CONFIG_HOME` if
+   set, else the platform default (`~/.config` on Linux,
+   `~/Library/Application Support` on macOS, `%APPDATA%` on Windows); see
+   [`home_config_root()`](../scripts/agent_plugins_resolver.py) for the
+   exact resolution
 
 Within each root:
 
@@ -27,9 +30,8 @@ For example, repo-scoped hook skills may live at
 `<repo-root>/.agent-plugins/bento/bento/land-work/hook-skills/pre/`.
 
 User-global hook skills may live at
-`~/.config/agent-plugins/bento/bento/launch-work/hook-skills/pre/` when
-`XDG_CONFIG_HOME` is unset, or under `$XDG_CONFIG_HOME/agent-plugins/bento/bento/`
-otherwise.
+`<home-config-root>/agent-plugins/bento/bento/launch-work/hook-skills/pre/`
+(see the home config root resolution linked above).
 
 Hook skills deliberately do not have a slot mid-skill. Mid-skill is hook script
 territory (deterministic gates that can abort). Hook skills stay at boundaries.

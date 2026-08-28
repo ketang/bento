@@ -31,8 +31,11 @@ exactly as before.
 `<root>` is one of (in precedence order):
 
 1. `<repo>/.agent-plugins/bento/bento/`
-2. `$XDG_CONFIG_HOME/agent-plugins/bento/bento/`
-3. `~/.config/agent-plugins/bento/bento/` (when `XDG_CONFIG_HOME` is unset)
+2. `<home-config-root>/agent-plugins/bento/bento/` — see
+   [specs/2026-04-24-agent-plugins-convention-design.md](specs/2026-04-24-agent-plugins-convention-design.md)
+   for the platform-specific home config root (`$XDG_CONFIG_HOME` if set,
+   else `~/.config` on Linux, `~/Library/Application Support` on macOS, or
+   `%APPDATA%` on Windows)
 
 The two-digit prefix sets execution order (10, 20, 30…). Files without
 the prefix are ignored with a warning.

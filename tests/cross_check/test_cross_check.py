@@ -152,7 +152,7 @@ class PromptResolutionTest(unittest.TestCase):
 
     def test_bundled_default_used_when_no_override(self) -> None:
         resolved = common.resolve_prompt(
-            "plan", repo_root=None, xdg_config_home=self.root / "xdg",
+            "plan", repo_root=None, env={"XDG_CONFIG_HOME": str(self.root / "xdg")},
             bundled_dir=BUNDLED_PROMPTS,
         )
         self.assertEqual(resolved, BUNDLED_PROMPTS / "review-plan.md")
@@ -165,7 +165,7 @@ class PromptResolutionTest(unittest.TestCase):
         override.parent.mkdir(parents=True)
         override.write_text("custom", encoding="utf-8")
         resolved = common.resolve_prompt(
-            "code", repo_root=self.root, xdg_config_home=self.root / "xdg",
+            "code", repo_root=self.root, env={"XDG_CONFIG_HOME": str(self.root / "xdg")},
             bundled_dir=BUNDLED_PROMPTS,
         )
         self.assertEqual(resolved, override)
@@ -173,7 +173,7 @@ class PromptResolutionTest(unittest.TestCase):
     def test_unknown_type_raises(self) -> None:
         with self.assertRaises(ValueError):
             common.resolve_prompt(
-                "bogus", repo_root=None, xdg_config_home=None, bundled_dir=BUNDLED_PROMPTS
+                "bogus", repo_root=None, env=None, bundled_dir=BUNDLED_PROMPTS
             )
 
 

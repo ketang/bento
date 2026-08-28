@@ -16,7 +16,7 @@ For a logical customization file `<rel>` owned by marketplace `<marketplace>` an
 
 Lookup is per file. The convention does not define install mechanics, file formats, cache/state/log locations, plugin discovery, or runtime-specific packaging.
 
-This repository includes a first-class Python resolver at [reference/agent_plugins_resolver.py](reference/agent_plugins_resolver.py).
+This repository includes a first-class Python resolver at [../../catalog/skills/launch-work/scripts/agent_plugins_resolver.py](../../catalog/skills/launch-work/scripts/agent_plugins_resolver.py), the single canonical implementation shared by every bento skill that needs agent-plugins resolution.
 
 ## Motivation
 
@@ -130,7 +130,7 @@ If no candidate exists, the plugin treats the customization file as absent. This
 
 ## Reference Resolver
 
-The reference resolver is [reference/agent_plugins_resolver.py](reference/agent_plugins_resolver.py). It is executable and importable, has no third-party dependencies, and covers:
+The reference resolver is [../../catalog/skills/launch-work/scripts/agent_plugins_resolver.py](../../catalog/skills/launch-work/scripts/agent_plugins_resolver.py). It is executable and importable, has no third-party dependencies, and covers:
 
 - Platform-specific home config roots.
 - Repo-root discovery by `.git` file or directory.
