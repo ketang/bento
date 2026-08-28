@@ -1,12 +1,14 @@
 # Intent Story Index
 
-18 stories — generated 2026-08-14T00:00:00Z
+20 stories — generated 2026-08-21T14:28:00Z
 
+- [audit-report-first-quality-review](audit-report-first-quality-review.md) — Audit Produces a Report-First Quality Review *(active, observed, low)*
 - [beads-issue-lifecycle](beads-issue-lifecycle.md) — Beads Issue Lifecycle Management *(active, observed, low)*
 - [bentobug-capture-report](bentobug-capture-report.md) — Bentobug Captures a Structured Bug Report *(active, observed, low)*
 - [build-vs-buy-decision](build-vs-buy-decision.md) — Build vs Buy Evaluates Before Building New Functionality *(active, observed, medium)*
 - [closure-gc-abandoned-state](closure-gc-abandoned-state.md) — Closure GCs Abandoned Agent Git State *(active, observed, medium)*
 - [compress-docs-token-reduction](compress-docs-token-reduction.md) — Compress Docs Reduces Session-Start Token Footprint *(active, observed, low)*
+- [cross-check-independent-runtime-review](cross-check-independent-runtime-review.md) — Cross-Check Gets an Independent Cross-Runtime Review *(active, observed, low)*
 - [dev-skill-load-unpublished](dev-skill-load-unpublished.md) — Dev Skill Loads and Executes an Unpublished Skill *(active, observed, low)*
 - [expedition-long-running-work](expedition-long-running-work.md) — Expedition Coordinates Long-Running Interdependent Work *(active, observed, medium)*
 - [generate-audit-repo-playbook](generate-audit-repo-playbook.md) — Generate Audit Produces a Repo-Specific Audit Playbook *(active, observed, low)*
