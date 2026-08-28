@@ -821,6 +821,47 @@ class ShellCheckTest(unittest.TestCase):
         findings = checker.check_shell_source(src, FAKE_SH)
         self.assertTrue(any("never" in f.message for f in findings))
 
+    def test_literal_only_cwd_string_does_not_satisfy_payload_check(self) -> None:
+        """A hardcoded literal that merely contains the string 'cwd' -- never
+        read from anything -- must not satisfy the payload-cwd check for a
+        real $PWD fallback with no genuine payload read. Shell mirror of the
+        Python-side literal-only-decoy fix (bento-5ea5)."""
+        src = (
+            "DEFAULT_KEY='cwd'\n"
+            'dir="$PWD"  # hook-cwd-exempt: deliberate\n'
+        )
+        findings = checker.check_shell_source(src, FAKE_SH)
+        self.assertTrue(any("never" in f.message for f in findings))
+
+    def test_process_cwd_primitive_spelling_does_not_self_satisfy_payload_check(
+        self,
+    ) -> None:
+        """`Path.cwd()` / `pathlib.Path.cwd()` are process-CWD primitives (check
+        A) whose own text contains the substring `.cwd`. That substring must
+        not double as a payload-cwd read (check B) -- a hook that only ever
+        calls one of these behind a `# hook-cwd-exempt:` comment, and never
+        reads the stdin payload, must still be flagged as never consulting the
+        payload."""
+        for primitive in (
+            'python3 -c "from pathlib import Path; print(Path.cwd())"',
+            'python3 -c "import pathlib; print(pathlib.Path.cwd())"',
+        ):
+            with self.subTest(primitive=primitive):
+                src = f'dir=$({primitive})  # hook-cwd-exempt: fallback only\n'
+                findings = checker.check_shell_source(src, FAKE_SH)
+                self.assertTrue(any("never" in f.message for f in findings))
+
+    def test_jq_cwd_path_still_satisfies_payload_check(self) -> None:
+        """The jq path syntax `.cwd` is a genuine payload read and must still
+        satisfy check B -- the fix for the Path.cwd() self-match must not
+        collaterally break the real jq read shape."""
+        src = (
+            'dir=$(echo "$PAYLOAD" | jq -r .cwd)\n'
+            'fallback="$PWD"  # hook-cwd-exempt: deliberate\n'
+        )
+        findings = checker.check_shell_source(src, FAKE_SH)
+        self.assertFalse(any("never" in f.message for f in findings))
+
 
 if __name__ == "__main__":
     unittest.main()
