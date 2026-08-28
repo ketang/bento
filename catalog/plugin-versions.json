@@ -1,18 +1,18 @@
 {
   "bento": {
-    "version": "2.3.19",
-    "content_hash": "7fa48b998398c956965df921cefba22e7f0a1ba6058357237c51d21f6b1d3cb2"
+    "version": "2.3.20",
+    "content_hash": "5139ff7e76b8954c6a5106a8a6aca31a353fe6f16920b5c1034e3b8a5e52a751"
   },
   "trackers": {
-    "version": "1.2.3",
-    "content_hash": "33dd238bbe0a34c65d0f22ab1311c104315f434bc9e6389c6e64f2b93d564dc1"
+    "version": "1.2.4",
+    "content_hash": "0b30ae386a545ba63dd65b58aab8e12358f4ec2772e11a221a142c10c943426d"
   },
   "session-id": {
-    "version": "1.1.1",
-    "content_hash": "08380c95b1ac22bba9dfe5ee2e0d7637914881cdb787676791ed3df1391201da"
+    "version": "1.1.2",
+    "content_hash": "80d4fbe86a85c8c6b1b42bc896ef3a0225569541a21d448a6899a39df9ea306a"
   },
   "hygiene": {
-    "version": "1.1.1",
-    "content_hash": "88bf9202011f37833003f10ce16e00c1d341bbb0caaa8099cb2012a95c7571f9"
+    "version": "1.1.2",
+    "content_hash": "bd539aa423b0e2093c5571819d27ec2f2eee4c8eafdce9b364cd2755fe8de353"
   }
 }

@@ -129,9 +129,6 @@ For reference, this repository generates the following Codex artifacts when
 - `plugins/codex/<plugin-name>/.codex-plugin/plugin.json`
 - `plugins/codex/<plugin-name>/assets/icon.png`
 - `plugins/codex/<plugin-name>/assets/logo.png`
-- `plugins/codex/<plugin-name>/assets/screenshot-1.png`
-- `plugins/codex/<plugin-name>/assets/screenshot-2.png`
-- `plugins/codex/<plugin-name>/assets/screenshot-3.png`
 - `plugins/codex/plugin-names.txt` (the Codex plugin set the installer reads)
 
 ## Updating a plugin

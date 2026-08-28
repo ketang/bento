@@ -1,6 +1,6 @@
 {
   "name": "bento",
-  "version": "2.3.19",
+  "version": "2.3.20",
   "description": "Complete Bento skill pack with workflow, tracker, and repository cleanup skills",
   "author": {
     "name": "Ketan Gangatirkar",
@@ -39,11 +39,6 @@
     ],
     "brandColor": "#1F6FEB",
     "composerIcon": "./assets/icon.png",
-    "logo": "./assets/logo.png",
-    "screenshots": [
-      "./assets/screenshot-1.png",
-      "./assets/screenshot-2.png",
-      "./assets/screenshot-3.png"
-    ]
+    "logo": "./assets/logo.png"
   }
 }

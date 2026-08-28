@@ -62,7 +62,7 @@ Generated plugins are organized platform-first, one tree per runtime:
 contains:
 - `.claude-plugin/plugin.json` (Claude tree) or `.codex-plugin/plugin.json`
   (Codex tree) — the platform's plugin metadata
-- `assets/` — generated Codex-facing icon, logo, and screenshot assets
+- `assets/` — generated Codex-facing icon and logo assets
 - `skills/<skill-name>/SKILL.md` — composed from the canonical shared skill
   contract and any target-platform overlay
 - `hooks/hooks.json` and `hooks/scripts/` — copied from the target platform's

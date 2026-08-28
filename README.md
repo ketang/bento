@@ -246,8 +246,7 @@ plugins/
 │       │   └── plugin.json
 │       ├── assets/
 │       │   ├── icon.png
-│       │   ├── logo.png
-│       │   └── screenshot-1.png
+│       │   └── logo.png
 │       ├── hooks/          # present only when the plugin declares hooks
 │       │   ├── hooks.json
 │       │   └── scripts/

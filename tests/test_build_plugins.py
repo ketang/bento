@@ -104,11 +104,11 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(codex_manifest["interface"]["displayName"], "Bento")
         self.assertEqual(len(codex_manifest["interface"]["defaultPrompt"]), 3)
         self.assertEqual(codex_manifest["interface"]["composerIcon"], "./assets/icon.png")
-        self.assertEqual(codex_manifest["interface"]["screenshots"][2], "./assets/screenshot-3.png")
+        self.assertNotIn("screenshots", codex_manifest["interface"])
         self.assertEqual(list(claude_bento.rglob("*.pyc")), [])
         self.assertEqual([path.name for path in claude_bento.rglob("__pycache__")], [])
 
-        for asset_name in ["icon.png", "logo.png", "screenshot-1.png", "screenshot-2.png", "screenshot-3.png"]:
+        for asset_name in ["icon.png", "logo.png"]:
             asset = claude_bento / "assets" / asset_name
             self.assertTrue(asset.exists(), asset_name)
             self.assertGreater(asset.stat().st_size, 0)
