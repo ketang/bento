@@ -219,6 +219,184 @@ class CheckUnpushedHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
+    def test_allows_land_work_preview_worktree(self) -> None:
+        # A land-work merge preview is a detached-HEAD worktree whose staged
+        # changes are the merge candidate under review, not stranded work.
+        # land-work-create-preview.py names it "land-work-preview-<random>".
+        repo = self._init_repo()
+        self._add_remote(repo)
+
+        preview_dir = self.root / "land-work-preview-abc123"
+        self._git(repo, "worktree", "add", "--detach", str(preview_dir), "main")
+        self._git(preview_dir, "merge", "--no-ff", "--no-commit", "main")
+        (preview_dir / "stray.txt").write_text("staged\n", encoding="utf-8")
+        self._git(preview_dir, "add", "stray.txt")
+
+        result = self._run(payload_cwd=preview_dir)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_blocks_reused_leaked_preview_directory(self) -> None:
+        # A failed/interrupted landing can leak a land-work-preview-* worktree
+        # (bento-gd2) that survives until a manual closure sweep. If that
+        # directory is reused for real work — checked out to an attached
+        # branch and committed to — before the sweep runs, the basename alone
+        # must not make the hook skip it: HEAD is attached, so this is not a
+        # live preview and genuinely unpushed work here must still block.
+        repo = self._init_repo()
+        self._add_remote(repo)
+
+        leaked_dir = self.root / "land-work-preview-leaked1"
+        self._git(repo, "worktree", "add", "--detach", str(leaked_dir), "main")
+        self._git(leaked_dir, "checkout", "-b", "reused-feature")
+        (leaked_dir / "README.md").write_text("reused-work\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=leaked_dir)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_blocks_fake_merge_head_marker(self) -> None:
+        # A bare `touch .git/MERGE_HEAD` must not bypass the check: the
+        # marker's content has to resolve to a real commit, not just exist.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        (repo / ".git" / "MERGE_HEAD").write_text("not-a-real-sha\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_blocks_self_referential_merge_head(self) -> None:
+        # `git rev-parse HEAD > .git/MERGE_HEAD` resolves to a real commit,
+        # but HEAD is its own ancestor: a genuine incoming merge parent is
+        # never already reachable from HEAD, so this must not bypass the
+        # check either.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        head_sha = subprocess.run(
+            ["git", "rev-parse", "HEAD"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout
+        (repo / ".git" / "MERGE_HEAD").write_text(head_sha, encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_allows_octopus_merge_multi_line_merge_head(self) -> None:
+        # A real octopus merge writes one SHA per non-first parent, newline
+        # separated, into MERGE_HEAD. Each line must be validated
+        # independently rather than the whole content as a single ref.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._git(repo, "checkout", "-b", "branch-a")
+        (repo / "a.txt").write_text("a\n", encoding="utf-8")
+        self._git(repo, "add", "a.txt")
+        self._git(repo, "commit", "-qm", "branch-a commit")
+        branch_a_sha = subprocess.run(
+            ["git", "rev-parse", "branch-a"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        self._git(repo, "checkout", "main")
+        self._git(repo, "checkout", "-b", "branch-b")
+        (repo / "b.txt").write_text("b\n", encoding="utf-8")
+        self._git(repo, "add", "b.txt")
+        self._git(repo, "commit", "-qm", "branch-b commit")
+        branch_b_sha = subprocess.run(
+            ["git", "rev-parse", "branch-b"],
+            cwd=repo,
+            capture_output=True,
+            text=True,
+            check=True,
+        ).stdout.strip()
+        self._git(repo, "checkout", "main")
+        # Genuine merge of one head to get a real, valid MERGE_HEAD entry,
+        # then simulate the octopus multi-parent format by appending a
+        # second real, non-ancestor commit SHA on its own line.
+        self._git(repo, "merge", "--no-ff", "--no-commit", "branch-a")
+        (repo / ".git" / "MERGE_HEAD").write_text(
+            f"{branch_a_sha}\n{branch_b_sha}\n", encoding="utf-8"
+        )
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_blocks_fake_rebase_merge_marker(self) -> None:
+        # A bare `mkdir .git/rebase-merge` (no real rebase state, HEAD still
+        # attached) must not bypass the check either.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        (repo / ".git" / "rebase-merge").mkdir()
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_allows_in_progress_rebase_in_linked_worktree(self) -> None:
+        # A rebase mid-replay detaches HEAD and stages files in the linked
+        # worktree; that is normal in-protocol state, not abandoned work.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._git(repo, "checkout", "-b", "feature")
+        (repo / "README.md").write_text("feature-change\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "feature commit")
+        self._git(repo, "checkout", "main")
+        (repo / "README.md").write_text("main-change\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "main commit")
+
+        worktree_dir = self.root / "feature-worktree"
+        self._git(repo, "worktree", "add", str(worktree_dir), "feature")
+        # Both branches touched README.md differently, so rebasing feature
+        # onto main conflicts and stops mid-replay with a detached HEAD and
+        # unresolved/staged changes in the linked worktree.
+        subprocess.run(
+            ["git", "rebase", "main"],
+            cwd=worktree_dir,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        result = self._run(payload_cwd=worktree_dir)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_blocks_unpushed_commits_in_linked_worktree(self) -> None:
+        # A linked worktree on an attached branch with real unpushed commits
+        # is exactly the case the preview/rebase skips must not swallow.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._git(repo, "branch", "feature", "main")
+        self._git(repo, "push", "-q", "-u", "origin", "feature")
+
+        worktree_dir = self.root / "feature-worktree"
+        self._git(repo, "worktree", "add", str(worktree_dir), "feature")
+        (worktree_dir / "README.md").write_text("feature-work\n", encoding="utf-8")
+        self._git(worktree_dir, "commit", "-aqm", "feature commit")
+
+        result = self._run(payload_cwd=worktree_dir)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("1 unpushed commit", result.stderr)
+        self.assertIn("feature", result.stderr)
+
     def test_uses_payload_cwd_not_process_cwd(self) -> None:
         # Process CWD is a neutral non-git temp dir; the dirty repo is carried
         # only in the payload cwd, mirroring Claude Code spawning hooks from
