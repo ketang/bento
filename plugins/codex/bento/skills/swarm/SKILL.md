@@ -183,22 +183,29 @@ worktree). The teammate prompt MUST require this step as part of worktree
 bootstrap so the worker inherits the project's allowlisted command classes and
 does not block on permission prompts.
 
-The teammate must verify working directory and branch before any edits:
+The teammate must verify working directory and branch before any edits. Always
+pass `--expected-branch` with the exact branch assigned to this task —
+`--require-linked-worktree` alone only proves the teammate is in *some* linked
+worktree, not the one assigned to this task, and will pass even from a
+different task's worktree:
 
 ```bash
-swarm/scripts/swarm-worktree-verify.py --require-linked-worktree
+swarm/scripts/swarm-worktree-verify.py --require-linked-worktree --expected-branch <assigned-branch>
 ```
 
 Reject any teammate setup that cannot show they are inside the intended
 worktree on the intended branch.
 
 Every teammate prompt MUST include a hard-gate clause to this effect, verbatim
-or close to it:
+or close to it, with `<assigned-branch>` filled in with this task's actual
+branch name:
 
 > **Do not edit any file, run any write command, or make any commit until
-> `swarm-worktree-verify.py --require-linked-worktree` exits 0. If it exits
-> non-zero, create or fix the worktree first, then re-run the script. Any
-> edit before a passing verify is a protocol violation.**
+> `swarm-worktree-verify.py --require-linked-worktree --expected-branch
+> <assigned-branch>` exits 0. If it exits non-zero, create or fix the
+> worktree first, then re-run the script. Any edit before a passing verify is
+> a protocol violation — `--require-linked-worktree` alone is not sufficient
+> because it does not check that this is the worktree assigned to YOU.**
 
 Every teammate prompt MUST also carry these working-hygiene rules, verbatim or
 close to it:
@@ -244,10 +251,13 @@ pre-completion step. Reject plans that reference the primary checkout or do
 not explain how the task will be verified.
 
 Reject any teammate plan that does not include an explicit
-`swarm-worktree-verify.py --require-linked-worktree` step (or the equivalent
-worktree-verify gate) before any file edit. A plan that jumps straight to
+`swarm-worktree-verify.py --require-linked-worktree --expected-branch
+<assigned-branch>` step (or the equivalent worktree-verify gate with the
+assigned branch passed) before any file edit. A plan that jumps straight to
 edits without a passing verify is not acceptable, even if the teammate
-claims to already be in the right worktree.
+claims to already be in the right worktree. A plan that verifies with
+`--require-linked-worktree` alone, without `--expected-branch`, only proves
+"some linked worktree" and does not satisfy this gate.
 
 Reject any teammate plan that includes `land-work`, `git merge` to the primary
 branch, or any other landing step. Landing is the lead's responsibility; a
