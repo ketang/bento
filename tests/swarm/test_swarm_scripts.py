@@ -111,6 +111,45 @@ class SwarmWorktreeVerifyTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["linked_worktree"])
 
+    def test_require_linked_worktree_from_primary_checkout_does_not_warn(self) -> None:
+        # The warning is about identity ambiguity between linked worktrees; it
+        # would be misleading ("you are in SOME linked worktree") when the
+        # hard failure above already covers "you are not in one at all".
+        result = self.run_verify(self.repo, "--require-linked-worktree", check=False)
+
+        self.assertNotIn("warning:", result.stderr)
+
+    def test_expected_branch_empty_string_is_rejected(self) -> None:
+        result = self.run_verify(
+            self.worktree,
+            "--expected-branch",
+            "",
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--expected-branch requires a non-empty value", result.stderr)
+
+    def test_expected_worktree_empty_string_is_rejected(self) -> None:
+        # An unset shell variable interpolated into the invocation (e.g.
+        # `--expected-worktree "$SOME_UNSET_VAR"`) must fail loudly instead of
+        # silently coercing to "no expectation" and trivially passing.
+        result = self.run_verify(
+            self.worktree,
+            "--expected-worktree",
+            "",
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--expected-worktree requires a non-empty value", result.stderr)
+
+    def test_require_worktree_alias_warning_mentions_both_flag_names(self) -> None:
+        result = self.run_verify(self.other_worktree, "--require-worktree")
+
+        self.assertIn("--require-linked-worktree", result.stderr)
+        self.assertIn("--require-worktree", result.stderr)
+
     def test_require_linked_worktree_alone_wrongly_passes_from_wrong_worktree(self) -> None:
         # This is the bug: a teammate assigned to `feature/swarm` who is
         # actually sitting in `feature/other-task` still gets ok:true because

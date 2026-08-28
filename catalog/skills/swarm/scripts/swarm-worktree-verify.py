@@ -16,6 +16,11 @@ def main() -> int:
     parser.add_argument("--require-linked-worktree", action="store_true")
     args = parser.parse_args()
 
+    if args.expected_branch is not None and not args.expected_branch.strip():
+        parser.error("--expected-branch requires a non-empty value")
+    if args.expected_worktree is not None and not args.expected_worktree.strip():
+        parser.error("--expected-worktree requires a non-empty value")
+
     cwd = Path.cwd().resolve()
     checkout_root = detect_checkout_root(cwd)
     branch = git_stdout("branch", "--show-current", cwd=checkout_root)
@@ -45,11 +50,17 @@ def main() -> int:
         ]
     )
 
-    if require_linked_worktree and args.expected_branch is None and args.expected_worktree is None:
+    if (
+        require_linked_worktree
+        and linked_worktree
+        and args.expected_branch is None
+        and args.expected_worktree is None
+    ):
         print(
-            "warning: --require-linked-worktree alone only checks that you are in "
-            "SOME linked worktree, not the one assigned to this task. Pass "
-            "--expected-branch (and/or --expected-worktree) to verify identity.",
+            "warning: --require-linked-worktree (or its --require-worktree alias) alone "
+            "only checks that you are in SOME linked worktree, not the one assigned to "
+            "this task. Pass --expected-branch (and/or --expected-worktree) to verify "
+            "identity.",
             file=sys.stderr,
         )
 
