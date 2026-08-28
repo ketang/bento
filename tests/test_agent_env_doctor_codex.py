@@ -82,6 +82,93 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
         context = self._context(self._evaluate())
         self.assertIn("unknown key", context)
 
+    def test_bare_dangerous_token_is_silent(self) -> None:
+        # "dangerous" is real launcher grammar (bashrc.agent-mode.sh) that
+        # enables --dangerously-bypass-approvals-and-sandbox for Codex.
+        (self.repo / ".agent-mode.local").write_text("dangerous\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_other_bare_token_still_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text("yolo\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
+    def test_whitespace_padded_dangerous_token_still_flagged(self) -> None:
+        # The launcher's bash `case "$line" in "dangerous")` matches the raw
+        # line from `IFS= read -r line` with zero whitespace tolerance.
+        (self.repo / ".agent-mode.local").write_text("dangerous \n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
+    def test_leading_whitespace_padded_dangerous_token_still_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text("  dangerous\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
+    def test_crlf_dangerous_token_still_flagged(self) -> None:
+        # A CRLF-terminated "dangerous\r\n" line becomes "dangerous\r" to
+        # bash's `IFS= read -r line` — its exact-match `case` does not
+        # activate on that, so this broken config must still warn.
+        (self.repo / ".agent-mode.local").write_bytes(b"dangerous\r\n")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
+    def test_launcher_mode_and_tools_assignment_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["claude", "codex"]\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_tools_missing_comma_is_silent(self) -> None:
+        # The real launcher greps for quoted tokens anywhere on a `tools =`
+        # line — a missing comma between entries is still real, effective
+        # config, not malformed input.
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["claude" "codex"]\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_tools_trailing_comma_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["claude", "codex",]\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_mode_only_bare_line_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_mode_non_dangerous_value_is_silent(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "safe"\n', encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_unquoted_mode_assignment_still_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "mode=dangerous\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown key", context)
+        self.assertIn("mode", context)
+
+    def test_launcher_and_bento_settings_coexist(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\ntools = ["codex"]\nrequire_worktree=false\n',
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_launcher_settings_do_not_mask_real_bento_problem(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            'mode = "dangerous"\nbypass=true\n', encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown key", context)
+        self.assertIn("bypass", context)
+
     def test_recognized_keys_silent(self) -> None:
         (self.repo / ".agent-mode.local").write_text(
             "require_worktree=false\n", encoding="utf-8"

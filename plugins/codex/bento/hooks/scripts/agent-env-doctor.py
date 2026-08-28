@@ -58,6 +58,24 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
     }
 )
 
+# .agent-mode.local also carries syntax owned by dotfiles' agent-mode launcher
+# (bashrc.agent-mode.sh), not by Bento: a bare "dangerous" token, a quoted
+# `mode = "..."` assignment, and an optional `tools = ...` assignment. These
+# are recognized as valid launcher grammar regardless of the quoted value —
+# the launcher itself decides whether a given mode/tool activates anything —
+# so Bento must not flag them as unknown. The tools line is matched exactly as
+# permissively as the launcher's own parser: any line whose key is `tools`
+# followed by `=` is recognized, with no requirement on bracket/comma
+# strictness, since the launcher itself only greps for quoted tokens anywhere
+# on that line (`_agent_mode_tools_line` / `_agent_mode_tool_enabled` in
+# bashrc.agent-mode.sh) — so `tools = ["claude" "codex"]` (missing comma) or a
+# trailing comma are both real, effective launcher config, not malformed
+# input. Anything that doesn't match this grammar or Bento's own key=value
+# keys still warns.
+_LAUNCHER_DANGEROUS_TOKEN = "dangerous"
+_LAUNCHER_MODE_RE = re.compile(r'^mode\s*=\s*"[^"]+"\s*$')
+_LAUNCHER_TOOLS_RE = re.compile(r"^tools\s*=")
+
 # @import tokens: an "@" at line start or after whitespace, then a path token.
 _IMPORT_RE = re.compile(r"(?:^|\s)@(\S+)")
 
@@ -75,6 +93,21 @@ def _read_text_bounded(path: Path) -> str | None:
     """Read up to MAX_READ_BYTES of a file as text, or None on error."""
     try:
         with path.open("r", encoding="utf-8", errors="replace") as fh:
+            return fh.read(MAX_READ_BYTES)
+    except OSError:
+        return None
+
+
+def _read_agent_mode_text(path: Path) -> str | None:
+    """Read .agent-mode.local without universal-newline translation, so a
+    CRLF-terminated line is preserved exactly as bash's `IFS= read -r line`
+    sees it: only the trailing "\\n" is a separator, and a stray "\\r" stays
+    part of the line. Python's default text mode would silently translate
+    "\\r\\n" to "\\n", making a broken CRLF "dangerous\\r\\n" line compare
+    equal to the bare "dangerous" token even though the real launcher's exact
+    `case` match does not activate on it."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace", newline="") as fh:
             return fh.read(MAX_READ_BYTES)
     except OSError:
         return None
@@ -216,13 +249,24 @@ def check_imports(root: Path) -> list[str]:
 
 def check_agent_mode(root: Path) -> list[str]:
     config = root / ".agent-mode.local"
-    text = _read_text_bounded(config)
+    text = _read_agent_mode_text(config)
     if text is None:
         return []
     warnings: list[str] = []
-    for line in text.splitlines():
+    # Split only on "\n", matching bash's `IFS= read -r line` line boundary
+    # (str.splitlines() would additionally split on a bare "\r", which bash
+    # does not treat as a line terminator here).
+    for line in text.split("\n"):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
+            continue
+        # The launcher's bash `case "$line" in "dangerous")` matches the raw
+        # line from `IFS= read -r line` with zero whitespace tolerance — a
+        # leading/trailing-space-padded "dangerous " does NOT activate it, so
+        # this comparison must use the unstripped line, not `stripped`.
+        if line == _LAUNCHER_DANGEROUS_TOKEN:
+            continue
+        if _LAUNCHER_MODE_RE.match(stripped) or _LAUNCHER_TOOLS_RE.match(stripped):
             continue
         if "=" not in stripped:
             warnings.append(
