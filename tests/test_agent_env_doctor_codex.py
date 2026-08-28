@@ -105,6 +105,14 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
         context = self._context(self._evaluate())
         self.assertIn("not a key=value", context)
 
+    def test_crlf_dangerous_token_still_flagged(self) -> None:
+        # A CRLF-terminated "dangerous\r\n" line becomes "dangerous\r" to
+        # bash's `IFS= read -r line` — its exact-match `case` does not
+        # activate on that, so this broken config must still warn.
+        (self.repo / ".agent-mode.local").write_bytes(b"dangerous\r\n")
+        context = self._context(self._evaluate())
+        self.assertIn("not a key=value", context)
+
     def test_launcher_mode_and_tools_assignment_is_silent(self) -> None:
         (self.repo / ".agent-mode.local").write_text(
             'mode = "dangerous"\ntools = ["claude", "codex"]\n', encoding="utf-8"

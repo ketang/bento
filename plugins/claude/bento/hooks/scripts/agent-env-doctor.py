@@ -152,6 +152,21 @@ def _read_text_bounded(path: Path) -> str | None:
         return None
 
 
+def _read_agent_mode_text(path: Path) -> str | None:
+    """Read .agent-mode.local without universal-newline translation, so a
+    CRLF-terminated line is preserved exactly as bash's `IFS= read -r line`
+    sees it: only the trailing "\\n" is a separator, and a stray "\\r" stays
+    part of the line. Python's default text mode would silently translate
+    "\\r\\n" to "\\n", making a broken CRLF "dangerous\\r\\n" line compare
+    equal to the bare "dangerous" token even though the real launcher's exact
+    `case` match does not activate on it."""
+    try:
+        with path.open("r", encoding="utf-8", errors="replace", newline="") as fh:
+            return fh.read(MAX_READ_BYTES)
+    except OSError:
+        return None
+
+
 def repo_root(cwd: str) -> str | None:
     """Git top-level for cwd, or None if cwd is not inside a git repo."""
     try:
@@ -464,11 +479,14 @@ def check_dormant_plugins(
 
 def check_agent_mode(root: Path) -> list[str]:
     config = root / ".agent-mode.local"
-    text = _read_text_bounded(config)
+    text = _read_agent_mode_text(config)
     if text is None:
         return []
     warnings: list[str] = []
-    for line in text.splitlines():
+    # Split only on "\n", matching bash's `IFS= read -r line` line boundary
+    # (str.splitlines() would additionally split on a bare "\r", which bash
+    # does not treat as a line terminator here).
+    for line in text.split("\n"):
         stripped = line.strip()
         if not stripped or stripped.startswith("#"):
             continue
