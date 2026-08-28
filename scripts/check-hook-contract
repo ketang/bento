@@ -15,11 +15,13 @@ enforces two checks:
      default when the payload lacks a usable `cwd`).
 
   B. Payload-first requirement. Any file that uses a process-CWD primitive must
-     also reference the payload `cwd` field (`"cwd"`/`'cwd'`) — proving it reads
-     the working directory from the payload as the primary source and only falls
-     back to the process CWD. A file that determines a directory purely from the
-     process CWD, without ever consulting the payload, is exactly the historical
-     bug this lint exists to prevent.
+     also read the payload `cwd` field (e.g. `.get("cwd")`, `["cwd"]`, or the
+     jq path `.cwd`) — proving it reads the working directory from the payload
+     as the primary source and only falls back to the process CWD. A bare
+     quoted `"cwd"`/`'cwd'` literal with no read shape around it does not
+     satisfy this. A file that determines a directory purely from the process
+     CWD, without ever consulting the payload, is exactly the historical bug
+     this lint exists to prevent.
 
 Python hooks are analyzed with the `ast` module; shell hooks are scanned with
 targeted regexes (covering both `$PWD`/`$(pwd)` and process-CWD calls embedded
@@ -52,8 +54,16 @@ EXEMPT_RE = re.compile(r"#\s*hook-cwd-exempt:\s*(\S.*)$")
 # reads whose base is provably a hardcoded literal rather than the payload;
 # shell has no cheap AST, so this regex settles for requiring an actual read
 # shape as the next-best heuristic.
+#
+# The jq-path alternative excludes `.cwd` immediately preceded by `Path`
+# (case-sensitive) or followed by a call `(`: without that exclusion, the
+# literal text of the very primitives check A flags -- `Path.cwd()` and
+# `pathlib.Path.cwd()` -- would self-satisfy this "payload read" check,
+# since both contain the substring `.cwd`. A hook that only ever calls
+# `Path.cwd()` behind a `# hook-cwd-exempt:` comment must not pass check B
+# by virtue of that same call spelling out `.cwd`.
 CWD_FIELD_RE = re.compile(
-    r"""\.get\(\s*['"]cwd['"]|\[\s*['"]cwd['"]\s*\]|\.cwd\b"""
+    r"""\.get\(\s*['"]cwd['"]|\[\s*['"]cwd['"]\s*\]|(?<!Path)\.cwd\b(?!\s*\()"""
 )
 
 # Canonical dotted targets that count as "process CWD" or "$PWD via
@@ -531,8 +541,10 @@ def _references_payload_cwd_ast(tree: ast.AST) -> bool:
     lightweight, one-pass check.
 
     This decoy filtering applies to Python hooks only. Shell hooks still go
-    through `_references_payload_cwd`, a regex over comment-stripped text,
-    where a bare `'cwd'` string anywhere in the file satisfies the check.
+    through `_references_payload_cwd`, a regex over comment-stripped text
+    requiring an actual read shape (`.get('cwd')`, `['cwd']`, or the jq path
+    `.cwd`) rather than full data-flow analysis; a bare `'cwd'` string with no
+    read shape around it does not satisfy the check.
     """
     literal_only = _literal_only_names(tree)
     import_aliases = _collect_import_aliases(tree)
