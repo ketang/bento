@@ -79,6 +79,9 @@ class SwarmWorktreeVerifyTest(unittest.TestCase):
         git(self.repo, "commit", "-m", "initial commit")
         git(self.repo, "worktree", "add", "-b", "feature/swarm", str(self.worktree), "main")
 
+        self.other_worktree = Path(self.temp_dir.name) / "other-worktree"
+        git(self.repo, "worktree", "add", "-b", "feature/other-task", str(self.other_worktree), "main")
+
     def tearDown(self) -> None:
         self.temp_dir.cleanup()
 
@@ -107,6 +110,101 @@ class SwarmWorktreeVerifyTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["linked_worktree"])
+
+    def test_require_linked_worktree_from_primary_checkout_does_not_warn(self) -> None:
+        # The warning is about identity ambiguity between linked worktrees; it
+        # would be misleading ("you are in SOME linked worktree") when the
+        # hard failure above already covers "you are not in one at all".
+        result = self.run_verify(self.repo, "--require-linked-worktree", check=False)
+
+        self.assertNotIn("warning:", result.stderr)
+
+    def test_expected_branch_empty_string_is_rejected(self) -> None:
+        result = self.run_verify(
+            self.worktree,
+            "--expected-branch",
+            "",
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--expected-branch requires a non-empty value", result.stderr)
+
+    def test_expected_worktree_empty_string_is_rejected(self) -> None:
+        # An unset shell variable interpolated into the invocation (e.g.
+        # `--expected-worktree "$SOME_UNSET_VAR"`) must fail loudly instead of
+        # silently coercing to "no expectation" and trivially passing.
+        result = self.run_verify(
+            self.worktree,
+            "--expected-worktree",
+            "",
+            check=False,
+        )
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--expected-worktree requires a non-empty value", result.stderr)
+
+    def test_require_worktree_alias_warning_mentions_both_flag_names(self) -> None:
+        result = self.run_verify(self.other_worktree, "--require-worktree")
+
+        self.assertIn("--require-linked-worktree", result.stderr)
+        self.assertIn("--require-worktree", result.stderr)
+
+    def test_require_linked_worktree_alone_wrongly_passes_from_wrong_worktree(self) -> None:
+        # This is the bug: a teammate assigned to `feature/swarm` who is
+        # actually sitting in `feature/other-task` still gets ok:true because
+        # --require-linked-worktree only checks "some linked worktree", not
+        # "the assigned one".
+        result = self.run_verify(self.other_worktree, "--require-linked-worktree")
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["branch"], "feature/other-task")
+
+    def test_require_linked_worktree_alone_warns_without_expected_branch(self) -> None:
+        result = self.run_verify(self.other_worktree, "--require-linked-worktree")
+
+        self.assertIn("only checks that you are in", result.stderr)
+        self.assertIn("--expected-branch", result.stderr)
+
+    def test_expected_branch_suppresses_warning(self) -> None:
+        result = self.run_verify(
+            self.worktree,
+            "--expected-branch",
+            "feature/swarm",
+            "--require-linked-worktree",
+        )
+
+        self.assertEqual(result.stderr, "")
+
+    def test_expected_branch_rejects_wrong_linked_worktree(self) -> None:
+        result = self.run_verify(
+            self.other_worktree,
+            "--expected-branch",
+            "feature/swarm",
+            "--require-linked-worktree",
+            check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["expected_branch_match"])
+        self.assertEqual(payload["branch"], "feature/other-task")
+
+    def test_expected_branch_accepts_correct_linked_worktree(self) -> None:
+        result = self.run_verify(
+            self.worktree,
+            "--expected-branch",
+            "feature/swarm",
+            "--require-linked-worktree",
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["expected_branch_match"])
 
 
 if __name__ == "__main__":
