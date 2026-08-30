@@ -257,19 +257,19 @@ land-work/scripts/land-work-run-verifier.py \
      setup is per-project and easy to forget until a landing is already
      blocked on it, so land-work triggers the on-ramp itself instead of
      deferring to a remembered manual step:
-     1. Remove the current preview worktree (the cleanup command below) — it
+     8i. Remove the current preview worktree (the cleanup command below) — it
         is stale once the feature branch gains a new commit.
-     2. Return to the feature-branch worktree and invoke the
+     8ii. Return to the feature-branch worktree and invoke the
         `wire-land-verifier` skill there. It still requires explicit
         repo-owner confirmation of the real gate command and an explicit
         go-ahead before `apply` installs anything — auto-invoking it here
         shortens the path to that confirmation prompt, it does not skip it.
-     3. Once `wire-land-verifier` commits the manifest and wrapper on the
+     8iii. Once `wire-land-verifier` commits the manifest and wrapper on the
         feature branch, re-run this compare-and-set flow from the preview
         step (step 8) against the updated feature HEAD: recreate the preview,
         re-run the project verifier, and satisfy the gate requirement (step
         6a) again on the new exact candidate.
-     4. If the repo owner declines to confirm a real gate command, or
+     8iv. If the repo owner declines to confirm a real gate command, or
         `wire-land-verifier` cannot produce a passing draft, stop; this is a
         normal landing failure, not a missing-manifest retry.
 
