@@ -69,7 +69,12 @@ worktree never falls back to the primary checkout's index or working tree.
 
 A missing verifier manifest with a nonempty relevant diff is also nonzero and
 reports the config path to create. There is no generic fallback gate, path
-taxonomy, guessed hook, or interactive choice.
+taxonomy, guessed hook, or interactive choice. `land-work`'s workflow invokes
+`wire-land-verifier` inline on this specific error rather than stopping and
+deferring the fix to a separately remembered step; see the missing-manifest
+exception in `land-work/SKILL.md` step 8. `wire-land-verifier`'s own
+confirm-before-draft and explicit-go-ahead-before-apply gates are unchanged —
+this script still never infers or rubber-stamps a verifier command.
 
 ## Diagnostics
 

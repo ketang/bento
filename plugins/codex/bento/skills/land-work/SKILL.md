@@ -42,7 +42,10 @@ state checks that should not rely on ad hoc prose reconstruction:
   project verifier against the exact merge preview and fail closed unless every
   landed path is covered. It never equates a zero-check verifier result with
   verified evidence: a real diff with no matching selected check stops the
-  landing. See `references/project-verifier.md` for the manifest contract.
+  landing. See `references/project-verifier.md` for the manifest contract. If
+  no manifest exists anywhere in the discovery chain, land-work invokes
+  `wire-land-verifier` inline rather than deferring the fix to a later,
+  separately remembered step — see the missing-manifest exception in step 8.
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
@@ -244,9 +247,36 @@ land-work/scripts/land-work-run-verifier.py \
      A nonzero exit stops the landing: the verifier has a nonempty relevant
      diff that no passed selected check covers, the manifest is missing or
      invalid, or the verifier command failed, timed out, or returned an
-     unusable result. Do not proceed to the lease check or merge; remove the
-     preview worktree (the cleanup command below) before stopping. Exit 0 means
-     every landed path is covered or exactly exempted.
+     unusable result. Exit 0 means every landed path is covered or exactly
+     exempted.
+
+     **Missing-manifest exception.** If the reported error is specifically "no
+     verifier manifest configured" (no manifest found anywhere in the
+     discovery chain, with a nonempty relevant diff), do not just halt and
+     tell the user to run `wire-land-verifier` separately later. Verifier
+     setup is per-project and easy to forget until a landing is already
+     blocked on it, so land-work triggers the on-ramp itself instead of
+     deferring to a remembered manual step:
+     1. Remove the current preview worktree (the cleanup command below) — it
+        is stale once the feature branch gains a new commit.
+     2. Return to the feature-branch worktree and invoke the
+        `wire-land-verifier` skill there. It still requires explicit
+        repo-owner confirmation of the real gate command and an explicit
+        go-ahead before `apply` installs anything — auto-invoking it here
+        shortens the path to that confirmation prompt, it does not skip it.
+     3. Once `wire-land-verifier` commits the manifest and wrapper on the
+        feature branch, re-run this compare-and-set flow from the preview
+        step (step 8) against the updated feature HEAD: recreate the preview,
+        re-run the project verifier, and satisfy the gate requirement (step
+        6a) again on the new exact candidate.
+     4. If the repo owner declines to confirm a real gate command, or
+        `wire-land-verifier` cannot produce a passing draft, stop; this is a
+        normal landing failure, not a missing-manifest retry.
+
+     Any other nonzero exit (a real gate failure, an invalid existing
+     manifest, or a verifier command error) is a normal landing failure: do
+     not proceed to the lease check or merge; remove the preview worktree (the
+     cleanup command below) before stopping.
    - satisfy the gate requirement (step 6a) against that exact preview only; do
      not reuse pre-rebase or pre-conflict results
    - re-check the lease with:
@@ -415,6 +445,10 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 - Do not bypass exact-candidate verification after manual conflict resolution.
 - Do not use a repo-specific merge helper autonomously unless it can prove the
   landed candidate matches the verified preview.
+- A missing verifier manifest triggers `wire-land-verifier` inline, not a bare
+  halt — but `wire-land-verifier`'s own confirm-before-draft and
+  explicit-go-ahead-before-apply gates still apply in full; auto-invoking it
+  never substitutes for repo-owner confirmation of the real gate command.
 - Do not skip discovered hook scripts or hook skills at the `pre` and `post`
   positions. At `pre`, a `75` exit (hook scripts) or matched stop condition
   (hook skills) halts before the merge starts and is a human handoff. At
@@ -436,6 +470,7 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 | "The change is small and I ran the tests locally earlier, so gates are fine." | Earlier or partial runs are not evidence for the exact candidate, and "small" does not exempt a change from the repo's gates. |
 | "The primary branch was already red, but my branch didn't break it." | Landing on a red base hides which change is responsible and lets breakage linger. Halt on a pre-existing red base. |
 | "The project verifier exited 0, so the candidate is verified." | Exit 0 alone is not evidence. A verifier can select zero checks for a real diff and still exit 0. `land-work-run-verifier.py` fails closed unless every landed path is covered by a passed selected check or an exact exemption. |
+| "No manifest exists yet; I'll just tell the user to run `wire-land-verifier` later and stop here." | Verifier setup is per-project and gets forgotten until the next landing hits the same wall. Invoke `wire-land-verifier` now, in this session — its own confirmation and go-ahead gates still protect against a rubber-stamped verifier. |
 
 ## Tracker Handoff
 
