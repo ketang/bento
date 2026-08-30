@@ -147,8 +147,9 @@ Include only modules that fit the discovered repo:
 - docs truthfulness
 - demo/walkthrough drift (warning-level by default; include when the repo has
   browser demos, walkthrough scripts, `make demo`-style commands, screenshot
-  artifact conventions, `.demo-warnings.jsonl`, or Bugshot-linked demo output;
-  escalate only when the repo makes the demo part of a required gate)
+  artifact conventions, a `demo-warnings.jsonl` queue file, or Bugshot-linked
+  demo output; escalate only when the repo makes the demo part of a required
+  gate)
 - documentation utility
 - issue hygiene
 - foundation review

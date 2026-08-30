@@ -19,7 +19,7 @@ Use JSON unless the repo has a strong existing config convention.
 {
   "warnings": {
     "enabled": true,
-    "queueFile": ".demo-warnings.jsonl"
+    "queueFile": null
   },
   "screenshots": {
     "enabled": true,
@@ -39,6 +39,13 @@ Use JSON unless the repo has a strong existing config convention.
 
 The warning queue is part of the demo design. `warnings.enabled: false` only
 disables emission for a user or repo that explicitly opts out.
+
+The default warning queue location is `demo-warnings.jsonl` inside the
+per-run artifact directory (see `references/artifacts.md`); `queueFile: null`
+means "use that default." Set `queueFile` to an explicit path to override the
+default with a fixed location, such as `.demo-warnings.jsonl` at the repo
+root, when a repo wants one stable queue file that persists across runs
+instead of a fresh file per run. This is an override, not a second default.
 
 Treat missing options as bundled defaults, not as an error. Treat invalid
 options as a warning record and continue with safe defaults whenever possible.

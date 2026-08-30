@@ -14,8 +14,12 @@ tmp/demo/<timestamp-or-run-id>/
 │   ├── 02-create-project.png
 │   └── 03-create-project-warning.png
 ├── metadata.json
-└── warnings.jsonl
+└── demo-warnings.jsonl
 ```
+
+`demo-warnings.jsonl` in the run directory is the default warning queue
+location — see `references/options-file.md` for the `queueFile` option that
+overrides it (for example, to a stable repo-root path shared across runs).
 
 Keep artifact paths stable enough for Bugshot or other review tools to ingest.
 Use descriptive slugs and zero-padded step numbers so humans can scan the
