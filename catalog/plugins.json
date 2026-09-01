@@ -1,0 +1,228 @@
+{
+  "bento": {
+    "description": "Complete Bento skill pack with workflow, tracker, and repository cleanup skills",
+    "display_name": "Bento",
+    "short_description": "Complete coding-agent workflow pack",
+    "long_description": "Bento bundles the full Bento marketplace into one Codex-ready plugin: workflow launch and landing guidance, repo cleanup, research support, and tracker flows.",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Write"
+    ],
+    "keywords": [
+      "codex",
+      "agents",
+      "skills",
+      "workflow",
+      "engineering"
+    ],
+    "default_prompts": [
+      "Use the swarm skill to plan and coordinate parallel work for this repository.",
+      "Review this repository and recommend build-vs-buy options using the existing stack.",
+      "Run the closure skill to clean up stale branches, worktrees, and partial work safely."
+    ],
+    "brand_color": "#1F6FEB",
+    "palette": {
+      "primary": [
+        31,
+        111,
+        235
+      ],
+      "secondary": [
+        30,
+        196,
+        176
+      ],
+      "accent": [
+        248,
+        196,
+        72
+      ],
+      "background": [
+        8,
+        16,
+        29
+      ],
+      "surface": [
+        18,
+        34,
+        58
+      ]
+    },
+    "skills": [
+      "closure",
+      "launch-work",
+      "land-work",
+      "wire-land-verifier",
+      "handoff",
+      "cross-check",
+      "swarm",
+      "expedition",
+      "build-vs-buy",
+      "audit",
+      "generate-audit",
+      "generate-web-demo",
+      "maintain-web-demo",
+      "project-memory",
+      "compress-docs",
+      "issue-readiness-check",
+      "beads-issue-flow",
+      "github-issue-flow",
+      "dev-skill",
+      "bentobug",
+      "code-bloat-sniffer"
+    ],
+    "hooks": [
+      "bento",
+      "telemetry"
+    ]
+  },
+  "trackers": {
+    "description": "Tracker skills for Beads and GitHub Issues workflows",
+    "display_name": "Bento Trackers",
+    "short_description": "Tracker-driven delivery flows",
+    "long_description": "Bento Trackers packages lightweight issue-management skills for Beads and GitHub Issues so Codex can move from triage to branch creation and follow-up with a consistent workflow.",
+    "category": "Productivity",
+    "capabilities": [],
+    "keywords": [
+      "issues",
+      "trackers",
+      "workflow",
+      "github",
+      "planning"
+    ],
+    "default_prompts": [
+      "Turn this GitHub issue into an execution plan with clear next actions and branch setup.",
+      "Run the Beads issue flow for the current task and summarize the decisions to keep.",
+      "Compare tracker state to the repo and point out missing follow-through or stale tasks."
+    ],
+    "brand_color": "#0E8F5B",
+    "palette": {
+      "primary": [
+        14,
+        143,
+        91
+      ],
+      "secondary": [
+        57,
+        208,
+        146
+      ],
+      "accent": [
+        234,
+        255,
+        124
+      ],
+      "background": [
+        7,
+        22,
+        17
+      ],
+      "surface": [
+        15,
+        41,
+        32
+      ]
+    },
+    "skills": [
+      "issue-readiness-check",
+      "beads-issue-flow",
+      "github-issue-flow"
+    ]
+  },
+  "session-id": {
+    "description": "SessionStart hook that writes the Claude Code session ID to ~/.claude/session_id",
+    "display_name": "Bento Session ID",
+    "short_description": "Persist session ID across context resets",
+    "long_description": "Bento Session ID installs a SessionStart hook that captures the Claude Code session ID on every session start, resume, and context reset, writing it to ~/.claude/session_id and creating a per-session scratch directory at /tmp/claude-session-<id>/. This makes the session ID available to the model and to shell commands throughout the session.",
+    "category": "Productivity",
+    "capabilities": [],
+    "keywords": [
+      "session",
+      "hooks",
+      "automation",
+      "scratch"
+    ],
+    "default_prompts": [
+      "What is the current session ID?"
+    ],
+    "brand_color": "#6B21A8",
+    "palette": {
+      "primary": [
+        107,
+        33,
+        168
+      ],
+      "secondary": [
+        167,
+        139,
+        250
+      ],
+      "accent": [
+        232,
+        121,
+        249
+      ],
+      "background": [
+        15,
+        10,
+        23
+      ],
+      "surface": [
+        30,
+        20,
+        46
+      ]
+    },
+    "skills": [],
+    "hooks": "session-id"
+  },
+  "hygiene": {
+    "description": "SessionStart + Stop hooks that warn about untracked files left in the working tree at session end",
+    "display_name": "Bento Hygiene",
+    "short_description": "Catch stray untracked files before they accumulate",
+    "long_description": "Bento Hygiene installs a SessionStart hook that snapshots the working tree's untracked files and a Stop hook that diffs the current tree against that baseline. When new untracked files appear during a session that are not covered by .gitignore, it emits a loud, advisory reminder listing them so they can be cleaned up or ignored instead of silently accumulating across sessions. It never deletes anything, stays silent when the tree is unchanged, and can be suppressed per repo with 'hygiene_check=false' in .agent-mode.local.",
+    "category": "Productivity",
+    "capabilities": [],
+    "keywords": [
+      "hygiene",
+      "hooks",
+      "automation",
+      "git",
+      "cleanup"
+    ],
+    "default_prompts": [
+      "Clean up the untracked files flagged at session end."
+    ],
+    "brand_color": "#0F766E",
+    "palette": {
+      "primary": [
+        15,
+        118,
+        110
+      ],
+      "secondary": [
+        45,
+        212,
+        191
+      ],
+      "accent": [
+        94,
+        234,
+        212
+      ],
+      "background": [
+        8,
+        23,
+        22
+      ],
+      "surface": [
+        17,
+        46,
+        43
+      ]
+    },
+    "skills": [],
+    "hooks": "hygiene"
+  }
+}

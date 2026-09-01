@@ -1,6 +1,6 @@
 {
   "name": "trackers",
-  "version": "1.2.3",
+  "version": "1.2.4",
   "description": "Tracker skills for Beads and GitHub Issues workflows",
   "author": {
     "name": "Ketan Gangatirkar",
@@ -35,11 +35,6 @@
     ],
     "brandColor": "#0E8F5B",
     "composerIcon": "./assets/icon.png",
-    "logo": "./assets/logo.png",
-    "screenshots": [
-      "./assets/screenshot-1.png",
-      "./assets/screenshot-2.png",
-      "./assets/screenshot-3.png"
-    ]
+    "logo": "./assets/logo.png"
   }
 }
