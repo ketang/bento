@@ -83,6 +83,7 @@ When updating docs or structure:
 Prefer edits in:
 
 - `catalog/skills/`
+- `catalog/plugins.json`
 - `README.md`
 - `DESIGN.md`
 - `scripts/build-plugins`

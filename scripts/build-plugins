@@ -61,6 +61,17 @@ EXTERNAL_SKILLS: dict[str, list[dict]] = {}
 
 def load_plugin_defs() -> dict:
     raw = json.loads(PLUGIN_DEFS_FILE.read_text(encoding="utf-8"))
+    expected = set(PLUGIN_ORDER)
+    actual = set(raw)
+    missing = sorted(expected - actual)
+    extra = sorted(actual - expected)
+    if missing or extra:
+        details: list[str] = []
+        if missing:
+            details.append(f"missing plugin defs for: {', '.join(missing)}")
+        if extra:
+            details.append(f"unexpected plugin defs for: {', '.join(extra)}")
+        raise SystemExit(f"Invalid plugin defs in {PLUGIN_DEFS_FILE}: {'; '.join(details)}")
     for metadata in raw.values():
         if "palette" in metadata:
             metadata["palette"] = {
