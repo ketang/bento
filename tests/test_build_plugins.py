@@ -457,6 +457,30 @@ class BuildPluginsTest(unittest.TestCase):
         with self.assertRaises(SystemExit):
             self.build_repo()
 
+    def test_load_plugin_defs_raises_on_missing_plugin_entry(self) -> None:
+        defs_path = self.root / "catalog" / "plugins.json"
+        raw = json.loads(defs_path.read_text(encoding="utf-8"))
+        del raw["hygiene"]
+        defs_path.write_text(json.dumps(raw), encoding="utf-8")
+        self.module.PLUGIN_DEFS_FILE = defs_path
+
+        with self.assertRaises(SystemExit) as ctx:
+            self.module.load_plugin_defs()
+        self.assertIn("missing plugin defs for: hygiene", str(ctx.exception))
+        self.assertIn(str(defs_path), str(ctx.exception))
+
+    def test_load_plugin_defs_raises_on_unexpected_plugin_entry(self) -> None:
+        defs_path = self.root / "catalog" / "plugins.json"
+        raw = json.loads(defs_path.read_text(encoding="utf-8"))
+        raw["not-a-real-plugin"] = raw["hygiene"]
+        defs_path.write_text(json.dumps(raw), encoding="utf-8")
+        self.module.PLUGIN_DEFS_FILE = defs_path
+
+        with self.assertRaises(SystemExit) as ctx:
+            self.module.load_plugin_defs()
+        self.assertIn("unexpected plugin defs for: not-a-real-plugin", str(ctx.exception))
+        self.assertIn(str(defs_path), str(ctx.exception))
+
     def test_build_repo_copies_red_green_tdd_guidance_into_generated_skills(self) -> None:
         self.build_repo()
 
