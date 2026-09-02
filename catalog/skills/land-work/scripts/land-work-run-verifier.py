@@ -27,21 +27,20 @@ verification or merge.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import json
-import os
-import signal
 import subprocess
 import sys
 from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-# lifecycle_extensions lives beside the launch-work scripts; both skills sit
-# under a shared skills/ root in the catalog and in every generated plugin.
+# lifecycle_extensions and process_group live beside the launch-work scripts;
+# both skills sit under a shared skills/ root in the catalog and in every
+# generated plugin.
 _LAUNCH_SCRIPTS = SCRIPT_DIR.parents[1] / "launch-work" / "scripts"
 sys.path.insert(0, str(_LAUNCH_SCRIPTS))
 
 import lifecycle_extensions  # type: ignore  # noqa: E402
+import process_group  # type: ignore  # noqa: E402
 
 
 GLOB_CHARS = set("*?[]")
@@ -288,36 +287,11 @@ def main() -> int:
     except FileNotFoundError as exc:
         return _fail(diagnostics, [f"verifier command not found: {exc}"])
 
-    def _kill_process_group() -> None:
-        try:
-            os.killpg(os.getpgid(popen.pid), signal.SIGKILL)
-        except ProcessLookupError:
-            pass
-        popen.communicate()  # reap; the group is dead so this cannot hang
-
-    @contextlib.contextmanager
-    def _reap_group_on_sigterm():
-        # `start_new_session=True` detaches the command into its own process
-        # group, so an external SIGTERM aimed only at *this* process's PID
-        # never reaches it on its own, and a Python exception handler cannot
-        # catch that either: the default SIGTERM disposition terminates the
-        # process before any except/finally gets a chance to run. A handler
-        # installed for the duration of the call is what closes that gap.
-        def _on_term(signum: int, _frame: object) -> None:
-            _kill_process_group()
-            raise SystemExit(128 + signum)
-
-        previous = signal.signal(signal.SIGTERM, _on_term)
-        try:
-            yield
-        finally:
-            signal.signal(signal.SIGTERM, previous)
-
-    with _reap_group_on_sigterm():
+    with process_group.reap_group_on_sigterm(popen):
         try:
             stdout, stderr = popen.communicate(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
-            _kill_process_group()
+            process_group.kill_process_group(popen)
             return _fail(diagnostics, ["verifier command timed out"])
         except BaseException:
             # Not just TimeoutExpired: a KeyboardInterrupt or other
@@ -325,7 +299,7 @@ def main() -> int:
             # or the verifier command (and whatever it backgrounds) keeps
             # running -- and can keep mutating the candidate -- detached from
             # this process after it's gone.
-            _kill_process_group()
+            process_group.kill_process_group(popen)
             raise
     proc = subprocess.CompletedProcess(
         list(manifest.command), popen.returncode, stdout, stderr

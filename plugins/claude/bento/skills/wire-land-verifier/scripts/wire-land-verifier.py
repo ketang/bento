@@ -30,19 +30,25 @@ Subcommands: discover, draft, validate, apply.
 from __future__ import annotations
 
 import argparse
-import contextlib
 import hashlib
 import json
 import os
 import re
 import shlex
 import shutil
-import signal
 import stat
 import subprocess
 import sys
 from pathlib import Path
 from typing import NamedTuple
+
+SCRIPT_DIR = Path(__file__).resolve().parent
+# process_group lives beside the launch-work scripts; both skills sit under a
+# shared skills/ root in the catalog and in every generated plugin.
+_LAUNCH_SCRIPTS = SCRIPT_DIR.parents[1] / "launch-work" / "scripts"
+sys.path.insert(0, str(_LAUNCH_SCRIPTS))
+
+import process_group  # type: ignore  # noqa: E402
 
 MANIFEST_REL = Path(".agent-plugins/bento/bento/land-work/verifier.json")
 DEFAULT_WRAPPER_REL = "scripts/land-work-verifier.py"
@@ -536,23 +542,40 @@ def _strip_one_prefix(argv: list[str]) -> list[list[str]] | None:
     return results
 
 
+def _walk_primary_chain(argv: list[str]) -> tuple[list[str], list[str], list[list[str]]]:
+    """Walk argv's primary prefix reading once.
+
+    Returns (names, final_argv, speculative): ``names`` is the basename of
+    each prefix executable peeled off, ending with the basename of the
+    resolved command; ``final_argv`` is that resolved command; ``speculative``
+    collects the alternate branches `_strip_one_prefix` returned along the
+    way (readings of an unknown flag). Shared by `prefix_resolutions` (which
+    needs all three) and `_primary_chain_executables` (which needs only
+    ``names``) so a single walk backs both views.
+    """
+    # No iteration cap: every layer returns a strict suffix of its input, so a
+    # chain of prefixes terminates on its own. A fixed budget just meant
+    # `env env env ... true` walked out the far side unscreened.
+    names: list[str] = []
+    current = list(argv)
+    speculative: list[list[str]] = []
+    while current:
+        names.append(Path(current[0]).name)
+        stripped = _strip_one_prefix(current)
+        if stripped is None:
+            break
+        current, *rest = stripped
+        speculative.extend(rest)
+    return names, current, speculative
+
+
 def prefix_resolutions(argv: list[str]) -> list[list[str]]:
     """Every plausible real command behind a chain of prefix commands.
 
     ``resolutions[0]`` is the primary reading -- the one the table fully
     describes. Any others are speculative readings of an unknown flag.
     """
-    # No iteration cap: every layer returns a strict suffix of its input, so a
-    # chain of prefixes terminates on its own. A fixed budget just meant
-    # `env env env ... true` walked out the far side unscreened.
-    primary: list[str] = list(argv)
-    speculative: list[list[str]] = []
-    while primary:
-        stripped = _strip_one_prefix(primary)
-        if stripped is None:
-            break
-        primary, *rest = stripped
-        speculative.extend(rest)
+    _, primary, speculative = _walk_primary_chain(argv)
     resolved = [primary]
     for candidate in speculative[:8]:
         while candidate:
@@ -577,14 +600,7 @@ def _primary_chain_executables(argv: list[str]) -> list[str]:
     run`, `hatch run`, ...) sits anywhere ahead of the final command, since
     that changes how -- or whether -- its executable should be resolved.
     """
-    names: list[str] = []
-    current = list(argv)
-    while current:
-        names.append(Path(current[0]).name)
-        stripped = _strip_one_prefix(current)
-        if stripped is None:
-            break
-        current = stripped[0]
+    names, _, _ = _walk_primary_chain(argv)
     return names
 
 
@@ -1175,44 +1191,6 @@ def _trailing_json(stdout: str) -> dict | None:
     return None
 
 
-def _kill_process_group(proc: subprocess.Popen) -> None:
-    """Kill the whole process group `start_new_session=True` created, and reap it.
-
-    Covers every exit from `communicate()`, not just a reported timeout: a
-    KeyboardInterrupt or other interruption must still reach the group, or a
-    gate that backgrounds work keeps running -- and can keep mutating the
-    repo -- detached from this process after it's gone.
-    """
-    try:
-        os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
-    except ProcessLookupError:
-        pass
-    proc.communicate()  # reap; the group is dead so this cannot hang
-
-
-@contextlib.contextmanager
-def _reap_group_on_sigterm(proc: subprocess.Popen):
-    """Kill the process group on SIGTERM too, not just our own exceptions.
-
-    `start_new_session=True` detaches `proc` into its own process group, so
-    an external SIGTERM aimed only at *this* process's PID -- not a
-    foreground Ctrl-C, which the terminal sends to the whole group -- never
-    reaches it on its own. A Python exception handler cannot catch that
-    either: the default SIGTERM disposition terminates the process before any
-    `except`/`finally` gets a chance to run. Installing a handler for the
-    duration of the call is what actually closes the gap.
-    """
-    def _on_term(signum: int, _frame: object) -> None:
-        _kill_process_group(proc)
-        raise SystemExit(128 + signum)
-
-    previous = signal.signal(signal.SIGTERM, _on_term)
-    try:
-        yield
-    finally:
-        signal.signal(signal.SIGTERM, previous)
-
-
 def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
     staging, state = _read_state(worktree)
     runner = staging / "wrapper"
@@ -1276,11 +1254,11 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
             text=True,
             start_new_session=True,
         )
-        with _reap_group_on_sigterm(proc):
+        with process_group.reap_group_on_sigterm(proc):
             try:
                 stdout, stderr = proc.communicate(timeout=timeout)
             except subprocess.TimeoutExpired:
-                _kill_process_group(proc)
+                process_group.kill_process_group(proc)
                 return {
                     "schema_valid": False,
                     "error": f"verifier did not finish within {timeout}s",
@@ -1290,7 +1268,7 @@ def validate(worktree: Path, timeout: int) -> tuple[dict, int]:
                 # in-process interruption during communicate() must still
                 # reach the group, or the gate (and whatever it backgrounds)
                 # keeps running detached from this process after it's gone.
-                _kill_process_group(proc)
+                process_group.kill_process_group(proc)
                 raise
         result = subprocess.CompletedProcess(
             [str(scratch)], proc.returncode, stdout, stderr
