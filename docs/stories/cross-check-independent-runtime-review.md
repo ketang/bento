@@ -51,7 +51,5 @@ An agent finishes work on a branch and is about to consider it complete. Cross-c
 ### Tests
 - `tests/cross_check/test_cross_check.py`
 
-### Surface
-
 ### Docs
 - `catalog/skills/cross-check/SKILL.md`
