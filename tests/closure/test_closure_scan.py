@@ -1037,5 +1037,107 @@ class EncodeClaudeProjectPathTest(unittest.TestCase):
         )
 
 
+class UntrackedDebrisScanTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        write_file(self.repo / "README.md", "root\n")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "initial commit")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def run_scan(self, *args: str) -> dict:
+        result = run([str(SCRIPT), "--no-liveness", *args], self.repo)
+        return json.loads(result.stdout)
+
+    def _age(self, path: Path, days: float) -> None:
+        old = time.time() - days * 86400
+        os.utime(path, (old, old))
+
+    def test_flags_large_old_named_directory(self) -> None:
+        debris_dir = self.repo / "scratch-old"
+        debris_dir.mkdir()
+        (debris_dir / "blob.bin").write_bytes(b"0" * (2 * 1024 * 1024))
+        self._age(debris_dir, 20)
+
+        scan = self.run_scan()
+        findings = scan["untracked_debris"]["findings"]
+        self.assertEqual(len(findings), 1)
+        finding = findings[0]
+        self.assertEqual(finding["path"], "scratch-old/")
+        self.assertTrue(finding["is_dir"])
+        self.assertIn("size_threshold", finding["reasons"])
+        self.assertIn("age_threshold", finding["reasons"])
+        self.assertIn("dead_dir_suffix", finding["reasons"])
+        self.assertIn("delete", finding["suggested_action"])
+
+    def test_ignores_small_recent_untracked_file(self) -> None:
+        write_file(self.repo / "scratch.txt", "hi\n")
+
+        scan = self.run_scan()
+        self.assertEqual(scan["untracked_debris"]["findings"], [])
+
+    def test_handoff_and_plans_name_patterns(self) -> None:
+        write_file(self.repo / "session-handoff.md", "notes\n")
+        self._age(self.repo / "session-handoff.md", 1)
+        # docs/ must already be tracked so "docs/plans/" itself is the
+        # reported untracked entry, matching how `git status` reports a new
+        # subdirectory under an existing tracked directory.
+        (self.repo / "docs").mkdir()
+        write_file(self.repo / "docs" / "README.md", "docs\n")
+        git(self.repo, "add", "docs/README.md")
+        git(self.repo, "commit", "-m", "add docs")
+        (self.repo / "docs" / "plans").mkdir()
+        write_file(self.repo / "docs" / "plans" / "stale.md", "plan\n")
+
+        scan = self.run_scan()
+        paths = {f["path"]: f for f in scan["untracked_debris"]["findings"]}
+        self.assertIn("session-handoff.md", paths)
+        self.assertIn("handoff_doc", paths["session-handoff.md"]["reasons"])
+        self.assertIn("docs/plans/", paths)
+        self.assertIn("untracked_docs_plans", paths["docs/plans/"]["reasons"])
+
+    def test_root_executable_flagged(self) -> None:
+        exe = self.repo / "bento-tool"
+        exe.write_bytes(b"\x7fELF")
+        exe.chmod(0o755)
+
+        scan = self.run_scan()
+        paths = {f["path"]: f for f in scan["untracked_debris"]["findings"]}
+        self.assertIn("bento-tool", paths)
+        self.assertIn("root_executable", paths["bento-tool"]["reasons"])
+
+    def test_thresholds_are_overridable(self) -> None:
+        write_file(self.repo / "scratch.txt", "x" * 100)
+        self._age(self.repo / "scratch.txt", 1)
+
+        scan = self.run_scan("--debris-min-size-mb", "0.00001", "--debris-min-age-days", "0")
+        paths = {f["path"] for f in scan["untracked_debris"]["findings"]}
+        self.assertIn("scratch.txt", paths)
+
+    def test_no_debris_scan_flag_skips_it(self) -> None:
+        (self.repo / "big.bin").write_bytes(b"0" * (2 * 1024 * 1024))
+        self._age(self.repo / "big.bin", 20)
+
+        scan = self.run_scan("--no-debris-scan")
+        self.assertIsNone(scan["untracked_debris"])
+
+    def test_never_deletes_flagged_paths(self) -> None:
+        debris_dir = self.repo / "scratch-old"
+        debris_dir.mkdir()
+        (debris_dir / "blob.bin").write_bytes(b"0" * (2 * 1024 * 1024))
+        self._age(debris_dir, 20)
+
+        self.run_scan()
+        self.assertTrue(debris_dir.exists())
+
+
 if __name__ == "__main__":
     unittest.main()
