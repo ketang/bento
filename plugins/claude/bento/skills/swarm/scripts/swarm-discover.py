@@ -6,10 +6,9 @@ import sys
 from pathlib import Path
 
 from git_state import detect_checkout_root, detect_primary_branch, is_linked_worktree, primary_checkout_root
+from _agent_plugins_bootstrap import ensure_agent_plugins_resolver_importable
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-_LAUNCH_SCRIPTS = SCRIPT_DIR.parents[1] / "launch-work" / "scripts"
-sys.path.insert(0, str(_LAUNCH_SCRIPTS))
+ensure_agent_plugins_resolver_importable()
 import agent_plugins_resolver  # noqa: E402
 
 
