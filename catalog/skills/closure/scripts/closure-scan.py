@@ -685,6 +685,145 @@ def assess_liveness(
 
 
 # ---------------------------------------------------------------------------
+# Untracked debris scan
+# ---------------------------------------------------------------------------
+
+DEFAULT_DEBRIS_MIN_SIZE_MB = 1.0
+DEFAULT_DEBRIS_MIN_AGE_DAYS = 14
+
+DEBRIS_NAME_PATTERNS: list[tuple[str, re.Pattern[str]]] = [
+    ("dead_dir_suffix", re.compile(r"(-anymore|-old|-backup)/?$")),
+    ("handoff_doc", re.compile(r"-handoff\.md$")),
+    ("log_doc", re.compile(r"-log\.md$")),
+]
+
+
+def _dir_size_bytes(path: Path) -> int:
+    total = 0
+    for entry in path.rglob("*"):
+        try:
+            if entry.is_file() and not entry.is_symlink():
+                total += entry.stat().st_size
+        except OSError:
+            pass
+    return total
+
+
+def _debris_reasons(
+    rel_path: str,
+    abs_path: Path,
+    is_dir: bool,
+    size_bytes: int,
+    age_days: float,
+    min_size_bytes: int,
+    min_age_days: float,
+) -> list[str]:
+    reasons: list[str] = []
+    if size_bytes >= min_size_bytes:
+        reasons.append("size_threshold")
+    if age_days >= min_age_days:
+        reasons.append("age_threshold")
+
+    basename = abs_path.name
+    for tag, pattern in DEBRIS_NAME_PATTERNS:
+        haystack = basename + ("/" if is_dir else "")
+        if pattern.search(haystack):
+            reasons.append(tag)
+
+    if rel_path.startswith("docs/plans/"):
+        reasons.append("untracked_docs_plans")
+
+    if not is_dir and "/" not in rel_path.rstrip("/"):
+        try:
+            if os.access(abs_path, os.X_OK):
+                reasons.append("root_executable")
+        except OSError:
+            pass
+
+    return reasons
+
+
+def _suggest_disposition(reasons: list[str]) -> str:
+    name_reasons = {
+        "dead_dir_suffix", "handoff_doc", "log_doc",
+        "untracked_docs_plans", "root_executable",
+    }
+    if any(r in name_reasons for r in reasons):
+        return "delete (matches a known residue pattern; verify contents before removing)"
+    return "commit or gitignore (untracked and large/old; confirm intent before deciding)"
+
+
+def scan_untracked_debris(
+    repo_root: Path,
+    min_size_mb: float,
+    min_age_days: float,
+    now_ts: float | None = None,
+) -> dict[str, object]:
+    """
+    Report-only scan for untracked paths in the primary checkout that look
+    like abandoned artifact debris rather than active git state (closure's
+    branch/worktree/stash scan does not cover this). Never deletes anything.
+
+    Flags an untracked entry (top-level git status entries, so an untracked
+    directory is reported as one entry, not recursed into) when it is >=
+    min_size_mb, older than min_age_days (by the entry's own mtime), or its
+    name matches a known residue pattern (dead-tracker-style dir suffixes,
+    *-handoff.md, *-log.md, untracked docs/plans/*, or an executable file at
+    repo root).
+    """
+    if now_ts is None:
+        now_ts = time.time()
+    min_size_bytes = int(min_size_mb * 1024 * 1024)
+
+    raw = git_stdout(
+        "status", "--porcelain=v1", "--untracked-files=normal", cwd=repo_root,
+    )
+    findings: list[dict[str, object]] = []
+
+    for line in raw.splitlines():
+        if not line.startswith("?? "):
+            continue
+        rel_path = line[3:]
+        abs_path = repo_root / rel_path.rstrip("/")
+
+        try:
+            st = abs_path.lstat()
+        except OSError:
+            continue
+
+        is_dir = abs_path.is_dir() and not abs_path.is_symlink()
+        size_bytes = _dir_size_bytes(abs_path) if is_dir else st.st_size
+        age_days = max(0.0, (now_ts - st.st_mtime) / 86400)
+
+        reasons = _debris_reasons(
+            rel_path, abs_path, is_dir, size_bytes, age_days,
+            min_size_bytes, min_age_days,
+        )
+        if not reasons:
+            continue
+
+        findings.append(
+            {
+                "path": rel_path,
+                "is_dir": is_dir,
+                "size_bytes": size_bytes,
+                "age_days": round(age_days, 1),
+                "reasons": reasons,
+                "suggested_action": _suggest_disposition(reasons),
+            }
+        )
+
+    findings.sort(key=lambda f: f["size_bytes"], reverse=True)  # type: ignore[return-value,arg-type]
+
+    return {
+        "read_only": True,
+        "min_size_mb": min_size_mb,
+        "min_age_days": min_age_days,
+        "findings": findings,
+    }
+
+
+# ---------------------------------------------------------------------------
 # Branch classification
 # ---------------------------------------------------------------------------
 
@@ -1379,6 +1518,29 @@ def parse_args() -> argparse.Namespace:
             "Defaults to the detected tracker's convention."
         ),
     )
+    parser.add_argument(
+        "--no-debris-scan",
+        action="store_true",
+        help="skip the untracked-artifact-debris scan",
+    )
+    parser.add_argument(
+        "--debris-min-size-mb",
+        type=float,
+        default=DEFAULT_DEBRIS_MIN_SIZE_MB,
+        help=(
+            "flag untracked entries at or above this size in MB "
+            f"(default: {DEFAULT_DEBRIS_MIN_SIZE_MB})"
+        ),
+    )
+    parser.add_argument(
+        "--debris-min-age-days",
+        type=float,
+        default=DEFAULT_DEBRIS_MIN_AGE_DAYS,
+        help=(
+            "flag untracked entries older than this many days "
+            f"(default: {DEFAULT_DEBRIS_MIN_AGE_DAYS})"
+        ),
+    )
     return parser.parse_args()
 
 
@@ -1468,6 +1630,17 @@ def main() -> int:
                     branch, primary_branch, tracker, issue_pattern, repo_root,
                 )
 
+        untracked_debris = (
+            None
+            if args.no_debris_scan
+            else scan_untracked_debris(
+                repo_root,
+                args.debris_min_size_mb,
+                args.debris_min_age_days,
+                now_ts=now_ts,
+            )
+        )
+
         summary = build_summary(branches, enriched_worktrees, stashes, working_tree)
         applied_actions: list[dict[str, str]] = []
         skipped_actions: list[dict[str, str]] = []
@@ -1511,6 +1684,7 @@ def main() -> int:
             "working_tree": working_tree,
             "stashes": stashes,
             "local_branches": branches,
+            "untracked_debris": untracked_debris,
             "summary": summary,
             "apply_mode": args.apply,
             "applied_actions": applied_actions,

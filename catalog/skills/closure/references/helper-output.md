@@ -145,6 +145,51 @@ gh `#?([0-9]+)`. Override with `--issue-pattern`.
 Correlation produces signals only — no verdict, and no new `--apply` mode.
 Heuristic deletion belongs to the agent + user, not the helper.
 
+## Untracked Debris Scan (`untracked_debris`)
+
+Always runs unless `--no-debris-scan` is passed. Read-only — it has no
+`--apply` mode and never deletes anything. Scoped to top-level entries from
+`git status --porcelain=v1 --untracked-files=normal`, so an untracked
+directory is one finding (with its size summed recursively), not one finding
+per file inside it.
+
+```json
+"untracked_debris": {
+  "read_only": true,
+  "min_size_mb": 1.0,
+  "min_age_days": 14,
+  "findings": [
+    {
+      "path": "some-dir-old/",
+      "is_dir": true,
+      "size_bytes": 2097152,
+      "age_days": 20.4,
+      "reasons": ["size_threshold", "age_threshold", "dead_dir_suffix"],
+      "suggested_action": "delete (matches a known residue pattern; verify contents before removing)"
+    }
+  ]
+}
+```
+
+An entry is included when any `reasons` tag applies:
+
+| Tag | Meaning |
+|---|---|
+| `size_threshold` | size in bytes >= `min_size_mb` (default 1MB) |
+| `age_threshold` | age in days >= `min_age_days` (default 14), by the entry's own mtime |
+| `dead_dir_suffix` | directory basename ends `-anymore`, `-old`, or `-backup` |
+| `handoff_doc` | file basename ends `-handoff.md` |
+| `log_doc` | file basename ends `-log.md` |
+| `untracked_docs_plans` | path is under `docs/plans/` and untracked |
+| `root_executable` | a file directly at repo root with the executable bit set |
+
+`suggested_action` is a heuristic, not a verdict: a name-pattern match (any
+tag other than `size_threshold`/`age_threshold` alone) suggests `delete`
+after verifying contents; a size/age-only match suggests `commit or
+gitignore`, since the helper cannot tell intentional in-progress work from
+abandoned debris by size or age alone. Override the thresholds with
+`--debris-min-size-mb` and `--debris-min-age-days`.
+
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware
