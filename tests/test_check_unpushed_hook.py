@@ -58,6 +58,22 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self._git(repo, "push", "-q", "-u", "origin", branch)
         return remote
 
+    def _write_beads_state(self, repo: Path, relative_path: str) -> Path:
+        path = repo / relative_path
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("state\n", encoding="utf-8")
+        return path
+
+    def _commit_all(self, repo: Path, message: str) -> None:
+        self._git(repo, "add", ".")
+        self._git(repo, "commit", "-qm", message)
+
+    def _seed_beads_operational_paths(self, repo: Path) -> None:
+        self._write_beads_state(repo, ".beads/interactions.jsonl")
+        self._write_beads_state(repo, ".beads/backup/backup_state.json")
+        self._commit_all(repo, "seed beads state")
+        self._git(repo, "push", "-q")
+
     def _run(
         self,
         *,
@@ -148,6 +164,73 @@ class CheckUnpushedHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2, msg=result.stderr)
         self.assertIn("uncommitted changes", result.stderr)
+        self.assertIn("1 unpushed commit", result.stderr)
+
+    def test_allows_dirty_beads_operational_state(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._seed_beads_operational_paths(repo)
+        self._write_beads_state(repo, ".beads/interactions.jsonl").write_text(
+            "changed\n", encoding="utf-8"
+        )
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_blocks_mixed_dirty_beads_and_source_state(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._seed_beads_operational_paths(repo)
+        self._write_beads_state(repo, ".beads/backup/backup_state.json").write_text(
+            "changed\n", encoding="utf-8"
+        )
+        (repo / "README.md").write_text("changed\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_allows_ahead_beads_operational_state(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._seed_beads_operational_paths(repo)
+        self._write_beads_state(repo, ".beads/interactions.jsonl").write_text(
+            "changed\n", encoding="utf-8"
+        )
+        self._commit_all(repo, "Beads: sync tracker state")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_blocks_mixed_ahead_beads_and_source_state(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._seed_beads_operational_paths(repo)
+        self._write_beads_state(repo, ".beads/interactions.jsonl").write_text(
+            "changed\n", encoding="utf-8"
+        )
+        self._commit_all(repo, "Beads: sync tracker state")
+        (repo / "README.md").write_text("changed\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "source change")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("2 unpushed commits", result.stderr)
+
+    def test_blocks_empty_ahead_commit(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._git(repo, "commit", "--allow-empty", "-qm", "empty commit")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
         self.assertIn("1 unpushed commit", result.stderr)
 
     # --- Allowing cases: exit 0, silent ---

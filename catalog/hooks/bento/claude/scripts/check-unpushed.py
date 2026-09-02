@@ -3,7 +3,10 @@
 
 Blocks (exit 2) when the session cwd's git repo has a dirty working tree
 (``git status --porcelain`` non-empty) or has local commits ahead of its
-upstream (``git rev-list @{u}..HEAD --count`` > 0). The blocking reason on
+upstream (``git rev-list @{u}..HEAD --count`` > 0). The exception is the two
+Beads operational projections that normal tracker synchronization updates:
+``.beads/backup/backup_state.json`` and ``.beads/interactions.jsonl``. They
+do not represent unlanded repository work on their own. The blocking reason on
 stderr names the branch and the counts so it is actionable.
 
 A branch with no upstream is treated as a warning, not a block: worktree flows
@@ -28,6 +31,14 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+
+OPERATIONAL_BEADS_PATHS = frozenset(
+    {
+        ".beads/backup/backup_state.json",
+        ".beads/interactions.jsonl",
+    }
+)
 
 
 def _git(root: str, *args: str) -> subprocess.CompletedProcess:
@@ -185,6 +196,41 @@ def is_dirty(root: str) -> bool:
     return bool(result.stdout.strip())
 
 
+def has_only_operational_beads_changes(root: str) -> bool:
+    """Whether every dirty record is a tracked Beads operational projection.
+
+    Porcelain v1 with ``-z`` puts a rename or copy destination in the first
+    record and its source in the next one. Both paths must be allowlisted.
+    Untracked changes and an unparseable status fail closed.
+    """
+    result = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    if result.returncode != 0 or not result.stdout:
+        return False
+
+    records = result.stdout.split("\0")
+    index = 0
+    saw_change = False
+    while index < len(records):
+        record = records[index]
+        index += 1
+        if not record:
+            continue
+        if len(record) < 4 or record[2] != " ":
+            return False
+        status, path = record[:2], record[3:]
+        if status == "??" or path not in OPERATIONAL_BEADS_PATHS:
+            return False
+        saw_change = True
+        if "R" in status or "C" in status:
+            if index >= len(records):
+                return False
+            source_path = records[index]
+            index += 1
+            if not source_path or source_path not in OPERATIONAL_BEADS_PATHS:
+                return False
+    return saw_change
+
+
 def has_upstream(root: str) -> bool:
     result = _git(root, "rev-parse", "--abbrev-ref", "--symbolic-full-name", "@{u}")
     return result.returncode == 0
@@ -198,6 +244,38 @@ def ahead_count(root: str) -> int:
         return int(result.stdout.strip())
     except ValueError:
         return 0
+
+
+def has_only_operational_beads_commits(root: str) -> bool:
+    """Whether every commit ahead of upstream changes only Beads projections.
+
+    ``-m`` compares a merge against every parent, so a source change hidden by
+    one parent still keeps the Stop hook blocking. Any Git failure fails closed.
+    """
+    commits = _git(root, "rev-list", "@{u}..HEAD")
+    if commits.returncode != 0:
+        return False
+    commit_ids = [commit for commit in commits.stdout.splitlines() if commit]
+    if not commit_ids:
+        return False
+    for commit_id in commit_ids:
+        changes = _git(
+            root,
+            "diff-tree",
+            "--no-commit-id",
+            "-r",
+            "-m",
+            "--root",
+            "--name-only",
+            "-z",
+            commit_id,
+        )
+        if changes.returncode != 0:
+            return False
+        paths = [path for path in changes.stdout.split("\0") if path]
+        if not paths or any(path not in OPERATIONAL_BEADS_PATHS for path in paths):
+            return False
+    return True
 
 
 def block_reason(hook_input: dict) -> str | None:
@@ -223,7 +301,7 @@ def block_reason(hook_input: dict) -> str | None:
         return None
 
     problems: list[str] = []
-    if is_dirty(root):
+    if is_dirty(root) and not has_only_operational_beads_changes(root):
         problems.append("uncommitted changes")
 
     # A missing upstream is a warning, not a block, so worktree flows that have
@@ -231,7 +309,7 @@ def block_reason(hook_input: dict) -> str | None:
     # an upstream exists.
     if has_upstream(root):
         ahead = ahead_count(root)
-        if ahead > 0:
+        if ahead > 0 and not has_only_operational_beads_commits(root):
             noun = "commit" if ahead == 1 else "commits"
             problems.append(f"{ahead} unpushed {noun}")
 
