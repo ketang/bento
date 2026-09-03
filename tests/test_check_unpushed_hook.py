@@ -6,14 +6,9 @@ from pathlib import Path
 
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
-HOOK_SCRIPT = (
-    REPO_ROOT
-    / "catalog"
-    / "hooks"
-    / "bento"
-    / "claude"
-    / "scripts"
-    / "check-unpushed.py"
+HOOK_SCRIPTS = (
+    REPO_ROOT / "catalog" / "hooks" / "bento" / "claude" / "scripts" / "check-unpushed.py",
+    REPO_ROOT / "catalog" / "hooks" / "bento" / "codex" / "scripts" / "check-unpushed.py",
 )
 
 
@@ -90,14 +85,22 @@ class CheckUnpushedHookTest(unittest.TestCase):
         if stop_hook_active:
             payload["stop_hook_active"] = True
         stdin = json.dumps(payload) + "\n"
-        return subprocess.run(
-            [str(HOOK_SCRIPT)],
-            input=stdin,
-            cwd=cwd,
-            capture_output=True,
-            text=True,
-            check=False,
-        )
+        results = [
+            subprocess.run(
+                [str(script)],
+                input=stdin,
+                cwd=cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            for script in HOOK_SCRIPTS
+        ]
+        reference = results[0]
+        for script, result in zip(HOOK_SCRIPTS[1:], results[1:]):
+            self.assertEqual(result.returncode, reference.returncode, script)
+            self.assertEqual(result.stderr, reference.stderr, script)
+        return reference
 
     # --- Blocking cases: exit exactly 2 (not 1 — exit 1 is non-blocking) ---
 

@@ -61,6 +61,16 @@ class CodexInstallerTest(unittest.TestCase):
         self.assertEqual(len(bento_cache_versions), 1)
         self.assertEqual((bento_cache_versions[0] / "README.txt").read_text(encoding="utf-8"), "bento\n")
         self.assertTrue((bento_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
+        installed_hook = bento_cache_versions[0] / "hooks" / "scripts" / "check-unpushed.py"
+        self.assertTrue(installed_hook.exists())
+        self.assertTrue(os.access(installed_hook, os.X_OK))
+        installed_hooks = json.loads(
+            (bento_cache_versions[0] / "hooks" / "hooks.json").read_text(encoding="utf-8")
+        )
+        self.assertEqual(
+            installed_hooks["hooks"]["Stop"][0]["hooks"][0]["command"],
+            "${PLUGIN_ROOT}/hooks/scripts/check-unpushed.py",
+        )
         self.assertFalse((codex_cache_root / "bugshot").exists())
         self.assertFalse((codex_cache_root / "trackers").exists())
         config_text = codex_config_path.read_text(encoding="utf-8")
@@ -300,6 +310,31 @@ class CodexInstallerTest(unittest.TestCase):
             )
             (plugin_dir / "README.txt").write_text(f"{name}\n", encoding="utf-8")
             if name == "bento":
+                hook_script = plugin_dir / "hooks" / "scripts" / "check-unpushed.py"
+                hook_script.parent.mkdir(parents=True, exist_ok=True)
+                hook_script.write_text("#!/usr/bin/env python3\n", encoding="utf-8")
+                hook_script.chmod(0o755)
+                hooks_json = plugin_dir / "hooks" / "hooks.json"
+                hooks_json.write_text(
+                    json.dumps(
+                        {
+                            "hooks": {
+                                "Stop": [
+                                    {
+                                        "hooks": [
+                                            {
+                                                "type": "command",
+                                                "command": "${PLUGIN_ROOT}/hooks/scripts/check-unpushed.py",
+                                            }
+                                        ]
+                                    }
+                                ]
+                            }
+                        }
+                    )
+                    + "\n",
+                    encoding="utf-8",
+                )
                 handoff_template = (
                     plugin_dir
                     / "skills"

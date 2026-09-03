@@ -263,6 +263,9 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(codex_manifest["hooks"], "./hooks/hooks.json")
         self.assertTrue((codex_bento_hooks / "scripts" / "permission-request.py").exists())
         self.assertTrue((codex_bento_hooks / "scripts" / "seed-agent-plugins.py").exists())
+        codex_stop_hook = codex_bento_hooks / "scripts" / "check-unpushed.py"
+        self.assertTrue(codex_stop_hook.exists())
+        self.assertTrue(os.access(codex_stop_hook, os.X_OK))
         self.assertFalse((codex_bento_hooks / "scripts" / "auto-allow.py").exists())
         self.assertFalse((codex_bento_hooks / "scripts" / "ensure-worktree-permissions.py").exists())
         # bento-gs7: the register script writes to ~/.claude/settings.json
@@ -293,6 +296,15 @@ class BuildPluginsTest(unittest.TestCase):
                 ),
             )
         self.assertIn("PermissionRequest", codex_hooks["hooks"])
+        self.assertIn("Stop", codex_hooks["hooks"])
+        self.assertEqual(
+            [
+                hook["command"]
+                for entry in codex_hooks["hooks"]["Stop"]
+                for hook in entry["hooks"]
+            ],
+            ["${PLUGIN_ROOT}/hooks/scripts/check-unpushed.py"],
+        )
         self.assertIn(
             "${PLUGIN_ROOT}/hooks/scripts/permission-request.py bento ${PLUGIN_ROOT}",
             [
