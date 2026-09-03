@@ -47,8 +47,6 @@ A maintainer asks an agent to audit their repository for quality and correctness
 ### Tests
 - `tests/audit/test_audit_discover.py`
 
-### Surface
-
 ### Docs
 - `catalog/skills/audit/SKILL.md`
 - `catalog/skills/audit/references/generation-rules.md`
