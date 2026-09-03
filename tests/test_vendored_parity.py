@@ -58,6 +58,13 @@ IDENTICAL_GROUPS = [
             "catalog/hooks/bento/codex/scripts/seed-agent-plugins.py",
         ],
     ),
+    (
+        "check-unpushed.py Stop hook (claude/codex)",
+        [
+            "catalog/hooks/bento/claude/scripts/check-unpushed.py",
+            "catalog/hooks/bento/codex/scripts/check-unpushed.py",
+        ],
+    ),
 ]
 
 

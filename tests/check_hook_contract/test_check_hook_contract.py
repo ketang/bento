@@ -52,20 +52,20 @@ class RealHooksComplyTest(unittest.TestCase):
 
     def test_decoy_filtering_does_not_erase_genuine_payload_reads(self) -> None:
         """Guard against the fix vacuously passing by rejecting every Python
-        hook's `cwd` read: exactly the same 8 of 18 catalog Python hooks that
+        hook's `cwd` read: exactly 9 of 19 catalog Python hooks that
         reference the payload `cwd` field before the Subscript-recursion and
         temp-variable fixes must still reference it after."""
         import ast
 
         scripts = checker.find_hook_scripts(REPO_ROOT)
         py_scripts = [p for p in scripts if p.suffix == ".py"]
-        self.assertEqual(len(py_scripts), 18)
+        self.assertEqual(len(py_scripts), 19)
         referencing = sum(
             1
             for p in py_scripts
             if checker._references_payload_cwd_ast(ast.parse(p.read_text()))
         )
-        self.assertEqual(referencing, 8)
+        self.assertEqual(referencing, 9)
 
     def test_finds_the_hook_scripts(self) -> None:
         scripts = checker.find_hook_scripts(REPO_ROOT)
