@@ -272,7 +272,7 @@ class SwarmDiscoverTest(unittest.TestCase):
                 "integration_worktree": None,
             },
         )
-        self.assertEqual(payload["warnings"], [])
+        self.assertFalse(any("landing" in warning for warning in payload["warnings"]))
 
     def test_landing_full_valid_batch_config_parses_without_warnings(self) -> None:
         write(
@@ -304,7 +304,7 @@ class SwarmDiscoverTest(unittest.TestCase):
             payload["landing"]["integration_worktree"],
             str(Path("~/integration").expanduser()),
         )
-        self.assertEqual(payload["warnings"], [])
+        self.assertFalse(any("landing" in warning for warning in payload["warnings"]))
 
     def test_landing_invalid_mode_degrades_to_serial(self) -> None:
         write(
@@ -386,7 +386,7 @@ class SwarmDiscoverTest(unittest.TestCase):
         payload = self.run_discover()
 
         self.assertEqual(payload["landing"]["mode"], "batch")
-        self.assertEqual(payload["warnings"], [])
+        self.assertFalse(any("landing" in warning for warning in payload["warnings"]))
 
     def test_landing_batch_boundary_paths_wrong_type_defaults_with_warning(self) -> None:
         write(

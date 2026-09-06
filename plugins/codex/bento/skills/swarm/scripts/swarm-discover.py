@@ -2,6 +2,9 @@
 
 import argparse
 import json
+import os
+import shlex
+import shutil
 import sys
 from pathlib import Path
 
@@ -48,6 +51,149 @@ def parse_args() -> argparse.Namespace:
 def read_config(path: Path) -> dict:
     with path.open(encoding="utf-8") as fh:
         return json.load(fh)
+
+
+LANDING_MODES = ("serial", "batch")
+LANDING_DEFAULTS: dict = {
+    "mode": "serial",
+    "full_gate": None,
+    "gate_scope": None,
+    "batch_boundary_paths": [],
+    "max_batch_size": 5,
+    "linger_minutes": 5,
+    "integration_worktree": None,
+}
+
+
+def _is_non_empty_string(value: object) -> bool:
+    return isinstance(value, str) and bool(value.strip())
+
+
+def _gate_scope_resolves(gate_scope: str, repo_root: Path) -> bool:
+    try:
+        tokens = shlex.split(gate_scope)
+    except ValueError:
+        return False
+    if not tokens:
+        return False
+    command = tokens[0]
+    if "/" in command or command.startswith("."):
+        candidate = Path(command)
+        if not candidate.is_absolute():
+            candidate = repo_root / candidate
+        return candidate.is_file() and os.access(candidate, os.X_OK)
+    return shutil.which(command) is not None
+
+
+def validate_landing_config(raw: object, repo_root: Path) -> tuple[dict | None, list[str]]:
+    """Validate and normalize the swarm-config.json `landing` block.
+
+    Fails safe: any problem that would let landing.mode: batch run without a
+    real full-gate/gate-scope command degrades the whole block to serial
+    full-gate behavior rather than silently weakening gating. Malformed
+    values for the batching-tuning fields (batch_boundary_paths,
+    max_batch_size, linger_minutes, integration_worktree) fall back to their
+    documented defaults independently, since they do not affect gate
+    strength.
+    """
+    warnings: list[str] = []
+    if raw is None:
+        return None, warnings
+    if not isinstance(raw, dict):
+        warnings.append(
+            "swarm-discover: landing config must be an object; ignoring landing block"
+        )
+        return None, warnings
+
+    result = dict(LANDING_DEFAULTS)
+
+    mode = raw.get("mode", "serial")
+    if mode not in LANDING_MODES:
+        warnings.append(
+            f"swarm-discover: invalid landing.mode {mode!r}; degrading to serial"
+        )
+        mode = "serial"
+    result["mode"] = mode
+
+    full_gate = raw.get("full_gate")
+    if full_gate is not None and not _is_non_empty_string(full_gate):
+        warnings.append(
+            "swarm-discover: landing.full_gate must be a non-empty string; ignoring"
+        )
+        full_gate = None
+    result["full_gate"] = full_gate
+
+    gate_scope = raw.get("gate_scope")
+    gate_scope_ok = True
+    if gate_scope is not None:
+        if not _is_non_empty_string(gate_scope):
+            gate_scope_ok = False
+        elif not _gate_scope_resolves(gate_scope, repo_root):
+            gate_scope_ok = False
+    result["gate_scope"] = gate_scope
+
+    if result["mode"] == "batch":
+        problems = []
+        if not full_gate:
+            problems.append("landing.full_gate is required for landing.mode: batch")
+        if gate_scope is None:
+            problems.append("landing.gate_scope is required for landing.mode: batch")
+        elif not gate_scope_ok:
+            problems.append(
+                f"landing.gate_scope {gate_scope!r} does not resolve to an executable command"
+            )
+        if problems:
+            for problem in problems:
+                warnings.append(f"swarm-discover: {problem}; degrading to serial")
+            result["mode"] = "serial"
+
+    batch_boundary_paths = raw.get("batch_boundary_paths", [])
+    if not (
+        isinstance(batch_boundary_paths, list)
+        and all(isinstance(item, str) for item in batch_boundary_paths)
+    ):
+        warnings.append(
+            "swarm-discover: landing.batch_boundary_paths must be a list of strings; using []"
+        )
+        batch_boundary_paths = []
+    result["batch_boundary_paths"] = batch_boundary_paths
+
+    max_batch_size = raw.get("max_batch_size", 5)
+    if not (
+        isinstance(max_batch_size, int)
+        and not isinstance(max_batch_size, bool)
+        and max_batch_size > 0
+    ):
+        warnings.append(
+            "swarm-discover: landing.max_batch_size must be a positive integer; using default 5"
+        )
+        max_batch_size = 5
+    result["max_batch_size"] = max_batch_size
+
+    linger_minutes = raw.get("linger_minutes", 5)
+    if not (
+        isinstance(linger_minutes, (int, float))
+        and not isinstance(linger_minutes, bool)
+        and linger_minutes >= 0
+    ):
+        warnings.append(
+            "swarm-discover: landing.linger_minutes must be a non-negative number; using default 5"
+        )
+        linger_minutes = 5
+    result["linger_minutes"] = linger_minutes
+
+    integration_worktree = raw.get("integration_worktree")
+    if integration_worktree is not None:
+        if not _is_non_empty_string(integration_worktree):
+            warnings.append(
+                "swarm-discover: landing.integration_worktree must be a non-empty string; ignoring"
+            )
+            integration_worktree = None
+        else:
+            integration_worktree = str(Path(integration_worktree).expanduser())
+    result["integration_worktree"] = integration_worktree
+
+    return result, warnings
 
 
 def resolve_teammate_config(repo_root: Path) -> Path:
@@ -137,6 +283,8 @@ def main() -> int:
     integration_branch, warnings = detect_primary_branch(repo_root)
     config_path, config, config_warnings = load_config(repo_root, args.runtime)
     warnings.extend(config_warnings)
+    landing, landing_warnings = validate_landing_config(config.get("landing"), repo_root)
+    warnings.extend(landing_warnings)
     teammate_model = None
     teammate_reasoning_effort = None
     teammate_config_path = None
@@ -162,7 +310,7 @@ def main() -> int:
         "pre_completion": config.get("pre_completion"),
         "post_land_hooks": config.get("post_land_hooks"),
         "dependency_source": config.get("dependency_source"),
-        "landing": config.get("landing"),
+        "landing": landing,
         "teammate_model": teammate_model,
         "teammate_reasoning_effort": teammate_reasoning_effort,
         "teammate_config_path": teammate_config_path,
