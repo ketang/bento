@@ -4,7 +4,7 @@ title: Wire Land Verifier Scaffolds A Real Landing Gate
 slug: wire-land-verifier-scaffold
 status: active
 authority: observed
-change_resistance: high
+change_resistance: medium
 tests_applicable: true
 locked_sections:
   - Intent
