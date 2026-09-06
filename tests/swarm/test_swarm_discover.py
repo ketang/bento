@@ -362,6 +362,20 @@ class SwarmDiscoverTest(unittest.TestCase):
         payload = self.run_discover()
 
         self.assertEqual(payload["landing"]["mode"], "serial")
+        self.assertIsNone(payload["landing"]["gate_scope"])
+        self.assertTrue(
+            any("landing.gate_scope" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_gate_scope_wrong_type_nulled_with_warning_regardless_of_mode(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "serial", "gate_scope": 42}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertIsNone(payload["landing"]["gate_scope"])
         self.assertTrue(
             any("landing.gate_scope" in warning for warning in payload["warnings"])
         )

@@ -124,12 +124,14 @@ def validate_landing_config(raw: object, repo_root: Path) -> tuple[dict | None, 
     result["full_gate"] = full_gate
 
     gate_scope = raw.get("gate_scope")
-    gate_scope_ok = True
-    if gate_scope is not None:
-        if not _is_non_empty_string(gate_scope):
-            gate_scope_ok = False
-        elif not _gate_scope_resolves(gate_scope, repo_root):
-            gate_scope_ok = False
+    if gate_scope is not None and not _is_non_empty_string(gate_scope):
+        warnings.append(
+            "swarm-discover: landing.gate_scope must be a non-empty string; ignoring"
+        )
+        gate_scope = None
+    gate_scope_resolves = gate_scope is not None and _gate_scope_resolves(
+        gate_scope, repo_root
+    )
     result["gate_scope"] = gate_scope
 
     if result["mode"] == "batch":
@@ -138,14 +140,16 @@ def validate_landing_config(raw: object, repo_root: Path) -> tuple[dict | None, 
             problems.append("landing.full_gate is required for landing.mode: batch")
         if gate_scope is None:
             problems.append("landing.gate_scope is required for landing.mode: batch")
-        elif not gate_scope_ok:
+        elif not gate_scope_resolves:
             problems.append(
                 f"landing.gate_scope {gate_scope!r} does not resolve to an executable command"
             )
+            gate_scope = None
         if problems:
             for problem in problems:
                 warnings.append(f"swarm-discover: {problem}; degrading to serial")
             result["mode"] = "serial"
+            result["gate_scope"] = gate_scope
 
     batch_boundary_paths = raw.get("batch_boundary_paths", [])
     if not (
