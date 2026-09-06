@@ -251,6 +251,228 @@ class SwarmDiscoverTest(unittest.TestCase):
                 self.assertIn(str(repo_config.resolve()), result.stderr)
                 self.assertIn(expected_error, result.stderr)
 
+    def test_landing_absent_reports_none(self) -> None:
+        payload = self.run_discover()
+        self.assertIsNone(payload["landing"])
+
+    def test_landing_defaults_fill_in_when_only_mode_given(self) -> None:
+        write(self.repo / "swarm-config.json", json.dumps({"landing": {"mode": "serial"}}))
+
+        payload = self.run_discover()
+
+        self.assertEqual(
+            payload["landing"],
+            {
+                "mode": "serial",
+                "full_gate": None,
+                "gate_scope": None,
+                "batch_boundary_paths": [],
+                "max_batch_size": 5,
+                "linger_minutes": 5,
+                "integration_worktree": None,
+            },
+        )
+        self.assertFalse(any("landing" in warning for warning in payload["warnings"]))
+
+    def test_landing_full_valid_batch_config_parses_without_warnings(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps(
+                {
+                    "landing": {
+                        "mode": "batch",
+                        "full_gate": "make gate",
+                        "gate_scope": "git",
+                        "batch_boundary_paths": ["api/migrations/**"],
+                        "max_batch_size": 3,
+                        "linger_minutes": 2,
+                        "integration_worktree": "~/integration",
+                    }
+                }
+            ),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["mode"], "batch")
+        self.assertEqual(payload["landing"]["full_gate"], "make gate")
+        self.assertEqual(payload["landing"]["gate_scope"], "git")
+        self.assertEqual(payload["landing"]["batch_boundary_paths"], ["api/migrations/**"])
+        self.assertEqual(payload["landing"]["max_batch_size"], 3)
+        self.assertEqual(payload["landing"]["linger_minutes"], 2)
+        self.assertEqual(
+            payload["landing"]["integration_worktree"],
+            str(Path("~/integration").expanduser()),
+        )
+        self.assertFalse(any("landing" in warning for warning in payload["warnings"]))
+
+    def test_landing_invalid_mode_degrades_to_serial(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "parallel"}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["mode"], "serial")
+        self.assertTrue(
+            any("landing.mode" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_batch_mode_missing_full_gate_degrades_to_serial(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "batch", "gate_scope": "git"}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["mode"], "serial")
+        self.assertTrue(
+            any("landing.full_gate" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_batch_mode_missing_gate_scope_degrades_to_serial(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "batch", "full_gate": "make gate"}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["mode"], "serial")
+        self.assertTrue(
+            any("landing.gate_scope" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_batch_mode_unresolvable_gate_scope_degrades_to_serial(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps(
+                {
+                    "landing": {
+                        "mode": "batch",
+                        "full_gate": "make gate",
+                        "gate_scope": "scripts/does-not-exist.sh",
+                    }
+                }
+            ),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["mode"], "serial")
+        self.assertIsNone(payload["landing"]["gate_scope"])
+        self.assertTrue(
+            any("landing.gate_scope" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_gate_scope_wrong_type_nulled_with_warning_regardless_of_mode(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "serial", "gate_scope": 42}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertIsNone(payload["landing"]["gate_scope"])
+        self.assertTrue(
+            any("landing.gate_scope" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_batch_mode_accepts_repo_relative_executable_gate_scope(self) -> None:
+        script = self.repo / "scripts" / "gate-scope.sh"
+        write(script, "#!/bin/sh\necho ok\n")
+        script.chmod(0o755)
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps(
+                {
+                    "landing": {
+                        "mode": "batch",
+                        "full_gate": "make gate",
+                        "gate_scope": "scripts/gate-scope.sh",
+                    }
+                }
+            ),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["mode"], "batch")
+        self.assertFalse(any("landing" in warning for warning in payload["warnings"]))
+
+    def test_landing_batch_boundary_paths_wrong_type_defaults_with_warning(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "serial", "batch_boundary_paths": "not-a-list"}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["batch_boundary_paths"], [])
+        self.assertTrue(
+            any("landing.batch_boundary_paths" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_max_batch_size_non_positive_defaults_with_warning(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "serial", "max_batch_size": 0}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["max_batch_size"], 5)
+        self.assertTrue(
+            any("landing.max_batch_size" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_linger_minutes_negative_defaults_with_warning(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "serial", "linger_minutes": -1}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["linger_minutes"], 5)
+        self.assertTrue(
+            any("landing.linger_minutes" in warning for warning in payload["warnings"])
+        )
+
+    def test_landing_integration_worktree_tilde_expanded(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "serial", "integration_worktree": "~/wt"}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(
+            payload["landing"]["integration_worktree"],
+            str(Path("~/wt").expanduser()),
+        )
+
+    def test_landing_integration_worktree_usable_independently_of_mode(self) -> None:
+        write(
+            self.repo / "swarm-config.json",
+            json.dumps({"landing": {"mode": "serial", "integration_worktree": "/tmp/integration"}}),
+        )
+
+        payload = self.run_discover()
+
+        self.assertEqual(payload["landing"]["mode"], "serial")
+        self.assertEqual(payload["landing"]["integration_worktree"], "/tmp/integration")
+
+    def test_landing_non_object_is_ignored_with_warning(self) -> None:
+        write(self.repo / "swarm-config.json", json.dumps({"landing": ["not", "an", "object"]}))
+
+        payload = self.run_discover()
+
+        self.assertIsNone(payload["landing"])
+        self.assertTrue(any("landing" in warning for warning in payload["warnings"]))
+
     def test_codex_teammate_config_ignores_unknown_keys(self) -> None:
         repo_config = self.repo / TEAMMATE_CONFIG_REL
         write(

@@ -26,7 +26,9 @@ parallel with good isolation.
 This skill includes local helper scripts under `swarm/scripts/`:
 
 - `swarm/scripts/swarm-discover.py` — git-derived defaults plus any structured
-  swarm config the repo exposes
+  swarm config the repo exposes, including a validated, defaulted `landing`
+  block (see `swarm/references/landing-config.md` for the schema and its
+  fail-safe validation rules)
 - `swarm/scripts/swarm-triage.py --input <json>` — batch normalized task data
   into unblocked frontier, wait queues, and skips. Run `--help` for the input
   schema and output category enum.
