@@ -99,6 +99,15 @@ def working_tree_dirty(cwd: Path) -> bool:
     return bool(git_stdout("status", "--porcelain=v1", "--untracked-files=all", cwd=cwd))
 
 
+def registered_worktree_paths(cwd: Path) -> set[Path]:
+    raw = git_stdout("worktree", "list", "--porcelain", cwd=cwd)
+    paths: set[Path] = set()
+    for line in raw.splitlines():
+        if line.startswith("worktree "):
+            paths.add(Path(line[len("worktree ") :]).resolve())
+    return paths
+
+
 def current_branch(cwd: Path) -> str:
     return git_stdout("branch", "--show-current", cwd=cwd)
 
