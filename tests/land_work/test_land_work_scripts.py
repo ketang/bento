@@ -242,11 +242,12 @@ class IntegrationWorktreePreviewTest(unittest.TestCase):
         git(self.repo, "config", "user.name", "Land Work Test")
         git(self.repo, "config", "user.email", "land-work@example.com")
         (self.repo / "README.md").write_text("root\n", encoding="utf-8")
+        (self.repo / ".gitignore").write_text("target/\n", encoding="utf-8")
         (self.repo / "swarm-config.json").write_text(
             json.dumps({"landing": {"integration_worktree": str(self.integration_worktree)}}),
             encoding="utf-8",
         )
-        git(self.repo, "add", "README.md", "swarm-config.json")
+        git(self.repo, "add", "README.md", ".gitignore", "swarm-config.json")
         git(self.repo, "commit", "-m", "initial commit")
 
         git(self.repo, "worktree", "add", "-b", "feature/test", str(self.worktree), "main")
@@ -307,8 +308,10 @@ class IntegrationWorktreePreviewTest(unittest.TestCase):
         self.assertFalse(payload["persistent_worktree"])
         self.assertNotEqual(payload["preview_dir"], str(self.integration_worktree.resolve()))
         self.assertTrue(
-            any("integration_worktree" in warning and "uncommitted" not in warning for warning in payload["warnings"])
-            or any("dirty" in warning.lower() or "uncommitted changes" in warning for warning in payload["warnings"])
+            any(
+                "integration_worktree" in warning and "uncommitted.txt" in warning
+                for warning in payload["warnings"]
+            )
         )
         self.assertEqual((self.integration_worktree / "uncommitted.txt").read_text(encoding="utf-8"), "oops\n")
 

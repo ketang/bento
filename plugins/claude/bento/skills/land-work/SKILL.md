@@ -37,7 +37,11 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
-  once verification finishes)
+  once verification finishes). When the repo's `swarm-config.json` declares
+  `landing.integration_worktree`, the preview materializes there instead of a
+  scratch `/tmp` directory, reusing build caches across landings — see
+  `land-work/references/integration-worktree.md`. `--cleanup` is a safe no-op
+  against that configured path; it never removes it.
 - `land-work/scripts/land-work-run-verifier.py` to run the repo's configured
   project verifier against the exact merge preview and fail closed unless every
   landed path is covered. It never equates a zero-check verifier result with
@@ -298,7 +302,12 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
    - **Always** remove the preview worktree once you are done with it, on every
      exit path — verified landing, aborted lease, or any error after the
      preview was created. It is a registered git worktree and otherwise
-     accumulates under `/tmp` until a manual closure sweep removes it:
+     accumulates under `/tmp` until a manual closure sweep removes it — unless
+     the preview payload reported `"persistent_worktree": true` (the repo
+     declares `landing.integration_worktree`; see
+     `land-work/references/integration-worktree.md`), in which case skip this
+     step entirely: the worktree is meant to persist across landings and
+     `--cleanup` against it is a safe no-op anyway.
 
 ```bash
 land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-dir>
@@ -306,9 +315,12 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
 
      `land-work-create-preview.py` already removes its own worktree when the
      preview itself fails (merge conflict or error), reporting
-     `"preview_cleaned_up": true`. The explicit cleanup above covers the
-     success and abort paths, which the helper cannot clean for you because
-     you still need the preview to verify the landing.
+     `"preview_cleaned_up": true` — except for a persistent
+     `landing.integration_worktree`, which a failed preview leaves clean
+     (merge aborted) rather than removed, for reuse by the next landing
+     attempt. The explicit cleanup above covers the success and abort paths
+     for a scratch preview, which the helper cannot clean for you because you
+     still need the preview to verify the landing.
 8a. Run the **`post`** hook scripts in **advisory mode** (the merge has
     already succeeded; abort cannot reverse it):
 
