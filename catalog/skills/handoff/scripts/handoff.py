@@ -21,8 +21,9 @@ from typing import Mapping
 SCRIPT_DIR = Path(__file__).resolve().parent
 sys.path.insert(0, str(SCRIPT_DIR))
 import git_state  # noqa: E402
+from _agent_plugins_bootstrap import ensure_agent_plugins_resolver_importable  # noqa: E402
 
-sys.path.insert(0, str(SCRIPT_DIR.parents[1] / "launch-work" / "scripts"))
+ensure_agent_plugins_resolver_importable()
 import agent_plugins_resolver  # noqa: E402
 
 

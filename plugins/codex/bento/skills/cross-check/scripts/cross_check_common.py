@@ -16,8 +16,10 @@ from datetime import datetime
 from pathlib import Path
 from typing import Mapping
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-sys.path.insert(0, str(SCRIPT_DIR.parents[1] / "launch-work" / "scripts"))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _agent_plugins_bootstrap import ensure_agent_plugins_resolver_importable  # noqa: E402
+
+ensure_agent_plugins_resolver_importable()
 import agent_plugins_resolver  # noqa: E402
 
 
