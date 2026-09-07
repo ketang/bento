@@ -230,5 +230,232 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertIn("landed tree mismatch for refs/heads/main", payload["errors"])
 
 
+class IntegrationWorktreePreviewTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.worktree = Path(self.temp_dir.name) / "feature-worktree"
+        self.integration_worktree = Path(self.temp_dir.name) / "integration"
+        self.repo.mkdir()
+
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Land Work Test")
+        git(self.repo, "config", "user.email", "land-work@example.com")
+        (self.repo / "README.md").write_text("root\n", encoding="utf-8")
+        (self.repo / ".gitignore").write_text("target/\n", encoding="utf-8")
+        (self.repo / "swarm-config.json").write_text(
+            json.dumps({"landing": {"integration_worktree": str(self.integration_worktree)}}),
+            encoding="utf-8",
+        )
+        git(self.repo, "add", "README.md", ".gitignore", "swarm-config.json")
+        git(self.repo, "commit", "-m", "initial commit")
+
+        git(self.repo, "worktree", "add", "-b", "feature/test", str(self.worktree), "main")
+        (self.worktree / "feature.txt").write_text("feature\n", encoding="utf-8")
+        git(self.worktree, "add", "feature.txt")
+        git(self.worktree, "commit", "-m", "feature change")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def run_preview(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
+        return run([str(PREVIEW_SCRIPT), *args], cwd, check=check)
+
+    def test_preview_materializes_into_configured_integration_worktree(self) -> None:
+        result = self.run_preview(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["merge_clean"])
+        self.assertEqual(payload["preview_dir"], str(self.integration_worktree.resolve()))
+        self.assertTrue(payload["persistent_worktree"])
+        self.assertFalse(payload["reused_worktree"])
+        self.assertEqual((self.integration_worktree / "feature.txt").read_text(encoding="utf-8"), "feature\n")
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), registered)
+
+    def test_second_landing_reuses_integration_worktree_and_keeps_build_cache(self) -> None:
+        first = self.run_preview(cwd=self.worktree)
+        json.loads(first.stdout)
+        cache_marker = self.integration_worktree / "target" / "cache-marker"
+        cache_marker.parent.mkdir(parents=True, exist_ok=True)
+        cache_marker.write_text("warm\n", encoding="utf-8")
+
+        (self.worktree / "feature2.txt").write_text("feature 2\n", encoding="utf-8")
+        git(self.worktree, "add", "feature2.txt")
+        git(self.worktree, "commit", "-m", "second feature change")
+
+        second = self.run_preview(cwd=self.worktree)
+        payload = json.loads(second.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["persistent_worktree"])
+        self.assertTrue(payload["reused_worktree"])
+        self.assertEqual((self.integration_worktree / "feature2.txt").read_text(encoding="utf-8"), "feature 2\n")
+        self.assertEqual(cache_marker.read_text(encoding="utf-8"), "warm\n")
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertEqual(registered.count(str(self.integration_worktree.resolve())), 1)
+
+    def test_corrupted_registered_integration_worktree_falls_back_instead_of_crashing(self) -> None:
+        # Regression: a registered-but-corrupted worktree (its own .git
+        # pointer file removed, e.g. by a partial manual cleanup) must
+        # degrade to a scratch preview, not crash main() with an unhandled
+        # CalledProcessError from `git status` failing inside it.
+        self.run_preview(cwd=self.worktree)
+        (self.integration_worktree / ".git").unlink()
+
+        result = self.run_preview(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["persistent_worktree"])
+        self.assertNotEqual(payload["preview_dir"], str(self.integration_worktree.resolve()))
+        self.assertTrue(
+            any(
+                "integration_worktree" in warning and "git status" in warning
+                for warning in payload["warnings"]
+            )
+        )
+
+    def test_dirty_integration_worktree_falls_back_to_scratch_dir(self) -> None:
+        first = self.run_preview(cwd=self.worktree)
+        json.loads(first.stdout)
+        (self.integration_worktree / "uncommitted.txt").write_text("oops\n", encoding="utf-8")
+
+        result = self.run_preview(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["persistent_worktree"])
+        self.assertNotEqual(payload["preview_dir"], str(self.integration_worktree.resolve()))
+        self.assertTrue(
+            any(
+                "integration_worktree" in warning and "uncommitted.txt" in warning
+                for warning in payload["warnings"]
+            )
+        )
+        self.assertEqual((self.integration_worktree / "uncommitted.txt").read_text(encoding="utf-8"), "oops\n")
+
+    def test_cleanup_refuses_to_delete_when_config_resolution_fails(self) -> None:
+        # Regression: resolve_integration_worktree()'s fail-safe default
+        # ("no configured worktree") is correct for preview creation, where
+        # the caller falls back to scratch. It must NOT be reused as-is for
+        # --cleanup: a transient discovery failure must not be read as "this
+        # isn't the persistent worktree, safe to force-remove" — that
+        # reintroduces the "persistent worktree deleted" bug via a new
+        # trigger. Force a resolution failure via an invalid codex teammate
+        # config, which makes swarm-discover.py exit 2.
+        self.run_preview(cwd=self.worktree)
+        codex_config = self.worktree / ".agent-plugins" / "bento" / "bento" / "swarm" / "config.json"
+        codex_config.parent.mkdir(parents=True, exist_ok=True)
+        codex_config.write_text("{", encoding="utf-8")  # malformed JSON
+
+        result = self.run_preview(
+            "--cleanup", "--preview-dir", str(self.integration_worktree), "--runtime", "codex",
+            cwd=self.worktree, check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["cleaned_up"])
+        self.assertTrue(self.integration_worktree.exists())
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), registered)
+
+    def test_explicit_preview_dir_overrides_configured_integration_worktree(self) -> None:
+        explicit_dir = Path(self.temp_dir.name) / "explicit-preview"
+        result = self.run_preview("--preview-dir", str(explicit_dir), cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["preview_dir"], str(explicit_dir.resolve()))
+        self.assertFalse(payload["persistent_worktree"])
+        self.assertFalse(self.integration_worktree.exists())
+
+    def test_cleanup_refuses_to_remove_persistent_integration_worktree(self) -> None:
+        self.run_preview(cwd=self.worktree)
+
+        result = self.run_preview("--cleanup", "--preview-dir", str(self.integration_worktree), cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["cleaned_up"])
+        self.assertTrue(self.integration_worktree.exists())
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), registered)
+
+    def test_conflict_against_integration_worktree_aborts_merge_and_preserves_worktree(self) -> None:
+        self.run_preview(cwd=self.worktree)
+
+        (self.repo / "README.md").write_text("main branch\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "main edit")
+
+        (self.worktree / "README.md").write_text("feature branch\n", encoding="utf-8")
+        git(self.worktree, "add", "README.md")
+        git(self.worktree, "commit", "-m", "feature edit")
+
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["merge_clean"])
+        self.assertTrue(payload["persistent_worktree"])
+        self.assertFalse(payload["preview_cleaned_up"])
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), registered)
+        self.assertFalse(working_tree_dirty_for_test(self.integration_worktree))
+
+    def test_first_use_conflict_preserves_freshly_created_integration_worktree(self) -> None:
+        # Regression: the very first preview against a not-yet-existing
+        # integration worktree must not be deleted on conflict just because
+        # this run is the one that created it (worktree_added=True). Deleting
+        # it here defeats the whole feature on its very first failure.
+        (self.repo / "README.md").write_text("main branch\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "main edit")
+
+        (self.worktree / "README.md").write_text("feature branch\n", encoding="utf-8")
+        git(self.worktree, "add", "README.md")
+        git(self.worktree, "commit", "-m", "feature edit")
+
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["merge_clean"])
+        self.assertTrue(payload["persistent_worktree"])
+        self.assertFalse(payload["preview_cleaned_up"])
+        self.assertTrue(self.integration_worktree.exists())
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), registered)
+        self.assertFalse(working_tree_dirty_for_test(self.integration_worktree))
+
+    def test_no_config_keeps_scratch_tmp_behavior_unchanged(self) -> None:
+        git(self.worktree, "rm", "swarm-config.json")
+        git(self.worktree, "commit", "-m", "remove swarm config")
+
+        result = self.run_preview(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["persistent_worktree"])
+        self.assertTrue(payload["preview_dir"].startswith("/tmp/land-work-preview-"))
+
+
+def working_tree_dirty_for_test(path: Path) -> bool:
+    result = subprocess.run(
+        ["git", "status", "--porcelain=v1", "--untracked-files=all"],
+        cwd=path,
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return bool(result.stdout.strip())
+
+
 if __name__ == "__main__":
     unittest.main()

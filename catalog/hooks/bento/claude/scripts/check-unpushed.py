@@ -17,9 +17,13 @@ Silent no-op cases (exit 0): no/invalid cwd, a non-git cwd, a repo that opts
 out via ``require_pushed=false`` in ``.agent-mode.local``, re-entrant Stop
 invocations (``stop_hook_active``) so a block never loops forever, a
 land-work merge-preview worktree (its staged changes are the merge candidate
-being verified, not stranded work), and a worktree with an in-progress
-rebase/merge/cherry-pick (its detached HEAD and staged files are normal
-mid-operation state, not abandoned work).
+being verified, not stranded work), a repo's configured
+``landing.integration_worktree`` (bento-96ua.1 — it never accumulates real
+work of its own; every commit or staged change inside it is fully
+reproducible by re-running the merge preview from the base and feature
+branches), and a worktree with an in-progress rebase/merge/cherry-pick (its
+detached HEAD and staged files are normal mid-operation state, not abandoned
+work).
 
 Claude Code runs hook processes from $HOME, not the project root, so the
 session directory is read from the stdin JSON payload's ``cwd`` field, never
@@ -31,6 +35,9 @@ import os
 import subprocess
 import sys
 from pathlib import Path
+
+
+SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 OPERATIONAL_BEADS_PATHS = frozenset(
@@ -112,6 +119,97 @@ def is_land_work_preview(root: str) -> bool:
     if current_branch(root):
         return False
     return is_registered_worktree(root)
+
+
+def _swarm_discover_script() -> Path | None:
+    """Locate swarm-discover.py relative to this hook's own location.
+
+    Catalog and generated-plugin trees nest hooks/ and skills/ at different
+    relative depths (``catalog/hooks/bento/<agent>/scripts/`` vs
+    ``plugins/<agent>/bento/hooks/scripts/``), so try both candidate depths
+    rather than assume one layout.
+    """
+    candidates = (
+        SCRIPT_DIR.parents[3] / "skills" / "swarm" / "scripts" / "swarm-discover.py",
+        SCRIPT_DIR.parents[1] / "skills" / "swarm" / "scripts" / "swarm-discover.py",
+    )
+    for candidate in candidates:
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+_SWARM_CONFIG_CANDIDATES = (
+    "swarm-config.json",
+    ".claude/swarm-config.json",
+    ".codex/swarm-config.json",
+)
+
+
+def _has_swarm_config(root: str) -> bool:
+    """Cheap existence check before paying for a swarm-discover.py fork.
+
+    The overwhelming majority of repos this hook fires in have no swarm
+    config at all, so avoid spawning a Python subprocess (which itself does
+    layered config-file resolution) on every single session end just to
+    learn that.
+    """
+    return any((Path(root) / candidate).is_file() for candidate in _SWARM_CONFIG_CANDIDATES)
+
+
+def is_land_work_integration_worktree(root: str) -> bool:
+    """True when root is the repo's configured landing.integration_worktree
+    and holds no foreign untracked content.
+
+    Unlike a scratch land-work preview (name-prefix + detached-HEAD check
+    above), the persistent integration worktree (bento-96ua.1) has a
+    user-chosen path and name, and is not always detached once reused. It is
+    exempt from the push/dirty check for the same underlying reason: it never
+    accumulates real work of its own, since every commit or staged change
+    inside it is fully reproducible by re-running the merge preview from the
+    base and feature branches.
+
+    An untracked, non-ignored file is the exception: nothing in this
+    worktree's own lifecycle produces one (land-work-create-preview.py's
+    integration_worktree_unusable_reason() refuses to reuse it precisely
+    because of this), so its presence means a person or another tool put
+    real, non-reproducible work there. That must still block the session end
+    like any other worktree — silently exempting it here would let
+    land-work's next `git reset --hard` discard it unnoticed.
+    """
+    if not _has_swarm_config(root):
+        return False
+    script = _swarm_discover_script()
+    if script is None:
+        return False
+    result = subprocess.run(
+        [str(script), "--runtime", "auto"],
+        cwd=root,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    if result.returncode != 0:
+        return False
+    try:
+        payload = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return False
+    landing = payload.get("landing")
+    if not isinstance(landing, dict):
+        return False
+    integration_worktree = landing.get("integration_worktree")
+    if not integration_worktree:
+        return False
+    try:
+        if Path(integration_worktree).resolve() != Path(root).resolve():
+            return False
+    except OSError:
+        return False
+    status = _git(root, "status", "--porcelain=v1", "--untracked-files=normal")
+    if status.returncode != 0:
+        return False
+    return not any(line.startswith("??") for line in status.stdout.splitlines())
 
 
 def _resolves_to_commit(root: str, ref_or_sha: str) -> bool:
@@ -295,6 +393,9 @@ def block_reason(hook_input: dict) -> str | None:
         return None
 
     if is_land_work_preview(root):
+        return None
+
+    if is_land_work_integration_worktree(root):
         return None
 
     if has_in_progress_operation(root):

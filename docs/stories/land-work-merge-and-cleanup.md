@@ -19,6 +19,7 @@ After implementation is complete and verified, land-work merges the feature bran
 An agent finishes implementation on a feature branch, all required checks have passed, and the user signals readiness to land. The land-work skill fires. It first runs the prepare helper to confirm the checkout is a clean feature-branch worktree with commits to land — and, when `--require-up-to-date` is passed, that it is not stale relative to the primary branch. It then discovers the repo's gate suite and confirms the primary branch is already green, halting rather than stacking work on a red base. Next it runs an independent code review of the feature-only diff (computed with `git merge-base` so primary-branch commits merged in during development are excluded), passing the reviewer only the change and a purpose statement drawn from the tracker issue — not the implementation session's reasoning. Critical and Important findings are fixed before the landing proceeds. It rebases the branch onto the current primary-branch base, materializes a preview merge, runs the project verifier against that exact preview, and runs the discovered gate suite against the same candidate. On green — or on a waiver recorded in the tracker before the merge — it re-checks the lease, executes the actual merge with an explicit merge commit, and removes the preview worktree. After the merge is confirmed on the primary branch, the tracker issue is closed with the gate commands and exit statuses as landing evidence, the primary checkout root is audited for hygiene, every untracked path is committed, gitignored, or deleted, and finally the feature branch is deleted and the linked worktree removed. The agent ends with a clean primary-branch state and no orphaned worktrees.
 
 ## Expected Behavior
+
 - The prepare helper verifies the worktree is clean and on a feature branch, and checks staleness against the primary branch when `--require-up-to-date` is passed.
 - An independent code review of the feature-only diff runs before merging; Critical and Important findings are fixed first.
 - A preview merge is created and verified before the real merge runs.
@@ -27,7 +28,7 @@ An agent finishes implementation on a feature branch, all required checks have p
 - The gate suite is re-run against the exact merge candidate; the merge proceeds only on green or on a waiver recorded in the tracker issue before the merge.
 - The merge uses an explicit merge commit; squash is never used, and fast-forward only if the repo explicitly requires it.
 - The tracker issue is closed only after verified landing, not when implementation merely completes, and the closure note carries the gate commands and their exit statuses.
-- The preview worktree is cleaned up on every exit path, and no untracked files are left behind before the worktree is removed.
+- A scratch preview worktree is cleaned up on every exit path, and no untracked files are left behind before the worktree is removed. A repo-configured `landing.integration_worktree` (see `land-work/references/integration-worktree.md`) is the documented exception: it deliberately persists across landings to keep build caches warm, so cleanup against it is an intentional no-op rather than a removal.
 - The feature branch and its linked worktree are deleted after the merge.
 
 ## Boundaries
