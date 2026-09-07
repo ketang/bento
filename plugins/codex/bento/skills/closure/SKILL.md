@@ -122,6 +122,25 @@ Everything else remains review-driven.
 Add `--no-liveness` for a faster scan that skips session log scanning and
 process detection, returning git state only.
 
+### Untracked Debris Scan
+
+Every scan also reports untracked paths in the primary checkout that look
+like abandoned artifact debris — separate from the tracked git state above,
+which the branch/worktree/stash scan does not cover. This step is **always
+read-only**: it reports candidates, it never deletes. The helper flags an
+untracked entry when it is >= 1MB, older than 14 days, or its name matches a
+known residue pattern (a dir named `*-anymore`/`*-old`/`*-backup`, a
+`*-handoff.md` or `*-log.md` file, an untracked path under `docs/plans/`, or
+an executable file at repo root). These are defaults; override with
+`--debris-min-size-mb` and `--debris-min-age-days`, or skip the step with
+`--no-debris-scan`. See `closure/references/helper-output.md` for the output
+field list and disposition heuristic.
+
+Present the `untracked_debris` findings to the user as an "untracked debris"
+section: path, size, age, and suggested action (commit, gitignore, or
+delete) per finding. Never delete a flagged path yourself — this scan step
+has no apply mode.
+
 ### Branch Correlation (review_required triage)
 
 When a `review_required` branch needs disposition (genuine outstanding work vs.
@@ -203,9 +222,9 @@ removal.
    and remote divergence where relevant.
 4. Review the helper output and categorize findings (branches safe to delete,
    patch-equivalent or unmerged branches, linked worktrees, stashes,
-   working-tree changes, stale tracker items). For tracker items, collect the
-   branch/commit/diff/merge evidence supporting close or leave-open. Label
-   ambiguous findings using the taxonomy in
+   working-tree changes, stale tracker items, untracked debris). For tracker
+   items, collect the branch/commit/diff/merge evidence supporting close or
+   leave-open. Label ambiguous findings using the taxonomy in
    `closure/references/recommendation-taxonomy.md`.
 5. For each linked worktree, assess liveness and value using the decision tree
    in `closure/references/worktree-triage.md`. Uncommitted state is never
@@ -222,10 +241,10 @@ removal.
 9. If the user wants safe local branch cleanup, run the helper's apply mode
    and report the deleted branches.
 10. End every dry-run pass with a clear next-step choice: apply safe local
-    branch cleanup, inspect or preserve working-tree changes, hand off to
-    `land-work` or the tracker workflow skill, or leave everything unchanged.
-    If only one action is justified, present it and ask for explicit
-    confirmation before applying.
+    branch cleanup, inspect or preserve working-tree changes, review the
+    reported untracked debris, hand off to `land-work` or the tracker
+    workflow skill, or leave everything unchanged. If only one action is
+    justified, present it and ask for explicit confirmation before applying.
 11. End at the repository root on the detected primary branch, not in a
     feature-branch worktree.
 
@@ -268,6 +287,8 @@ the final repo-root, primary-branch shell state.
 - Do not treat absence of a live process or recent activity as proof that a
   worktree is safe to discard — an agent waiting for input may be idle for
   hours.
+- The untracked debris scan never deletes anything and has no apply mode —
+  report findings and their suggested disposition, and let the user act.
 - **During a closure GC pass, never construct manual `git branch -D` or
   `git branch -d` commands.** All branch deletion in a closure pass must go
   through the helper's apply modes (`--apply delete-local-merged-branches` or
