@@ -775,15 +775,19 @@ def scan_untracked_debris(
         now_ts = time.time()
     min_size_bytes = int(min_size_mb * 1024 * 1024)
 
+    # -z gives NUL-separated, unquoted paths. Without it, git C-quotes any
+    # path containing non-ASCII bytes or special characters (wrapping it in
+    # "..." with octal escapes), and line[3:] would take that literal quoted
+    # string as the path, which then fails to stat and gets silently skipped.
     raw = git_stdout(
-        "status", "--porcelain=v1", "--untracked-files=normal", cwd=repo_root,
+        "status", "--porcelain=v1", "-z", "--untracked-files=normal", cwd=repo_root,
     )
     findings: list[dict[str, object]] = []
 
-    for line in raw.splitlines():
-        if not line.startswith("?? "):
+    for entry in raw.split("\0"):
+        if not entry.startswith("?? "):
             continue
-        rel_path = line[3:]
+        rel_path = entry[3:]
         abs_path = repo_root / rel_path.rstrip("/")
 
         try:

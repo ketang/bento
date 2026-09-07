@@ -1138,6 +1138,20 @@ class UntrackedDebrisScanTest(unittest.TestCase):
         self.run_scan()
         self.assertTrue(debris_dir.exists())
 
+    def test_flags_directory_with_non_ascii_name(self) -> None:
+        # git C-quotes non-ASCII/special-character paths in default porcelain
+        # output (e.g. `"caf\303\251-old/"`); the scan must parse `-z` output
+        # instead of naively slicing the quoted line, or the entry silently
+        # fails to stat and gets dropped.
+        debris_dir = self.repo / "café-old"
+        debris_dir.mkdir()
+        (debris_dir / "blob.bin").write_bytes(b"0" * (2 * 1024 * 1024))
+        self._age(debris_dir, 20)
+
+        scan = self.run_scan()
+        paths = {f["path"] for f in scan["untracked_debris"]["findings"]}
+        self.assertIn("café-old/", paths)
+
 
 if __name__ == "__main__":
     unittest.main()
