@@ -38,6 +38,14 @@ IDENTICAL_GROUPS = [
         ],
     ),
     (
+        "_agent_plugins_bootstrap.py (agent_plugins_resolver sys.path bootstrap)",
+        [
+            "catalog/skills/cross-check/scripts/_agent_plugins_bootstrap.py",
+            "catalog/skills/handoff/scripts/_agent_plugins_bootstrap.py",
+            "catalog/skills/swarm/scripts/_agent_plugins_bootstrap.py",
+        ],
+    ),
+    (
         "telemetry bento_telemetry.py (claude/codex)",
         [
             "catalog/hooks/telemetry/claude/scripts/bento_telemetry.py",
