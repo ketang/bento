@@ -351,6 +351,33 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_blocks_configured_integration_worktree_with_foreign_untracked_file(self) -> None:
+        # Regression: nothing in this worktree's own lifecycle produces an
+        # untracked, non-ignored file (land-work-create-preview.py's
+        # integration_worktree_unusable_reason() refuses to reuse it for
+        # exactly this reason). Its presence means a person or another tool
+        # put real, non-reproducible work there, so the path-match exemption
+        # alone must not silently let the session end — that would let
+        # land-work's next `git reset --hard` discard it unnoticed.
+        repo = self._init_repo()
+        self._add_remote(repo)
+
+        integration_dir = self.root / "integration-worktree"
+        (repo / "swarm-config.json").write_text(
+            json.dumps({"landing": {"integration_worktree": str(integration_dir)}}),
+            encoding="utf-8",
+        )
+        self._commit_all(repo, "add swarm config")
+        self._git(repo, "push", "-q")
+
+        self._git(repo, "worktree", "add", "--detach", str(integration_dir), "main")
+        (integration_dir / "real-work.txt").write_text("not reproducible\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=integration_dir)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
     def test_blocks_worktree_not_matching_configured_integration_worktree(self) -> None:
         # A worktree that merely sits near a repo declaring
         # landing.integration_worktree, but is not that exact configured

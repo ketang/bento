@@ -336,6 +336,33 @@ class IntegrationWorktreePreviewTest(unittest.TestCase):
         )
         self.assertEqual((self.integration_worktree / "uncommitted.txt").read_text(encoding="utf-8"), "oops\n")
 
+    def test_cleanup_refuses_to_delete_when_config_resolution_fails(self) -> None:
+        # Regression: resolve_integration_worktree()'s fail-safe default
+        # ("no configured worktree") is correct for preview creation, where
+        # the caller falls back to scratch. It must NOT be reused as-is for
+        # --cleanup: a transient discovery failure must not be read as "this
+        # isn't the persistent worktree, safe to force-remove" — that
+        # reintroduces the "persistent worktree deleted" bug via a new
+        # trigger. Force a resolution failure via an invalid codex teammate
+        # config, which makes swarm-discover.py exit 2.
+        self.run_preview(cwd=self.worktree)
+        codex_config = self.worktree / ".agent-plugins" / "bento" / "bento" / "swarm" / "config.json"
+        codex_config.parent.mkdir(parents=True, exist_ok=True)
+        codex_config.write_text("{", encoding="utf-8")  # malformed JSON
+
+        result = self.run_preview(
+            "--cleanup", "--preview-dir", str(self.integration_worktree), "--runtime", "codex",
+            cwd=self.worktree, check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["cleaned_up"])
+        self.assertTrue(self.integration_worktree.exists())
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), registered)
+
     def test_explicit_preview_dir_overrides_configured_integration_worktree(self) -> None:
         explicit_dir = Path(self.temp_dir.name) / "explicit-preview"
         result = self.run_preview("--preview-dir", str(explicit_dir), cwd=self.worktree)

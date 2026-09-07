@@ -139,8 +139,27 @@ def _swarm_discover_script() -> Path | None:
     return None
 
 
+_SWARM_CONFIG_CANDIDATES = (
+    "swarm-config.json",
+    ".claude/swarm-config.json",
+    ".codex/swarm-config.json",
+)
+
+
+def _has_swarm_config(root: str) -> bool:
+    """Cheap existence check before paying for a swarm-discover.py fork.
+
+    The overwhelming majority of repos this hook fires in have no swarm
+    config at all, so avoid spawning a Python subprocess (which itself does
+    layered config-file resolution) on every single session end just to
+    learn that.
+    """
+    return any((Path(root) / candidate).is_file() for candidate in _SWARM_CONFIG_CANDIDATES)
+
+
 def is_land_work_integration_worktree(root: str) -> bool:
-    """True when root is the repo's configured landing.integration_worktree.
+    """True when root is the repo's configured landing.integration_worktree
+    and holds no foreign untracked content.
 
     Unlike a scratch land-work preview (name-prefix + detached-HEAD check
     above), the persistent integration worktree (bento-96ua.1) has a
@@ -149,7 +168,17 @@ def is_land_work_integration_worktree(root: str) -> bool:
     accumulates real work of its own, since every commit or staged change
     inside it is fully reproducible by re-running the merge preview from the
     base and feature branches.
+
+    An untracked, non-ignored file is the exception: nothing in this
+    worktree's own lifecycle produces one (land-work-create-preview.py's
+    integration_worktree_unusable_reason() refuses to reuse it precisely
+    because of this), so its presence means a person or another tool put
+    real, non-reproducible work there. That must still block the session end
+    like any other worktree — silently exempting it here would let
+    land-work's next `git reset --hard` discard it unnoticed.
     """
+    if not _has_swarm_config(root):
+        return False
     script = _swarm_discover_script()
     if script is None:
         return False
@@ -173,9 +202,14 @@ def is_land_work_integration_worktree(root: str) -> bool:
     if not integration_worktree:
         return False
     try:
-        return Path(integration_worktree).resolve() == Path(root).resolve()
+        if Path(integration_worktree).resolve() != Path(root).resolve():
+            return False
     except OSError:
         return False
+    status = _git(root, "status", "--porcelain=v1", "--untracked-files=normal")
+    if status.returncode != 0:
+        return False
+    return not any(line.startswith("??") for line in status.stdout.splitlines())
 
 
 def _resolves_to_commit(root: str, ref_or_sha: str) -> bool:

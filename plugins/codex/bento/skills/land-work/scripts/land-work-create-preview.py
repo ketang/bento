@@ -110,7 +110,11 @@ def integration_worktree_unusable_reason(preview_dir: Path, checkout_root: Path)
     creates those, so their presence means something else (a person, another
     tool) touched the shared worktree and it must not be silently reset.
     """
-    if preview_dir not in registered_worktree_paths(checkout_root):
+    try:
+        registered = registered_worktree_paths(checkout_root)
+    except subprocess.CalledProcessError:
+        return f"unable to list registered worktrees in {checkout_root} (`git worktree list` failed)"
+    if preview_dir not in registered:
         return f"landing.integration_worktree at {preview_dir} exists but is not a registered git worktree"
     try:
         status = git_stdout("status", "--porcelain=v1", "--untracked-files=normal", cwd=preview_dir)
@@ -172,6 +176,30 @@ def main() -> int:
             json.dump(payload, sys.stdout, indent=2)
             sys.stdout.write("\n")
             return 0
+        if iw_warnings:
+            # resolve_integration_worktree()'s fail-safe default ("no
+            # configured worktree") is correct for the create-preview flow,
+            # where the caller then falls back to a scratch directory. It is
+            # wrong here: acting on it would force-remove --preview-dir even
+            # when it genuinely is the persistent worktree, just because
+            # discovery hiccuped — reintroducing the "persistent worktree
+            # deleted" failure mode via a different trigger. Refuse instead
+            # of guessing.
+            payload = {
+                "cwd": str(cwd),
+                "checkout_root": str(checkout_root),
+                "preview_dir": str(preview_dir),
+                "cleaned_up": False,
+                "ok": False,
+                "warnings": warnings,
+                "errors": [
+                    "unable to confirm whether --preview-dir is the configured "
+                    "landing.integration_worktree; refusing to remove it"
+                ],
+            }
+            json.dump(payload, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            return 1
         cleaned_up, errors = cleanup_preview(preview_dir, checkout_root)
         payload = {
             "cwd": str(cwd),
