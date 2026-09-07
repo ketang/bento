@@ -323,6 +323,58 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_allows_configured_integration_worktree(self) -> None:
+        # A repo-configured landing.integration_worktree (bento-96ua.1) has a
+        # user-chosen name and path, so the name-prefix check alone would
+        # miss it. It never accumulates real work of its own — every commit
+        # or staged change inside it is fully reproducible by re-running the
+        # merge preview — so it must be exempt from the block just like a
+        # scratch land-work-preview-* worktree.
+        repo = self._init_repo()
+        self._add_remote(repo)
+
+        integration_dir = self.root / "integration-worktree"
+        (repo / "swarm-config.json").write_text(
+            json.dumps({"landing": {"integration_worktree": str(integration_dir)}}),
+            encoding="utf-8",
+        )
+        self._commit_all(repo, "add swarm config")
+        self._git(repo, "push", "-q")
+
+        self._git(repo, "worktree", "add", "--detach", str(integration_dir), "main")
+        self._git(integration_dir, "merge", "--no-ff", "--no-commit", "main")
+        (integration_dir / "stray.txt").write_text("staged\n", encoding="utf-8")
+        self._git(integration_dir, "add", "stray.txt")
+
+        result = self._run(payload_cwd=integration_dir)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_blocks_worktree_not_matching_configured_integration_worktree(self) -> None:
+        # A worktree that merely sits near a repo declaring
+        # landing.integration_worktree, but is not that exact configured
+        # path, must not be exempted just because the config exists.
+        repo = self._init_repo()
+        self._add_remote(repo)
+
+        integration_dir = self.root / "integration-worktree"
+        (repo / "swarm-config.json").write_text(
+            json.dumps({"landing": {"integration_worktree": str(integration_dir)}}),
+            encoding="utf-8",
+        )
+        self._commit_all(repo, "add swarm config")
+        self._git(repo, "push", "-q")
+
+        other_dir = self.root / "other-worktree"
+        self._git(repo, "worktree", "add", "-b", "other-branch", str(other_dir), "main")
+        (other_dir / "README.md").write_text("real work\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=other_dir)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
     def test_blocks_reused_leaked_preview_directory(self) -> None:
         # A failed/interrupted landing can leak a land-work-preview-* worktree
         # (bento-gd2) that survives until a manual closure sweep. If that

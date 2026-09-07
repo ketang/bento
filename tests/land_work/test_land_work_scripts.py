@@ -296,6 +296,27 @@ class IntegrationWorktreePreviewTest(unittest.TestCase):
         registered = git(self.repo, "worktree", "list", "--porcelain").stdout
         self.assertEqual(registered.count(str(self.integration_worktree.resolve())), 1)
 
+    def test_corrupted_registered_integration_worktree_falls_back_instead_of_crashing(self) -> None:
+        # Regression: a registered-but-corrupted worktree (its own .git
+        # pointer file removed, e.g. by a partial manual cleanup) must
+        # degrade to a scratch preview, not crash main() with an unhandled
+        # CalledProcessError from `git status` failing inside it.
+        self.run_preview(cwd=self.worktree)
+        (self.integration_worktree / ".git").unlink()
+
+        result = self.run_preview(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["persistent_worktree"])
+        self.assertNotEqual(payload["preview_dir"], str(self.integration_worktree.resolve()))
+        self.assertTrue(
+            any(
+                "integration_worktree" in warning and "git status" in warning
+                for warning in payload["warnings"]
+            )
+        )
+
     def test_dirty_integration_worktree_falls_back_to_scratch_dir(self) -> None:
         first = self.run_preview(cwd=self.worktree)
         json.loads(first.stdout)

@@ -66,12 +66,18 @@ def resolve_integration_worktree(checkout_root: Path, runtime: str) -> tuple[Pat
     """
     if not _SWARM_DISCOVER.is_file():
         return None, []
-    result = subprocess.run(
-        [str(_SWARM_DISCOVER), "--runtime", runtime],
-        cwd=checkout_root,
-        capture_output=True,
-        text=True,
-    )
+    try:
+        result = subprocess.run(
+            [str(_SWARM_DISCOVER), "--runtime", runtime],
+            cwd=checkout_root,
+            capture_output=True,
+            text=True,
+        )
+    except OSError as exc:
+        return None, [
+            f"unable to run swarm-discover.py while resolving landing.integration_worktree ({exc}); "
+            "using a scratch preview directory"
+        ]
     if result.returncode != 0:
         return None, [
             f"swarm-discover.py exited {result.returncode} while resolving landing.integration_worktree; "
@@ -106,7 +112,13 @@ def integration_worktree_unusable_reason(preview_dir: Path, checkout_root: Path)
     """
     if preview_dir not in registered_worktree_paths(checkout_root):
         return f"landing.integration_worktree at {preview_dir} exists but is not a registered git worktree"
-    status = git_stdout("status", "--porcelain=v1", "--untracked-files=normal", cwd=preview_dir)
+    try:
+        status = git_stdout("status", "--porcelain=v1", "--untracked-files=normal", cwd=preview_dir)
+    except subprocess.CalledProcessError:
+        return (
+            f"landing.integration_worktree at {preview_dir} is registered but `git status` failed "
+            "in it (corrupted or partially removed worktree)"
+        )
     foreign_untracked = [line[3:] for line in status.splitlines() if line.startswith("??")]
     if foreign_untracked:
         return (
