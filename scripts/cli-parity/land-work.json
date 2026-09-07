@@ -5,6 +5,12 @@
       "command": "land-work/scripts/land-work-run-verifier.py --repo-root <repo-root> --candidate <preview-dir> --base-sha <leased-sha> --head-sha <feature-head-sha> --runtime <runtime>",
       "script": "scripts/land-work-run-verifier.py",
       "subcommand": null
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "land-work/scripts/land-work-batch-assemble.py --worktree <integration-worktree> --base-ref <leased-sha> --branch <branch-1> --branch <branch-2> ...",
+      "script": "scripts/land-work-batch-assemble.py",
+      "subcommand": null
     }
   ]
 }
