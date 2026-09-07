@@ -62,11 +62,20 @@ land-work/scripts/land-work-batch-assemble.py \
 
 See `SKILL.md`'s `## Batch Landing` section for the full step sequence:
 resolve the integration worktree, capture the lease, assemble, gate once at
-the tip, lease-checked push, per-branch tracker close and teardown. The push
+the tip, run the project verifier once at the tip (`land-work-run-verifier.py`
+— the same Non-Negotiable Rule the serial path enforces, not skipped in batch
+mode), lease-checked push, per-branch tracker close and teardown. The push
 itself is a plain `git push` (no `--force`), since the assembled tip is
 always a fast-forward descendant of the leased base by construction — git's
 own fast-forward rejection is a second, independent backstop behind the
 explicit `land-work-verify-lease.py` re-check, not a replacement for it.
+
+Steps 1-4 of the serial workflow (prepare, pre-hooks, gate baseline,
+independent code review) still run once per branch, before that branch joins
+the batch queue — they are part of the individual teammate's own landing
+prep under the scoped-gate contract, not something batch assembly repeats
+for the whole batch. Only the full-gate run and the project verifier move
+from "once per branch" to "once per batch, at the tip."
 
 ## Bisect (Out of Scope Here)
 

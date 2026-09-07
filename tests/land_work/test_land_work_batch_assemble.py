@@ -97,7 +97,6 @@ class LandWorkBatchAssembleTest(unittest.TestCase):
 
         status = git(self.integration, "status", "--porcelain=v1", "--untracked-files=all").stdout
         self.assertEqual(status.strip(), "")
-        merge_head = self.integration / ".git"
         # A worktree's own .git is a file pointing at the admin dir; resolve it.
         git_dir = Path(git(self.integration, "rev-parse", "--git-dir").stdout.strip())
         if not git_dir.is_absolute():
@@ -150,6 +149,30 @@ class LandWorkBatchAssembleTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertFalse((self.integration / "stale.txt").exists())
         self.assertEqual((self.integration / "a.txt").read_text(encoding="utf-8"), "a\n")
+
+    def test_refuses_to_reset_over_foreign_untracked_files(self) -> None:
+        # Regression: SKILL.md documents that the worktree is validated
+        # "exactly as land-work-create-preview.py does for a single
+        # landing" — foreign, non-ignored untracked content means a person
+        # or another tool touched the shared worktree and must not be
+        # silently reset over.
+        self._make_branch("branch-a", "a.txt", "a\n")
+        (self.integration / "real-work.txt").write_text("not reproducible\n", encoding="utf-8")
+
+        result = self.run_assemble(
+            "--worktree", str(self.integration),
+            "--base-ref", self.base_sha,
+            "--branch", "branch-a",
+            check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("untracked files", payload["errors"][0])
+        self.assertEqual(
+            (self.integration / "real-work.txt").read_text(encoding="utf-8"), "not reproducible\n"
+        )
 
     def test_rejects_worktree_not_registered_to_this_repo(self) -> None:
         unrelated = Path(self.temp_dir.name) / "unrelated"

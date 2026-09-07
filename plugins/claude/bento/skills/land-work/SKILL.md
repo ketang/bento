@@ -440,7 +440,14 @@ For a repo whose `swarm-config.json` declares `landing.mode: batch` (see
 `swarm/references/landing-config.md` for the schema and its fail-safe
 validation), swarm's queue/linger policy assembles a batch of ready branches
 and calls into land-work to land them as one unit, replacing steps 5-10 above
-with:
+with the steps below. Steps 1-4 above (prepare, pre-hooks, gate baseline,
+independent code review) are **not** skipped in batch mode — they still run
+once per branch, before that branch is queued, as part of the teammate's own
+landing prep under the scoped-gate contract (a diff-scoped code review and
+`landing.gate_scope` run against that branch's own diff, not the whole
+batch). What changes in batch mode is only what happens after a branch is
+ready: instead of landing it alone under its own full gate, it joins the
+queue and lands as part of the next assembled batch, gated once at the tip.
 
 1. **Resolve the worktree.** Batch landing always uses the repo's
    `landing.integration_worktree` (required for `mode: batch` to be usable at
@@ -472,16 +479,34 @@ with:
    just produced). This is the single full-gate run for the whole batch —
    individual branches were only diff-scope verified by their teammates
    (`landing.gate_scope`), per the teammate-scoped-gate contract.
-5. **Red batch → bisect.** A gate failure at the tip does not identify which
-   assembled branch caused it. Bisecting a red batch (reassembling subsets in
-   the same warm worktree, isolating the culprit branch(es), landing the
-   green subset, returning culprits as rework) is a separate mechanism — see
-   the batched-swarm-landing epic's follow-up issue for the bisect protocol.
-   Until that lands, treat a red batch tip as a full stop: do not land any
-   part of it, return every assembled branch as rework, and record the
-   failure in the tracker.
-6. **Lease-checked advance.** On a green gate, re-verify the lease against
-   the same SHA captured in step 2:
+4a. **Project verifier, at the tip.** The Non-Negotiable Rule "Do not merge
+    unless `land-work-run-verifier.py` exits 0 on the exact merge preview" is
+    not scoped to the serial path — run it here too, against the assembled
+    worktree as the candidate and the batch tip as the head:
+
+    ```bash
+    land-work/scripts/land-work-run-verifier.py \
+      --repo-root <repo-root> \
+      --candidate <integration-worktree> \
+      --base-sha <leased-sha> \
+      --head-sha <tip-sha-from-step-3> \
+      --runtime <runtime>
+    ```
+
+    A nonzero exit is the same landing failure it is on the serial path
+    (missing/invalid manifest, zero selected checks against a real diff, or a
+    verifier command error) — do not proceed to the gate requirement, the
+    lease re-check, or the push.
+5. **Red batch → bisect.** A gate or verifier failure at the tip does not
+   identify which assembled branch caused it. Bisecting a red batch
+   (reassembling subsets in the same warm worktree, isolating the culprit
+   branch(es), landing the green subset, returning culprits as rework) is a
+   separate mechanism — see the batched-swarm-landing epic's follow-up issue
+   for the bisect protocol. Until that lands, treat a red batch tip (gate or
+   verifier) as a full stop: do not land any part of it, return every
+   assembled branch as rework, and record the failure in the tracker.
+6. **Lease-checked advance.** On a green gate and verifier, re-verify the
+   lease against the same SHA captured in step 2:
 
    ```bash
    land-work/scripts/land-work-verify-lease.py --expected-sha <leased-sha>

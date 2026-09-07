@@ -18,6 +18,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import subprocess
 import sys
 from pathlib import Path
 
@@ -29,6 +30,19 @@ from git_state import (
     rev_exists,
     rev_parse,
 )
+
+
+def foreign_untracked_files(worktree: Path) -> list[str]:
+    """Untracked, non-ignored files in worktree — see the identical check in
+    land-work-create-preview.py's integration_worktree_unusable_reason().
+
+    Nothing in this script's own lifecycle (reset --hard, --no-ff merges)
+    ever creates an untracked file, so any present here means a person or
+    another tool touched the shared worktree; it must not be silently reset
+    over.
+    """
+    status = git_stdout("status", "--porcelain=v1", "--untracked-files=normal", cwd=worktree)
+    return [line[3:] for line in status.splitlines() if line.startswith("??")]
 
 
 def parse_args() -> argparse.Namespace:
@@ -52,10 +66,18 @@ def main() -> int:
     worktree = Path(args.worktree).resolve()
 
     errors: list[str] = []
+    warnings: list[str] = []
     if worktree not in registered_worktree_paths(checkout_root):
         errors.append(f"{worktree} is not a registered git worktree of {checkout_root}")
     if not rev_exists(args.base_ref, checkout_root):
         errors.append(f"base revision does not exist: {args.base_ref}")
+    if not errors:
+        foreign = foreign_untracked_files(worktree)
+        if foreign:
+            errors.append(
+                f"{worktree} has untracked files: {', '.join(foreign)}; "
+                "refusing to reset over them"
+            )
 
     if errors:
         payload = {
@@ -69,6 +91,7 @@ def main() -> int:
             "tip_sha": None,
             "tip_tree": None,
             "ok": False,
+            "warnings": warnings,
             "errors": errors,
         }
         json.dump(payload, sys.stdout, indent=2)
@@ -85,10 +108,15 @@ def main() -> int:
     evicted: list[dict[str, object]] = []
 
     for branch in args.branches:
-        if not rev_exists(branch, checkout_root):
+        try:
+            branch_sha = rev_parse(branch, checkout_root)
+        except subprocess.CalledProcessError:
+            # rev_exists + rev_parse is two separate git calls: a branch
+            # deleted or renamed between them (e.g. a concurrent closure
+            # sweep in this swarm/multi-agent context) must still evict
+            # cleanly rather than crash mid-batch with no JSON output at all.
             evicted.append({"branch": branch, "reason": f"revision does not exist: {branch}", "conflicting_paths": []})
             continue
-        branch_sha = rev_parse(branch, checkout_root)
         merge_result = git("merge", "--no-ff", branch_sha, "-m", f"batch: merge {branch}", cwd=worktree, check=False)
         if merge_result.returncode == 0:
             assembled.append(
@@ -119,6 +147,7 @@ def main() -> int:
         "tip_sha": git_stdout("rev-parse", "HEAD", cwd=worktree),
         "tip_tree": git_stdout("rev-parse", "HEAD^{tree}", cwd=worktree),
         "ok": True,
+        "warnings": warnings,
         "errors": [],
     }
     json.dump(payload, sys.stdout, indent=2)
