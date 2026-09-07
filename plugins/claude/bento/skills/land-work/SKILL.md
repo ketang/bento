@@ -56,6 +56,10 @@ state checks that should not rely on ad hoc prose reconstruction:
   verify the landed primary-branch ref still matches the verified candidate
 - `land-work/scripts/land-work-root-hygiene.py` to audit the primary checkout
   root after landing for untracked files not covered by `.gitignore` (step 9a)
+- `land-work/scripts/land-work-batch-assemble.py` to merge an ordered list of
+  branches into one worktree as a chain of explicit merge commits, for
+  `landing.mode: batch` repos only — see `## Batch Landing` below and
+  `references/batch-landing.md`
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script. Resolve each helper path relative to this `SKILL.md`
@@ -425,6 +429,120 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
     is not designed to protect your own worktree. Once you have stepped out of
     it, `self_invocation` is false and `recently_active`/`possibly_live` do not
     block removal.
+
+## Batch Landing
+
+Everything above is the serial path: one branch, one gate run, one merge.
+Serial-mode repos (no `swarm-config.json`, or `landing.mode` absent/`serial`)
+are unaffected by this section — its mechanics never run for them.
+
+For a repo whose `swarm-config.json` declares `landing.mode: batch` (see
+`swarm/references/landing-config.md` for the schema and its fail-safe
+validation), swarm's queue/linger policy assembles a batch of ready branches
+and calls into land-work to land them as one unit, replacing steps 5-10 above
+with the steps below. Steps 1-4 above (prepare, pre-hooks, gate baseline,
+independent code review) are **not** skipped in batch mode — they still run
+once per branch, before that branch is queued, as part of the teammate's own
+landing prep under the scoped-gate contract (a diff-scoped code review and
+`landing.gate_scope` run against that branch's own diff, not the whole
+batch). What changes in batch mode is only what happens after a branch is
+ready: instead of landing it alone under its own full gate, it joins the
+queue and lands as part of the next assembled batch, gated once at the tip.
+
+1. **Resolve the worktree.** Batch landing always uses the repo's
+   `landing.integration_worktree` (required for `mode: batch` to be usable at
+   all in practice, though `swarm-discover.py` does not enforce that — an
+   absent worktree just means no warm reuse). Resolve and validate it exactly
+   as `land-work-create-preview.py` does for a single landing (registered,
+   not foreign-dirty; fall back and halt rather than guessing if it is not
+   usable — see `references/integration-worktree.md`).
+2. **Capture the lease.** Refresh and capture the primary-branch ref SHA, the
+   same compare-and-set base every branch in the batch will assemble against.
+3. **Assemble.**
+
+   ```bash
+   land-work/scripts/land-work-batch-assemble.py \
+     --worktree <integration-worktree> \
+     --base-ref <leased-sha> \
+     --branch <branch-1> --branch <branch-2> ...
+   ```
+
+   This resets the worktree to the leased base, then merges each branch in
+   order with `--no-ff`, one merge commit per branch. A branch that conflicts
+   is evicted (its merge is aborted; the worktree is left exactly as it was
+   before that branch was attempted) and assembly continues with the rest —
+   report evicted branches back to their teammates as rework, do not retry
+   them in this batch. If every branch is evicted, there is nothing to land;
+   stop here.
+4. **Gate once, at the tip.** Run `landing.full_gate` in the assembled
+   worktree (the tip of the merge-commit chain `land-work-batch-assemble.py`
+   just produced). This is the single full-gate run for the whole batch —
+   individual branches were only diff-scope verified by their teammates
+   (`landing.gate_scope`), per the teammate-scoped-gate contract.
+4a. **Project verifier, at the tip.** The Non-Negotiable Rule "Do not merge
+    unless `land-work-run-verifier.py` exits 0 on the exact merge preview" is
+    not scoped to the serial path — run it here too, against the assembled
+    worktree as the candidate and the batch tip as the head:
+
+    ```bash
+    land-work/scripts/land-work-run-verifier.py \
+      --repo-root <repo-root> \
+      --candidate <integration-worktree> \
+      --base-sha <leased-sha> \
+      --head-sha <tip-sha-from-step-3> \
+      --runtime <runtime>
+    ```
+
+    A nonzero exit is the same landing failure it is on the serial path
+    (missing/invalid manifest, zero selected checks against a real diff, or a
+    verifier command error) — do not proceed to the gate requirement, the
+    lease re-check, or the push.
+5. **Red batch → bisect.** A gate or verifier failure at the tip does not
+   identify which assembled branch caused it. Bisecting a red batch
+   (reassembling subsets in the same warm worktree, isolating the culprit
+   branch(es), landing the green subset, returning culprits as rework) is a
+   separate mechanism — see the batched-swarm-landing epic's follow-up issue
+   for the bisect protocol. Until that lands, treat a red batch tip (gate or
+   verifier) as a full stop: do not land any part of it, return every
+   assembled branch as rework, and record the failure in the tracker.
+6. **Lease-checked advance.** On a green gate and verifier, re-verify the
+   lease against the same SHA captured in step 2:
+
+   ```bash
+   land-work/scripts/land-work-verify-lease.py --expected-sha <leased-sha>
+   ```
+
+   Abort (do not push) if the lease no longer matches — the batch retries
+   assembly on the new base rather than pushing over someone else's landing.
+   On a matching lease, push the worktree's current tip directly onto the
+   primary branch:
+
+   ```bash
+   git -C <integration-worktree> push origin HEAD:refs/heads/<primary-branch>
+   ```
+
+   This is a plain (non-force) push: the worktree's HEAD is a strict
+   fast-forward descendant of the leased base by construction (step 3 always
+   resets to that base first), so git's own fast-forward check is the second,
+   independent guarantee behind the explicit lease re-check — a primary ref
+   that moved between steps 2 and 6 makes this push fail even if the lease
+   re-check were somehow skipped. The primary ref moves exactly once, to the
+   gated tip; interior per-branch merge commits enter history but the ref
+   never pointed at them individually.
+7. **Post-land, per assembled branch.** For each entry in
+   `land-work-batch-assemble.py`'s `assembled` list (not the evicted ones):
+   close its tracker issue with gate evidence naming the batch tip SHA (not a
+   per-branch SHA — the gate ran once, at the tip, covering the whole batch),
+   then remove that branch's feature worktree and delete its branch, exactly
+   as the serial teardown in step 10 does.
+8. **Persistent worktree, not a preview.** Unlike the serial path's scratch
+   `/tmp` preview, the integration worktree survives after landing — do not
+   run `land-work-create-preview.py --cleanup` against it (that call is a
+   documented no-op there anyway; see `references/integration-worktree.md`).
+
+See `references/batch-landing.md` for the full mechanics, worked examples,
+and what remains out of scope (the bisect protocol; the queue/linger timing
+policy itself, which lives in the `swarm` skill).
 
 ## Non-Negotiable Rules
 
