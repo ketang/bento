@@ -360,6 +360,32 @@ class IntegrationWorktreePreviewTest(unittest.TestCase):
         self.assertIn(str(self.integration_worktree.resolve()), registered)
         self.assertFalse(working_tree_dirty_for_test(self.integration_worktree))
 
+    def test_first_use_conflict_preserves_freshly_created_integration_worktree(self) -> None:
+        # Regression: the very first preview against a not-yet-existing
+        # integration worktree must not be deleted on conflict just because
+        # this run is the one that created it (worktree_added=True). Deleting
+        # it here defeats the whole feature on its very first failure.
+        (self.repo / "README.md").write_text("main branch\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "main edit")
+
+        (self.worktree / "README.md").write_text("feature branch\n", encoding="utf-8")
+        git(self.worktree, "add", "README.md")
+        git(self.worktree, "commit", "-m", "feature edit")
+
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["merge_clean"])
+        self.assertTrue(payload["persistent_worktree"])
+        self.assertFalse(payload["preview_cleaned_up"])
+        self.assertTrue(self.integration_worktree.exists())
+        registered = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), registered)
+        self.assertFalse(working_tree_dirty_for_test(self.integration_worktree))
+
     def test_no_config_keeps_scratch_tmp_behavior_unchanged(self) -> None:
         git(self.worktree, "rm", "swarm-config.json")
         git(self.worktree, "commit", "-m", "remove swarm config")

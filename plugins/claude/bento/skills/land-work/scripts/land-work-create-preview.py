@@ -267,7 +267,7 @@ def main() -> int:
         # removing a successful preview. A persistent landing.integration_
         # worktree is never removed here — it survives failures so the next
         # landing can still reuse its build caches.
-        if worktree_added and errors:
+        if worktree_added and errors and not persistent_worktree:
             preview_cleaned_up, cleanup_errors = cleanup_preview(preview_dir, checkout_root)
             errors.extend(cleanup_errors)
 

@@ -68,3 +68,19 @@ This covers serial landings only. Batch assembly (multiple branches merged in
 sequence against one persistent worktree, then gated once at the tip) is a
 separate concern — see the batched-swarm-landing epic's batch-primitives
 issue.
+
+## Known Limitation: Single-Writer Assumption
+
+This feature adds no locking around the persistent worktree: two concurrent
+`land-work-create-preview.py` invocations against the same configured
+`landing.integration_worktree` (e.g. from two independent sessions landing to
+the same repo at once) can race their `git reset --hard` / `git merge`
+against the same directory and corrupt each other's preview. This is safe
+today only because land-work already has a single-writer invariant in
+practice — swarm's Phase 4 serializes all landings through one lead, one
+branch at a time — so no documented workflow actually drives two concurrent
+land-work runs against one repo. A scratch `/tmp` preview never had this
+risk (each invocation got a unique directory); a persistent worktree is a new
+shared, stateful resource. Locking belongs with the batch-primitives work
+(the batched-swarm-landing epic), which already needs to serialize access to
+the same worktree for its assemble/gate/bisect sequence — see bento-nmmk.
