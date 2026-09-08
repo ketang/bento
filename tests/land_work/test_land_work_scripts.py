@@ -182,6 +182,52 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertNotIn(str(preview_dir.resolve()), registered)
         self.assertFalse(preview_dir.exists())
 
+    def test_preview_refuses_when_leftover_preview_worktrees_exist(self) -> None:
+        # A leaked scratch preview from an earlier landing attempt (default
+        # naming: land-work-preview-*) must block creating another one.
+        leftover_result = self.run_preview(cwd=self.worktree)
+        leftover_payload = json.loads(leftover_result.stdout)
+        leftover_dir = Path(leftover_payload["preview_dir"])
+        self.assertTrue(leftover_dir.name.startswith("land-work-preview-"))
+
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn(str(leftover_dir), payload["leftover_previews"])
+        joined_errors = " ".join(payload["errors"])
+        self.assertIn(str(leftover_dir), joined_errors)
+        self.assertIn("--cleanup", joined_errors)
+
+        # Must not have created a second preview worktree.
+        self.assertNotIn("preview_dir", payload)
+
+        self.run_preview("--cleanup", "--preview-dir", str(leftover_dir), cwd=self.worktree)
+
+    def test_preview_allow_existing_bypasses_leftover_refusal(self) -> None:
+        leftover_result = self.run_preview(cwd=self.worktree)
+        leftover_payload = json.loads(leftover_result.stdout)
+        leftover_dir = Path(leftover_payload["preview_dir"])
+
+        result = self.run_preview("--allow-existing", cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["merge_clean"])
+
+        self.run_preview("--cleanup", "--preview-dir", str(leftover_dir), cwd=self.worktree)
+        self.run_preview("--cleanup", "--preview-dir", payload["preview_dir"], cwd=self.worktree)
+
+    def test_preview_explicit_dir_not_flagged_as_leftover(self) -> None:
+        # Custom-named preview dirs (e.g. from other test fixtures or a
+        # caller-supplied --preview-dir) are not land-work-preview-* and must
+        # never trip the leftover check on themselves.
+        preview_dir = Path(self.temp_dir.name) / "custom-preview-name"
+        result = self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+
     def test_lease_check_matches_expected_sha(self) -> None:
         expected_sha = git(self.repo, "rev-parse", "refs/heads/main").stdout.strip()
 
@@ -228,6 +274,44 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["tree_matches"])
         self.assertIn("landed tree mismatch for refs/heads/main", payload["errors"])
+
+    def test_verify_landing_fails_when_preview_worktree_still_registered(self) -> None:
+        preview_dir = Path(self.temp_dir.name) / "preview-not-cleaned"
+        self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree)
+        git(self.repo, "merge", "--no-ff", "feature/test", "-m", "merge feature/test")
+
+        result = self.run_verify_landing(
+            "--ref", "refs/heads/main", "--preview-dir", str(preview_dir), cwd=self.repo, check=False
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["preview_dir_registered"])
+        self.assertIn(str(preview_dir.resolve()), " ".join(payload["errors"]))
+
+        self.run_preview("--cleanup", "--preview-dir", str(preview_dir), cwd=self.worktree)
+
+    def test_verify_landing_passes_when_preview_worktree_cleaned_up(self) -> None:
+        preview_dir = Path(self.temp_dir.name) / "preview-cleaned"
+        preview_result = self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree)
+        preview_payload = json.loads(preview_result.stdout)
+        git(self.repo, "merge", "--no-ff", "feature/test", "-m", "merge feature/test")
+        self.run_preview("--cleanup", "--preview-dir", str(preview_dir), cwd=self.worktree)
+
+        result = self.run_verify_landing(
+            "--ref",
+            "refs/heads/main",
+            "--expected-tree",
+            preview_payload["preview_tree"],
+            "--preview-dir",
+            str(preview_dir),
+            cwd=self.repo,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["preview_dir_registered"])
 
 
 class IntegrationWorktreePreviewTest(unittest.TestCase):
