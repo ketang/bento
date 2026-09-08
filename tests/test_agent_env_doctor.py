@@ -708,6 +708,18 @@ class AgentEnvDoctorTest(unittest.TestCase):
         (self.repo / "some-file.txt").write_text("hi\n", encoding="utf-8")
         self.assertIsNone(self._evaluate())
 
+    def test_bare_true_outside_core_section_not_flagged(self) -> None:
+        # A same-named `bare = true` key in an unrelated section (e.g. a
+        # submodule's) must not be mistaken for core.bare.
+        git_dir = self.repo / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text(
+            '[core]\n\tbare = false\n[submodule "x"]\n\tbare = true\n',
+            encoding="utf-8",
+        )
+        (self.repo / "some-file.txt").write_text("hi\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
     def test_linked_worktree_gitdir_file_not_flagged_as_bare(self) -> None:
         # A linked worktree's .git is a file (gitdir pointer), not a
         # directory; the bare-primary check must not misfire on it.
@@ -816,6 +828,42 @@ class AgentEnvDoctorTest(unittest.TestCase):
             context = self._context(decision)
             self.assertIn("orphan dolt sql-server", context)
             self.assertIn(str(fake.pid), context)
+        finally:
+            fake.terminate()
+            fake.wait(timeout=5)
+
+    def test_dolt_server_for_sibling_directory_not_flagged(self) -> None:
+        # A dolt sql-server for a sibling directory whose path merely has
+        # this repo's .beads/dolt as a *string prefix* (e.g. a "-staging"
+        # suffix) must not be mistaken for this repo's orphan.
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        sibling_dolt_dir = str(beads_dir / "dolt") + "-staging"
+        fake = subprocess.Popen(
+            ["sh", "-c", f"sleep 30 # dolt sql-server {sibling_dolt_dir}"]
+        )
+        try:
+            time.sleep(0.3)
+            self.assertIsNone(self._evaluate())
+        finally:
+            fake.terminate()
+            fake.wait(timeout=5)
+
+    def test_dolt_server_cwd_in_sibling_directory_not_flagged(self) -> None:
+        # A process whose cwd is a sibling directory that merely starts with
+        # ".beads" as a string (e.g. ".beads-backup") must not be mistaken
+        # for a process running inside this repo's .beads dir.
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        sibling = self.repo / ".beads-backup"
+        sibling.mkdir()
+        fake = subprocess.Popen(
+            ["sh", "-c", "sleep 30 # dolt sql-server unrelated-path"],
+            cwd=sibling,
+        )
+        try:
+            time.sleep(0.3)
+            self.assertIsNone(self._evaluate())
         finally:
             fake.terminate()
             fake.wait(timeout=5)

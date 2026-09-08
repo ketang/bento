@@ -297,7 +297,27 @@ def check_agent_mode(root: Path) -> list[str]:
 # --- check 5: bare primary checkout with a working tree ---------------------
 
 
-_CORE_BARE_TRUE_RE = re.compile(r"(?im)^\s*bare\s*=\s*true\s*$")
+_INI_SECTION_RE = re.compile(r"^\[([^\]]+)\]")
+_CORE_BARE_TRUE_RE = re.compile(r"(?i)^bare\s*=\s*true$")
+
+
+def _core_bare_true(config_text: str) -> bool:
+    """True when config_text sets ``bare = true`` inside its ``[core]``
+    section specifically — not merely anywhere in the file, since another
+    section (e.g. a submodule's) could coincidentally define a same-named
+    key without that meaning core.bare is set."""
+    section: str | None = None
+    for line in config_text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith(("#", ";")):
+            continue
+        header = _INI_SECTION_RE.match(stripped)
+        if header:
+            section = header.group(1).strip().lower()
+            continue
+        if section == "core" and _CORE_BARE_TRUE_RE.match(stripped):
+            return True
+    return False
 
 
 def check_bare_primary(root: Path) -> list[str]:
@@ -310,7 +330,7 @@ def check_bare_primary(root: Path) -> list[str]:
         # gitdir pointer, not the primary checkout; nothing to check here.
         return []
     config_text = _read_text_bounded(git_dir / "config")
-    if config_text is None or not _CORE_BARE_TRUE_RE.search(config_text):
+    if config_text is None or not _core_bare_true(config_text):
         return []
     try:
         has_working_tree_files = any(p.name != ".git" for p in root.iterdir())
@@ -325,13 +345,17 @@ def check_bare_primary(root: Path) -> list[str]:
     ]
 
 
-# --- check 6: prunable git worktrees -----------------------------------------
+# --- checks 6/7: worktree bookkeeping (one shared `git worktree list` call) --
 
 
-def check_prunable_worktrees(root: Path) -> list[str]:
+def _worktree_list_entries(root: Path) -> list[dict]:
+    """Parse `git worktree list --porcelain` once into per-worktree records
+    (path, and a "prunable" reason when git's own bookkeeping flags one) so
+    checks 6 and 7 both answer from a single subprocess call instead of each
+    forking git separately for overlapping information."""
     try:
         result = subprocess.run(
-            ["git", "-C", str(root), "worktree", "prune", "--dry-run", "--verbose"],
+            ["git", "-C", str(root), "worktree", "list", "--porcelain"],
             capture_output=True,
             text=True,
             check=False,
@@ -341,10 +365,28 @@ def check_prunable_worktrees(root: Path) -> list[str]:
     if result.returncode != 0:
         # Not a git repository (or git otherwise failed) — nothing to judge.
         return []
+    entries: list[dict] = []
+    current: dict | None = None
+    for line in result.stdout.splitlines():
+        if line.startswith("worktree "):
+            current = {"path": line[len("worktree "):], "prunable": None}
+            entries.append(current)
+        elif line.startswith("prunable") and current is not None:
+            reason = line[len("prunable"):].strip(" :")
+            current["prunable"] = reason or "stale worktree"
+    return entries
+
+
+# --- check 6: prunable git worktrees -----------------------------------------
+
+
+def check_prunable_worktrees(root: Path, entries: list[dict] | None = None) -> list[str]:
+    if entries is None:
+        entries = _worktree_list_entries(root)
     lines = [
-        line.strip()
-        for line in (result.stdout + result.stderr).splitlines()
-        if line.strip()
+        f"{entry['path']}: {entry['prunable']}"
+        for entry in entries
+        if entry.get("prunable")
     ]
     if not lines:
         return []
@@ -358,10 +400,10 @@ def check_prunable_worktrees(root: Path) -> list[str]:
 
 
 def _preview_max_age_hours(root: Path) -> float:
-    text = _read_agent_mode_text(root / ".agent-mode.local")
+    text = _read_text_bounded(root / ".agent-mode.local")
     if text is None:
         return DEFAULT_PREVIEW_MAX_AGE_HOURS
-    for line in text.split("\n"):
+    for line in text.splitlines():
         stripped = line.strip()
         if not stripped or stripped.startswith("#") or "=" not in stripped:
             continue
@@ -423,21 +465,10 @@ def _repo_name(root: Path) -> str | None:
         return None
 
 
-def _registered_worktree_paths(root: Path) -> set[Path]:
-    try:
-        result = subprocess.run(
-            ["git", "-C", str(root), "worktree", "list", "--porcelain"],
-            capture_output=True,
-            text=True,
-            check=False,
-        )
-    except OSError:
-        return set()
+def _registered_worktree_paths(entries: list[dict]) -> set[Path]:
     paths: set[Path] = set()
-    for line in result.stdout.splitlines():
-        if not line.startswith("worktree "):
-            continue
-        candidate = Path(line[len("worktree "):])
+    for entry in entries:
+        candidate = Path(entry["path"])
         try:
             paths.add(candidate.resolve())
         except OSError:
@@ -445,14 +476,18 @@ def _registered_worktree_paths(root: Path) -> set[Path]:
     return paths
 
 
-def check_worktree_root_orphans(root: Path, home: Path) -> list[str]:
+def check_worktree_root_orphans(
+    root: Path, home: Path, entries: list[dict] | None = None
+) -> list[str]:
     repo_name = _repo_name(root)
     if not repo_name:
         return []
     worktrees_dir = home / ".local" / "share" / "worktrees" / repo_name
     if not worktrees_dir.is_dir():
         return []
-    registered = _registered_worktree_paths(root)
+    if entries is None:
+        entries = _worktree_list_entries(root)
+    registered = _registered_worktree_paths(entries)
     warnings: list[str] = []
     try:
         entries = sorted(worktrees_dir.iterdir())
@@ -506,13 +541,20 @@ def check_orphan_dolt_server(root: Path) -> list[str]:
         pid_str, args = parts
         if "dolt" not in args or "sql-server" not in args:
             continue
-        matched = dolt_dir in args
+        # Path-boundary match: dolt_dir must appear as a whole path token,
+        # not merely as a string prefix (a sibling directory like
+        # "<dolt_dir>-staging" must not match).
+        matched = bool(
+            re.search(rf"(?:^|[\s\"'=]){re.escape(dolt_dir)}(?:$|[\s\"'/])", args)
+        )
         if not matched and sys.platform.startswith("linux"):
             try:
                 cwd = os.readlink(f"/proc/{pid_str}/cwd")
             except OSError:
                 cwd = None
-            if cwd is not None and (cwd == str(root) or cwd.startswith(str(beads_dir))):
+            if cwd is not None and (
+                cwd == str(root) or cwd == str(beads_dir) or cwd.startswith(str(beads_dir) + os.sep)
+            ):
                 matched = True
         if matched:
             warnings.append(
@@ -549,9 +591,10 @@ def collect_warnings(
     warnings.extend(check_imports(root))
     warnings.extend(check_agent_mode(root))
     warnings.extend(check_bare_primary(root))
-    warnings.extend(check_prunable_worktrees(root))
+    worktree_entries = _worktree_list_entries(root)
+    warnings.extend(check_prunable_worktrees(root, entries=worktree_entries))
     warnings.extend(check_stale_previews(root, tmp_root, now=now))
-    warnings.extend(check_worktree_root_orphans(root, home))
+    warnings.extend(check_worktree_root_orphans(root, home, entries=worktree_entries))
     warnings.extend(check_orphan_dolt_server(root))
     return warnings
 
@@ -573,12 +616,16 @@ def _project_root(hook_input: dict) -> Path | None:
         return Path(root)
     # `git rev-parse --show-toplevel` itself fails once core.bare is flipped
     # true on a checkout that still has a working tree — exactly the
-    # condition check_bare_primary exists to catch. Fall back to cwd when it
-    # visibly has its own .git entry, so that check stays reachable, without
-    # abandoning the "never scan a non-project directory" contract for cwds
-    # that aren't a git checkout at all.
-    if (Path(cwd) / ".git").exists():
-        return Path(cwd)
+    # condition check_bare_primary exists to catch. Fall back to cwd only for
+    # that specific condition (a real .git dir whose config actually sets
+    # core.bare = true), not for every rev-parse failure — an unrelated
+    # refusal (e.g. "detected dubious ownership") must still stay silent per
+    # the "never scan a non-project directory" contract.
+    git_dir = Path(cwd) / ".git"
+    if git_dir.is_dir():
+        config_text = _read_text_bounded(git_dir / "config")
+        if config_text is not None and _core_bare_true(config_text):
+            return Path(cwd)
     return None
 
 

@@ -247,6 +247,22 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
 
     # --- check 6: prunable git worktrees -------------------------------------
 
+    def test_unrelated_git_failure_does_not_fall_back_to_cwd(self) -> None:
+        # A .git dir that git itself refuses to recognize for a reason
+        # *other* than the bare-checkout bug (here: no HEAD/refs at all, so
+        # `git rev-parse --show-toplevel` fails with "not a git repository")
+        # must stay silent, not be treated as a project root via the
+        # bare-checkout fallback.
+        import shutil as _shutil
+
+        _shutil.rmtree(self.repo / ".git")
+        (self.repo / ".git").mkdir()
+        (self.repo / ".git" / "config").write_text(
+            "[core]\n\tbare = false\n", encoding="utf-8"
+        )
+        (self.repo / "AGENTS.md").write_text("@gone.md\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
     def test_prunable_worktree_detected(self) -> None:
         subprocess.run(
             ["git", "commit", "--allow-empty", "-m", "init", "-q"],
