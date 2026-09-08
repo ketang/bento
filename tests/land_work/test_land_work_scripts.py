@@ -142,6 +142,88 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertFalse(payload["require_up_to_date_satisfied"])
         self.assertIn("current branch is behind the primary branch by 1 commit(s)", payload["errors"])
 
+    # -- bento-rdtn.5: primary checkout diagnostics ---------------------------
+
+    def test_prepare_reports_primary_equal_by_default(self) -> None:
+        # No remote-tracking ref exists in the plain test fixture, so
+        # divergence cannot be judged.
+        result = self.run_prepare(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["primary_bare"])
+        self.assertFalse(payload["primary_dirty"])
+        self.assertIsNone(payload["primary_local_vs_remote"])
+
+    def test_prepare_reports_primary_ahead_of_leased_remote(self) -> None:
+        # Simulate the shatter-repo scenario: another session's unpushed
+        # commits (or this session's own) left the primary's local main
+        # ahead of the leased origin/main remote-tracking ref.
+        base_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        git(self.repo, "update-ref", "refs/remotes/origin/main", base_sha)
+        (self.repo / "extra.txt").write_text("more\n", encoding="utf-8")
+        git(self.repo, "add", "extra.txt")
+        git(self.repo, "commit", "-m", "local-only commit on primary")
+
+        result = self.run_prepare(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary_local_vs_remote"], "ahead")
+        self.assertEqual(payload["primary_ahead"], 1)
+        self.assertEqual(payload["primary_behind"], 0)
+
+    def test_prepare_reports_primary_diverged_from_leased_remote(self) -> None:
+        base_sha = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        git(self.repo, "checkout", "--detach", base_sha)
+        (self.repo / "remote-only.txt").write_text("r\n", encoding="utf-8")
+        git(self.repo, "add", "remote-only.txt")
+        git(self.repo, "commit", "-m", "remote-only commit")
+        remote_tip = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        git(self.repo, "update-ref", "refs/remotes/origin/main", remote_tip)
+        git(self.repo, "checkout", "main")
+        (self.repo / "local-only.txt").write_text("l\n", encoding="utf-8")
+        git(self.repo, "add", "local-only.txt")
+        git(self.repo, "commit", "-m", "local-only commit")
+
+        result = self.run_prepare(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["primary_local_vs_remote"], "diverged")
+        self.assertEqual(payload["primary_ahead"], 1)
+        self.assertEqual(payload["primary_behind"], 1)
+
+    def test_prepare_reports_bare_primary_from_feature_worktree(self) -> None:
+        # A linked feature worktree still functions normally even when the
+        # shared primary's core.bare has been flipped true -- exactly the
+        # corrupted-primary scenario land-work needs to detect and route
+        # around, not crash on.
+        git(self.repo, "config", "core.bare", "true")
+
+        result = self.run_prepare(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["primary_bare"])
+        self.assertIsNone(payload["primary_dirty"])
+        self.assertTrue(any("core.bare" in e for e in payload["errors"]))
+
+    def test_prepare_reports_dirty_primary_from_feature_worktree(self) -> None:
+        (self.repo / "untracked-in-primary.txt").write_text("oops\n", encoding="utf-8")
+
+        result = self.run_prepare(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["primary_bare"])
+        self.assertTrue(payload["primary_dirty"])
+        self.assertTrue(
+            any("uncommitted changes" in e and "primary checkout" in e for e in payload["errors"])
+        )
+
     def test_preview_creates_clean_merge_candidate(self) -> None:
         base_sha = git(self.repo, "rev-parse", "refs/heads/main").stdout.strip()
         feature_sha = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
@@ -375,6 +457,73 @@ class LandWorkScriptsTest(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["preview_dir_registered"])
+
+
+class PushFromPreviewLandingTest(unittest.TestCase):
+    """bento-rdtn.5: when the primary checkout's local main has diverged from
+    (or is ahead of) the leased origin ref, the documented route is to commit
+    the merge in the preview worktree, push straight to origin from there,
+    then fetch + ff-only merge in the primary. land-work-verify-landing.py
+    must still pass for a landing that reached the primary ref this way."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        base = Path(self.temp_dir.name)
+        self.remote = base / "remote.git"
+        self.repo = base / "repo"
+        self.worktree = base / "feature-worktree"
+
+        subprocess.run(
+            ["git", "init", "--bare", "-b", "main", str(self.remote)],
+            check=True, capture_output=True, text=True,
+        )
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Push From Preview Test")
+        git(self.repo, "config", "user.email", "push-from-preview@example.com")
+        (self.repo / "README.md").write_text("root\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "initial commit")
+        git(self.repo, "remote", "add", "origin", str(self.remote))
+        git(self.repo, "push", "-u", "origin", "main")
+
+        git(self.repo, "worktree", "add", "-b", "feature/test", str(self.worktree), "main")
+        (self.worktree / "feature.txt").write_text("feature\n", encoding="utf-8")
+        git(self.worktree, "add", "feature.txt")
+        git(self.worktree, "commit", "-m", "feature change")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_verify_landing_passes_for_a_push_from_preview_landing(self) -> None:
+        base_sha = git(self.repo, "rev-parse", "refs/remotes/origin/main").stdout.strip()
+        preview_dir = Path(self.temp_dir.name) / "preview"
+        preview_result = run(
+            [str(PREVIEW_SCRIPT), "--base-ref", base_sha, "--preview-dir", str(preview_dir)],
+            self.worktree,
+        )
+        preview_payload = json.loads(preview_result.stdout)
+        self.assertTrue(preview_payload["merge_clean"])
+
+        # Finish the merge preview creates with --no-commit into a real
+        # commit, then push straight from the preview worktree to origin --
+        # never touching the primary checkout, which the acceptance scenario
+        # assumes has diverged from origin/main and cannot merge normally.
+        git(preview_dir, "commit", "-m", "Merge branch 'feature/test'")
+        git(preview_dir, "push", "origin", "HEAD:refs/heads/main")
+
+        # Sync the primary the documented way: fetch + ff-only merge.
+        git(self.repo, "fetch", "origin")
+        git(self.repo, "merge", "--ff-only", "origin/main")
+
+        result = run(
+            [str(VERIFY_LANDING_SCRIPT), "--ref", "refs/heads/main", "--expected-tree", preview_payload["preview_tree"]],
+            self.repo,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["tree_matches"])
 
 
 class IntegrationWorktreePreviewTest(unittest.TestCase):

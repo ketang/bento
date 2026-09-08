@@ -16,8 +16,36 @@ from git_state import (
     is_linked_worktree,
     primary_checkout_root,
     ref_exists,
+    try_git_stdout,
     working_tree_dirty,
 )
+
+
+def _primary_bare(primary_root: Path) -> bool:
+    return try_git_stdout("rev-parse", "--is-bare-repository", cwd=primary_root) == "true"
+
+
+def _primary_divergence(
+    primary_root: Path, primary_branch: str
+) -> tuple[str | None, int | None, int | None]:
+    """(status, ahead, behind) of the primary checkout's local branch against
+    its leased origin ref -- the same ref land-work-verify-lease.py checks.
+    None/None/None when either ref is unavailable (e.g. no remote configured),
+    since divergence cannot be judged without both sides."""
+    remote_ref = f"refs/remotes/origin/{primary_branch}"
+    local_ref = f"refs/heads/{primary_branch}"
+    if not ref_exists(remote_ref, primary_root) or not ref_exists(local_ref, primary_root):
+        return None, None, None
+    behind, ahead = ahead_behind(remote_ref, local_ref, primary_root)
+    if ahead and behind:
+        status = "diverged"
+    elif ahead:
+        status = "ahead"
+    elif behind:
+        status = "behind"
+    else:
+        status = "equal"
+    return status, ahead, behind
 
 
 def parse_args() -> argparse.Namespace:
@@ -51,6 +79,18 @@ def main() -> int:
     )
     behind_primary, ahead_primary = ahead_behind(primary_branch, branch, checkout_root)
 
+    primary_root = primary_checkout_root(checkout_root)
+    primary_bare = _primary_bare(primary_root)
+    # `git status` itself fails ("must be run in a work tree") on a bare
+    # checkout, so the dirty check only makes sense once bare is ruled out.
+    primary_dirty = None if primary_bare else working_tree_dirty(primary_root)
+    if primary_bare:
+        primary_local_vs_remote, primary_ahead, primary_behind = None, None, None
+    else:
+        primary_local_vs_remote, primary_ahead, primary_behind = _primary_divergence(
+            primary_root, primary_branch
+        )
+
     errors: list[str] = []
     if args.expected_branch and branch != args.expected_branch:
         errors.append(f"current branch does not match expected branch: {branch}")
@@ -64,11 +104,22 @@ def main() -> int:
         errors.append("current branch has no commits ahead of the primary branch")
     if args.require_up_to_date and behind_primary != 0:
         errors.append(f"current branch is behind the primary branch by {behind_primary} commit(s)")
+    if primary_bare:
+        errors.append(
+            f"primary checkout at {primary_root} has core.bare=true with a working "
+            "tree -- git commands there fail with \"must be run in a work tree\"; "
+            "unset core.bare or run from a linked worktree"
+        )
+    elif primary_dirty:
+        errors.append(
+            f"primary checkout at {primary_root} has uncommitted changes; commit, "
+            "stash, or clean it before landing"
+        )
 
     payload = {
         "cwd": str(cwd),
         "checkout_root": str(checkout_root),
-        "primary_checkout_root": str(primary_checkout_root(checkout_root)),
+        "primary_checkout_root": str(primary_root),
         "branch": branch,
         "primary_branch": primary_branch,
         "linked_worktree": linked_worktree,
@@ -80,6 +131,11 @@ def main() -> int:
         "expected_branch_match": args.expected_branch is None or branch == args.expected_branch,
         "require_linked_worktree_satisfied": not args.require_linked_worktree or linked_worktree,
         "require_up_to_date_satisfied": not args.require_up_to_date or behind_primary == 0,
+        "primary_bare": primary_bare,
+        "primary_dirty": primary_dirty,
+        "primary_local_vs_remote": primary_local_vs_remote,
+        "primary_ahead": primary_ahead,
+        "primary_behind": primary_behind,
         "ok": not errors,
         "warnings": warnings,
         "errors": errors,

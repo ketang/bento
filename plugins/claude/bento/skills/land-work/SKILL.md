@@ -33,7 +33,14 @@ state checks that should not rely on ad hoc prose reconstruction:
 
 - `land-work/scripts/land-work-prepare.py` to verify the current checkout is a
   clean feature-branch worktree with something to land and, when requested,
-  that it is not stale relative to the primary branch
+  that it is not stale relative to the primary branch. Also reports the
+  *primary checkout's own* state — `primary_bare`, `primary_dirty`, and
+  `primary_local_vs_remote` (`ahead`/`behind`/`diverged`/`equal`/`null` when no
+  remote-tracking ref exists) — and fails closed on a bare or dirty primary.
+  `ahead`/`diverged` is not itself a failure: it means the primary checkout
+  cannot receive a normal local merge right now (its local branch already has
+  commits the leased origin ref doesn't), so land from the preview instead —
+  see step 8's push-from-preview route below.
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
@@ -325,7 +332,33 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
    - abort if the lease changed — and before stopping, remove the preview
      worktree (the cleanup command below); an aborted landing must not leave
      its scratch worktree registered
-   - commit and push only if the lease still matches
+   - commit and push only if the lease still matches, using one of two routes
+     depending on what `land-work-prepare.py`'s `primary_local_vs_remote`
+     reported at step 1 (concurrent sessions can also move the primary
+     between then and now, so re-check if time has passed):
+     - **Normal route** (`equal` or `behind`, i.e. the primary checkout's
+       local branch is not ahead of the leased origin ref): merge in the
+       primary checkout as usual, then push it.
+     - **Push-from-preview route** (`ahead` or `diverged` — the primary
+       checkout's local branch already has commits the leased origin ref
+       doesn't, so a normal merge-then-push from the primary would either
+       silently include those extra commits in the landing or fail outright).
+       No flag selects this; it is the standard route for this diagnostic, not
+       a workaround. Do not touch the primary checkout's branch at all:
+       1. Finish the merge preview already started with `--no-commit` into a
+          real commit, in the preview worktree: `git commit`.
+       2. Push straight from the preview worktree to the leased remote,
+          non-force: `git push origin HEAD:refs/heads/<primary-branch>`
+          (`origin` is the same remote `land-work-verify-lease.py` leases
+          against).
+       3. Sync the primary checkout the safe way — fetch, then fast-forward
+          only: `git fetch origin` then
+          `git merge --ff-only origin/<primary-branch>` in the primary
+          checkout. `--ff-only` refuses instead of creating a surprise merge
+          commit if the primary gained yet another local commit in the
+          meantime.
+       See `references/direct-primary-branch.md` for the same route applied
+       when the repo's real integration branch isn't `main`/`master`.
    - **Always** remove the preview worktree once you are done with it, on every
      exit path — verified landing, aborted lease, or any error after the
      preview was created. It is a registered git worktree and otherwise
