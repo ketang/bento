@@ -78,6 +78,9 @@ state checks that should not rely on ad hoc prose reconstruction:
   branches into one worktree as a chain of explicit merge commits, for
   `landing.mode: batch` repos only — see `## Batch Landing` below and
   `references/batch-landing.md`
+- `land-work/scripts/land-work-batch-bisect.py` to isolate the culprit
+  branch(es) in a red batch tip by halving, for `landing.mode: batch` repos
+  only — see `## Batch Landing` step 5 and `references/batch-landing.md`
 
 Invoke these helpers by script path, not `python3 <script>`, so approvals stay
 scoped to the script. Resolve each helper path relative to this `SKILL.md`
@@ -573,14 +576,48 @@ queue and lands as part of the next assembled batch, gated once at the tip.
     (missing/invalid manifest, zero selected checks against a real diff, or a
     verifier command error) — do not proceed to the gate requirement, the
     lease re-check, or the push.
-5. **Red batch → bisect.** A gate or verifier failure at the tip does not
-   identify which assembled branch caused it. Bisecting a red batch
-   (reassembling subsets in the same warm worktree, isolating the culprit
-   branch(es), landing the green subset, returning culprits as rework) is a
-   separate mechanism — see the batched-swarm-landing epic's follow-up issue
-   for the bisect protocol. Until that lands, treat a red batch tip (gate or
-   verifier) as a full stop: do not land any part of it, return every
-   assembled branch as rework, and record the failure in the tracker.
+5. **Red batch → bisect.** A gate or verifier failure at the tip does not by
+   itself identify which assembled branch caused it. Bisect in the same warm
+   worktree instead of a full stop:
+
+   ```bash
+   land-work/scripts/land-work-batch-bisect.py \
+     --worktree <integration-worktree> \
+     --base-ref <leased-sha> \
+     --gate-command <landing.full_gate command> \
+     --branch <branch-1> --branch <branch-2> ...
+   ```
+
+   Pass the same ordered branch list step 3 assembled (the one whose tip just
+   gated or verified red). The script splits it in half, reassembles each
+   half against the leased base via `land-work-batch-assemble.py`, runs
+   `--gate-command` on each half, and recurses into whichever half(ves) are
+   still red — bottoming out at a single branch (the culprit) or, when
+   neither half of a red parent gates red alone, at an
+   `ambiguous_non_monotonic` note that attributes the whole parent subset (a
+   branch that is only red in combination with another one; see
+   `references/batch-landing.md`'s `## Bisect` section for why plain halving
+   cannot localize that case further). It then reassembles the surviving
+   `landable` subset once more and gates it a final time to confirm.
+
+   - If `final.ok` is `true`: `landable` is the subset to land (step 6, same
+     mechanics as a clean batch). `culprits` are returned as rework. Record
+     the full `trail` (every subset tried, its gate result, and which
+     branch(es) were isolated) in the tracker issue for the batch.
+   - If `final.ok` is `false` (the confirmation gate on `landable` itself
+     failed — a residual non-monotonic interaction among the survivors that
+     pairwise halving did not catch) or the script itself reports `ok: false`
+     (an infra failure: unregistered worktree, bad base-ref, or the shared
+     worktree becoming unusable mid-bisect): treat this exactly like the old
+     full-stop path — do not land any part of the batch, return **every**
+     originally assembled branch as rework (not just `culprits`), and record
+     the failure and trail in the tracker.
+   - If the project verifier (step 4a), not the gate, is what failed at the
+     tip: run bisect the same way, substituting a verifier-invocation command
+     for `--gate-command` (wrap `land-work-run-verifier.py` with the fixed
+     `--repo-root`/`--base-sha`/`--runtime` flags for this batch, varying only
+     `--head-sha` per reassembled subset's tip) so the same halving loop
+     applies.
 6. **Lease-checked advance.** On a green gate and verifier, re-verify the
    lease against the same SHA captured in step 2:
 
@@ -617,8 +654,8 @@ queue and lands as part of the next assembled batch, gated once at the tip.
    documented no-op there anyway; see `references/integration-worktree.md`).
 
 See `references/batch-landing.md` for the full mechanics, worked examples,
-and what remains out of scope (the bisect protocol; the queue/linger timing
-policy itself, which lives in the `swarm` skill).
+and the bisect protocol's `## Bisect` section. The queue/linger timing policy
+itself remains out of scope here — it lives in the `swarm` skill.
 
 ## Non-Negotiable Rules
 
