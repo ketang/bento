@@ -50,7 +50,34 @@ def parse_args() -> argparse.Namespace:
         help="remove a previously-created preview worktree at --preview-dir; idempotent if the directory is already gone. "
         "Refuses (without error) when --preview-dir is the repo's configured landing.integration_worktree.",
     )
+    parser.add_argument(
+        "--allow-existing",
+        action="store_true",
+        help="skip the leftover-preview-worktree refusal check and create a new preview anyway",
+    )
     return parser.parse_args()
+
+
+def leftover_preview_worktrees(checkout_root: Path) -> tuple[list[Path], list[str]]:
+    """Registered land-work-preview-* worktrees left behind by an earlier,
+    uncleaned landing attempt (bento-rdtn.3): each one is a live git worktree
+    that slows every later `git worktree` probe until removed.
+
+    Returns (leftovers, warnings). A failure listing worktrees degrades to "no
+    leftovers found" (so it never blocks a landing on a git plumbing hiccup)
+    but is surfaced as a warning rather than silently swallowed, matching how
+    the same failure is handled elsewhere in this file (e.g.
+    integration_worktree_unusable_reason)."""
+    try:
+        registered = registered_worktree_paths(checkout_root)
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        return [], [
+            "unable to check for leftover land-work-preview-* worktrees "
+            f"(`git worktree list` failed: {stderr or exc})"
+        ]
+    leftovers = sorted(p for p in registered if p.name.startswith("land-work-preview-"))
+    return leftovers, []
 
 
 def default_preview_dir() -> Path:
@@ -220,6 +247,32 @@ def main() -> int:
     )
     base_ref = args.base_ref or default_base_ref
     feature_ref = args.feature_ref or branch
+
+    if not args.allow_existing:
+        leftover, leftover_warnings = leftover_preview_worktrees(checkout_root)
+        warnings.extend(leftover_warnings)
+        if leftover:
+            cleanup_hint = "; ".join(
+                f"land-work-create-preview.py --cleanup --preview-dir {p}" for p in leftover
+            )
+            payload = {
+                "cwd": str(cwd),
+                "checkout_root": str(checkout_root),
+                "branch": branch,
+                "primary_branch": primary_branch,
+                "linked_worktree": is_linked_worktree(checkout_root),
+                "leftover_previews": [str(p) for p in leftover],
+                "ok": False,
+                "warnings": warnings,
+                "errors": [
+                    "leftover land-work-preview-* worktree(s) exist: "
+                    + ", ".join(str(p) for p in leftover)
+                    + f"; remove them first ({cleanup_hint}) or pass --allow-existing"
+                ],
+            }
+            json.dump(payload, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            return 1
 
     persistent_worktree = False
     if args.preview_dir:

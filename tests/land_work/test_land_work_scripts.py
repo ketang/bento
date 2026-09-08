@@ -1,7 +1,10 @@
+import importlib.util
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
 from tests.script_test_utils import git, run
@@ -12,6 +15,36 @@ PREPARE_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-prepare
 PREVIEW_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-create-preview.py"
 LEASE_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-verify-lease.py"
 VERIFY_LANDING_SCRIPT = REPO_ROOT / "catalog/skills/land-work/scripts/land-work-verify-landing.py"
+
+
+def load_preview_module():
+    """Import land-work-create-preview.py directly (hyphenated filename, so
+    not a normal import) to unit-test its helpers without a subprocess.
+
+    Several skills ship their own same-named git_state.py; another test in
+    this suite may already have cached a *different* one under sys.modules
+    ["git_state"], which would make our `from git_state import (...)` resolve
+    to the wrong module (or fail with ImportError for a name it doesn't
+    define). Explicitly load this script's own git_state.py under that name
+    for the duration of this import, then restore whatever was cached before.
+    """
+    scripts_dir = PREVIEW_SCRIPT.parent
+    original_git_state = sys.modules.get("git_state")
+    try:
+        gs_spec = importlib.util.spec_from_file_location("git_state", scripts_dir / "git_state.py")
+        gs_module = importlib.util.module_from_spec(gs_spec)
+        gs_spec.loader.exec_module(gs_module)
+        sys.modules["git_state"] = gs_module
+
+        spec = importlib.util.spec_from_file_location("land_work_create_preview", PREVIEW_SCRIPT)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+    finally:
+        if original_git_state is not None:
+            sys.modules["git_state"] = original_git_state
+        else:
+            sys.modules.pop("git_state", None)
+    return module
 
 
 class LandWorkScriptsTest(unittest.TestCase):
@@ -182,6 +215,67 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertNotIn(str(preview_dir.resolve()), registered)
         self.assertFalse(preview_dir.exists())
 
+    def test_preview_refuses_when_leftover_preview_worktrees_exist(self) -> None:
+        # A leaked scratch preview from an earlier landing attempt (default
+        # naming: land-work-preview-*) must block creating another one.
+        leftover_result = self.run_preview(cwd=self.worktree)
+        leftover_payload = json.loads(leftover_result.stdout)
+        leftover_dir = Path(leftover_payload["preview_dir"])
+        self.assertTrue(leftover_dir.name.startswith("land-work-preview-"))
+
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn(str(leftover_dir), payload["leftover_previews"])
+        joined_errors = " ".join(payload["errors"])
+        self.assertIn(str(leftover_dir), joined_errors)
+        self.assertIn("--cleanup", joined_errors)
+
+        # Must not have created a second preview worktree.
+        self.assertNotIn("preview_dir", payload)
+
+        self.run_preview("--cleanup", "--preview-dir", str(leftover_dir), cwd=self.worktree)
+
+    def test_preview_allow_existing_bypasses_leftover_refusal(self) -> None:
+        leftover_result = self.run_preview(cwd=self.worktree)
+        leftover_payload = json.loads(leftover_result.stdout)
+        leftover_dir = Path(leftover_payload["preview_dir"])
+
+        result = self.run_preview("--allow-existing", cwd=self.worktree)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["merge_clean"])
+
+        self.run_preview("--cleanup", "--preview-dir", str(leftover_dir), cwd=self.worktree)
+        self.run_preview("--cleanup", "--preview-dir", payload["preview_dir"], cwd=self.worktree)
+
+    def test_leftover_check_warns_but_does_not_block_on_git_failure(self) -> None:
+        # A `git worktree list` failure while checking for leftovers must
+        # degrade to "no leftovers found" (never block a landing on a git
+        # plumbing hiccup) but must surface a warning rather than silently
+        # swallowing the error.
+        module = load_preview_module()
+        with unittest.mock.patch.object(
+            module,
+            "registered_worktree_paths",
+            side_effect=subprocess.CalledProcessError(1, ["git"], stderr="boom"),
+        ):
+            leftovers, warns = module.leftover_preview_worktrees(self.repo)
+        self.assertEqual(leftovers, [])
+        self.assertTrue(any("git worktree list" in w for w in warns))
+
+    def test_preview_explicit_dir_not_flagged_as_leftover(self) -> None:
+        # Custom-named preview dirs (e.g. from other test fixtures or a
+        # caller-supplied --preview-dir) are not land-work-preview-* and must
+        # never trip the leftover check on themselves.
+        preview_dir = Path(self.temp_dir.name) / "custom-preview-name"
+        result = self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+
     def test_lease_check_matches_expected_sha(self) -> None:
         expected_sha = git(self.repo, "rev-parse", "refs/heads/main").stdout.strip()
 
@@ -228,6 +322,44 @@ class LandWorkScriptsTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["tree_matches"])
         self.assertIn("landed tree mismatch for refs/heads/main", payload["errors"])
+
+    def test_verify_landing_fails_when_preview_worktree_still_registered(self) -> None:
+        preview_dir = Path(self.temp_dir.name) / "preview-not-cleaned"
+        self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree)
+        git(self.repo, "merge", "--no-ff", "feature/test", "-m", "merge feature/test")
+
+        result = self.run_verify_landing(
+            "--ref", "refs/heads/main", "--preview-dir", str(preview_dir), cwd=self.repo, check=False
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["preview_dir_registered"])
+        self.assertIn(str(preview_dir.resolve()), " ".join(payload["errors"]))
+
+        self.run_preview("--cleanup", "--preview-dir", str(preview_dir), cwd=self.worktree)
+
+    def test_verify_landing_passes_when_preview_worktree_cleaned_up(self) -> None:
+        preview_dir = Path(self.temp_dir.name) / "preview-cleaned"
+        preview_result = self.run_preview("--preview-dir", str(preview_dir), cwd=self.worktree)
+        preview_payload = json.loads(preview_result.stdout)
+        git(self.repo, "merge", "--no-ff", "feature/test", "-m", "merge feature/test")
+        self.run_preview("--cleanup", "--preview-dir", str(preview_dir), cwd=self.worktree)
+
+        result = self.run_verify_landing(
+            "--ref",
+            "refs/heads/main",
+            "--expected-tree",
+            preview_payload["preview_tree"],
+            "--preview-dir",
+            str(preview_dir),
+            cwd=self.repo,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertFalse(payload["preview_dir_registered"])
 
 
 class IntegrationWorktreePreviewTest(unittest.TestCase):

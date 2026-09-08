@@ -37,7 +37,10 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
-  once verification finishes). When the repo's `swarm-config.json` declares
+  once verification finishes). Refuses to start a new scratch preview while a
+  `land-work-preview-*` worktree from an earlier, uncleaned landing attempt is
+  still registered — pass `--allow-existing` to override. When the repo's
+  `swarm-config.json` declares
   `landing.integration_worktree`, the preview materializes there instead of a
   scratch `/tmp` directory, reusing build caches across landings — see
   `land-work/references/integration-worktree.md`. `--cleanup` is a safe no-op
@@ -53,7 +56,9 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-verify-lease.py --expected-sha <sha>` to verify
   the landing lease still matches the intended primary-branch ref
 - `land-work/scripts/land-work-verify-landing.py --expected-tree <tree>` to
-  verify the landed primary-branch ref still matches the verified candidate
+  verify the landed primary-branch ref still matches the verified candidate;
+  add `--preview-dir <path>` for a scratch preview to also fail if that
+  worktree is still registered (i.e. cleanup was skipped)
 - `land-work/scripts/land-work-root-hygiene.py` to audit the primary checkout
   root after landing for untracked files not covered by `.gitignore` (step 9a)
 - `land-work/scripts/land-work-batch-assemble.py` to merge an ordered list of
@@ -297,12 +302,6 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
      worktree (the cleanup command below); an aborted landing must not leave
      its scratch worktree registered
    - commit and push only if the lease still matches
-   - verify the landed primary-branch ref still matches the verified preview:
-
-```bash
-land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
-```
-
    - **Always** remove the preview worktree once you are done with it, on every
      exit path — verified landing, aborted lease, or any error after the
      preview was created. It is a registered git worktree and otherwise
@@ -311,7 +310,10 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree>
      declares `landing.integration_worktree`; see
      `land-work/references/integration-worktree.md`), in which case skip this
      step entirely: the worktree is meant to persist across landings and
-     `--cleanup` against it is a safe no-op anyway.
+     `--cleanup` against it is a safe no-op anyway. Do this **before**
+     verify-landing below, not after: verify-landing itself checks that the
+     scratch preview is no longer registered, so a skipped cleanup fails
+     verify-landing instead of leaking a preview worktree silently.
 
 ```bash
 land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-dir>
@@ -325,6 +327,19 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
      attempt. The explicit cleanup above covers the success and abort paths
      for a scratch preview, which the helper cannot clean for you because you
      still need the preview to verify the landing.
+   - verify the landed primary-branch ref still matches the verified preview,
+     and — for a scratch preview (not a persistent
+     `landing.integration_worktree`) — that its worktree is no longer
+     registered, by passing `--preview-dir`. `land-work-create-preview.py`
+     also refuses to start a new preview while a leftover
+     `land-work-preview-*` worktree is still registered from an earlier,
+     uncleaned landing attempt (pass `--allow-existing` to override), so an
+     unremoved preview surfaces immediately rather than silently accumulating
+     under `/tmp`:
+
+```bash
+land-work/scripts/land-work-verify-landing.py --expected-tree <tree> --preview-dir <preview-dir>
+```
 8a. Run the **`post`** hook scripts in **advisory mode** (the merge has
     already succeeded; abort cannot reverse it):
 
@@ -596,7 +611,7 @@ policy itself, which lives in the `swarm` skill).
 | "The issue is functionally done, so I can close it before merging." | Tracker closure advertises landed availability to dependent work. Closing before verified landing can make downstream agents claim work against code that is not on the integration branch. |
 | "The diff is simple; I can skip the preview/exact-candidate checks." | Simplicity does not prove candidate identity. Preview, lease, and landing verification protect against stale bases, helper mismatch, generated artifacts, and accidental local-only state. |
 | "Closure will clean up my just-landed branch." | The landing agent owns direct post-merge cleanup: leave the feature worktree, remove that worktree, then delete the merged branch. Closure is only a fallback for stale or ambiguous leftovers. |
-| "The landing is done; the preview worktree under /tmp is harmless to leave." | Preview worktrees are registered git worktrees, not loose temp files. Left behind, they accumulate across landings and make every later `git worktree` probe slower or crash-prone. Remove the preview on every exit path; closure is not your janitor for worktrees you created this run. |
+| "The landing is done; the preview worktree under /tmp is harmless to leave." | Preview worktrees are registered git worktrees, not loose temp files. Left behind, they accumulate across landings and make every later `git worktree` probe slower or crash-prone. Remove the preview on every exit path; closure is not your janitor for worktrees you created this run. `land-work-create-preview.py` also refuses to start a new preview while a leftover one is still registered, and `land-work-verify-landing.py --preview-dir` fails the landing if cleanup was skipped — so this is enforced, not just prose. |
 | "The change is small and I ran the tests locally earlier, so gates are fine." | Earlier or partial runs are not evidence for the exact candidate, and "small" does not exempt a change from the repo's gates. |
 | "The primary branch was already red, but my branch didn't break it." | Landing on a red base hides which change is responsible and lets breakage linger. Halt on a pre-existing red base. |
 | "The project verifier exited 0, so the candidate is verified." | Exit 0 alone is not evidence. A verifier can select zero checks for a real diff and still exit 0. `land-work-run-verifier.py` fails closed unless every landed path is covered by a passed selected check or an exact exemption. |

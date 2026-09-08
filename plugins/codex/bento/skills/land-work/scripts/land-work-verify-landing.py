@@ -7,7 +7,18 @@ import json
 import sys
 from pathlib import Path
 
-from git_state import current_branch, detect_checkout_root, detect_primary_branch, is_linked_worktree, ref_exists, rev_parse, tree_for_ref
+import subprocess
+
+from git_state import (
+    current_branch,
+    detect_checkout_root,
+    detect_primary_branch,
+    is_linked_worktree,
+    ref_exists,
+    registered_worktree_paths,
+    rev_parse,
+    tree_for_ref,
+)
 
 
 def parse_args() -> argparse.Namespace:
@@ -15,6 +26,10 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ref", help="ref to verify; defaults to refs/heads/<primary-branch> when available")
     parser.add_argument("--expected-sha", help="required commit SHA for the landed ref")
     parser.add_argument("--expected-tree", help="required tree SHA for the landed ref")
+    parser.add_argument(
+        "--preview-dir",
+        help="preview worktree path that must no longer be registered (i.e. cleaned up) after landing",
+    )
     return parser.parse_args()
 
 
@@ -52,6 +67,23 @@ def main() -> int:
         if not tree_matches:
             errors.append(f"landed tree mismatch for {ref}")
 
+    preview_dir_registered = None
+    if args.preview_dir:
+        preview_path = Path(args.preview_dir).resolve()
+        try:
+            registered = registered_worktree_paths(checkout_root)
+        except subprocess.CalledProcessError:
+            errors.append(
+                f"unable to list registered worktrees in {checkout_root} (`git worktree list` failed)"
+            )
+        else:
+            preview_dir_registered = preview_path in registered
+            if preview_dir_registered:
+                errors.append(
+                    f"preview worktree still registered: {preview_path} (run "
+                    f"land-work-create-preview.py --cleanup --preview-dir {preview_path})"
+                )
+
     payload = {
         "cwd": str(cwd),
         "checkout_root": str(checkout_root),
@@ -65,6 +97,8 @@ def main() -> int:
         "expected_tree": args.expected_tree,
         "sha_matches": sha_matches,
         "tree_matches": tree_matches,
+        "preview_dir": str(args.preview_dir) if args.preview_dir else None,
+        "preview_dir_registered": preview_dir_registered,
         "ok": not errors,
         "warnings": warnings,
         "errors": errors,
