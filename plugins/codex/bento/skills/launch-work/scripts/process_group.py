@@ -14,19 +14,25 @@ import signal
 import subprocess
 
 
-def kill_process_group(proc: subprocess.Popen) -> None:
+def kill_process_group(proc: subprocess.Popen) -> tuple[str | None, str | None]:
     """Kill the whole process group `start_new_session=True` created, and reap it.
 
     Covers every exit from `communicate()`, not just a reported timeout: a
     KeyboardInterrupt or other interruption must still reach the group, or a
     gate that backgrounds work keeps running -- and can keep mutating the
     repo -- detached from this process after it's gone.
+
+    Returns whatever `communicate()` reaps (stdout, stderr) so a caller that
+    wants to persist the verifier's partial output on a killed run (bento-
+    rdtn.4) does not have to duplicate the kill+reap sequence to get it;
+    callers that only care about the kill can ignore the return value, as
+    every existing caller already does.
     """
     try:
         os.killpg(os.getpgid(proc.pid), signal.SIGKILL)
     except ProcessLookupError:
         pass
-    proc.communicate()  # reap; the group is dead so this cannot hang
+    return proc.communicate()  # reap; the group is dead so this cannot hang
 
 
 @contextlib.contextmanager

@@ -49,7 +49,13 @@ state checks that should not rely on ad hoc prose reconstruction:
   project verifier against the exact merge preview and fail closed unless every
   landed path is covered. It never equates a zero-check verifier result with
   verified evidence: a real diff with no matching selected check stops the
-  landing. See `references/project-verifier.md` for the manifest contract. If
+  landing. Persists the verifier command's raw stdout+stderr to
+  `<candidate>/.land-work/verifier.log` (or `--log <path>`) and reports a
+  `verifier_status` of `passed`, `failed`, `killed`, or `timeout` — `killed`
+  means no usable result was ever produced (signal death, unparseable output),
+  which is worth one retry after inspecting the log; `failed` means a real,
+  valid result reported a real failure, which is not. See
+  `references/project-verifier.md` for the manifest contract. If
   no manifest exists anywhere in the discovery chain, land-work invokes
   `wire-land-verifier` inline rather than deferring the fix to a later,
   separately remembered step — see the missing-manifest exception in step 8.
@@ -262,6 +268,24 @@ land-work/scripts/land-work-run-verifier.py \
      invalid, or the verifier command failed, timed out, or returned an
      unusable result. Exit 0 means every landed path is covered or exactly
      exempted.
+
+     The diagnostics JSON's `verifier_status` distinguishes four outcomes —
+     `passed`, `failed`, `killed`, `timeout` — and `verifier_log` names where
+     the command's raw stdout+stderr was persisted (default
+     `<preview-dir>/.land-work/verifier.log`, overridable with `--log`).
+     `failed` means the verifier command actually produced a valid,
+     schema-matching result and that result reports a real failure (a check
+     didn't pass, a nonempty relevant diff had zero passed checks, etc.) — fix
+     the underlying problem and re-run; never blindly retry a `failed` run
+     hoping it passes on its own. `killed` means no such usable result was
+     ever produced (the child died by signal, exited with no parseable
+     output, or the parsed JSON was malformed) — this is exactly the
+     "produced no signal" case that is indistinguishable from an externally
+     killed process, so inspect `verifier_log` (or the `verifier_log_tail`
+     lines already in the diagnostics) for what actually happened, and it is
+     reasonable to rerun once before concluding the gate itself is broken.
+     `timeout` is this helper's own `--timeout` kill, not an external one; the
+     command is likely too slow for the given budget, not broken.
 
      **Missing-manifest exception.** If the reported error is specifically "no
      verifier manifest configured" (no manifest found anywhere in the

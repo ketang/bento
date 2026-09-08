@@ -44,7 +44,11 @@ verifier is never inferred from generic hook names.
   worktree. The verifier's final stdout line must be one JSON object:
   `{"schema_version":1,"status":"passed","selected_checks":[{"name":"make test-quick","status":"passed"}]}`.
   Missing/invalid JSON, an unknown status, a failed selected check, command
-  failure, or timeout is a landing failure.
+  failure, or timeout is a landing failure — reported in the diagnostics JSON's
+  `verifier_status` as one of `passed`, `failed`, `killed`, or `timeout` (see
+  "Verifier status and the raw log" below), with the command's raw
+  stdout+stderr persisted to `<candidate>/.land-work/verifier.log` (or
+  `--log <path>`) for post-mortem.
 - `verified_noop` — defaults to empty. Each entry needs one normalized,
   repo-relative exact file path and a nonempty reason. Absolute paths, `..`,
   globs, directory/prefix entries, duplicates, and paths that exist in neither
@@ -76,10 +80,51 @@ exception in `land-work/SKILL.md` step 8. `wire-land-verifier`'s own
 confirm-before-draft and explicit-go-ahead-before-apply gates are unchanged —
 this script still never infers or rubber-stamps a verifier command.
 
+## Verifier status and the raw log
+
+`verifier_status` is one of four values once the verifier command has
+actually been invoked. It stays `null` for a landing failure that occurs
+*before* invocation — a missing verifier manifest, a `git diff` error while
+building the candidate's path union, an invalid `--timeout` value, or an
+invalid `verified_noop` exemption — since there is no command run yet to
+classify.
+
+- `passed` — the command produced a valid, schema-matching result whose
+  status was `passed` and every relevant path was covered by a passed
+  selected check (or nothing relevant remained).
+- `failed` — the command produced a valid, schema-matching result, and that
+  result reports a real failure: an explicit `status` other than `passed`
+  (including when the process also exited nonzero — a verifier may
+  legitimately report a failure via this JSON while still exiting nonzero), a
+  selected check that didn't pass, a malformed `selected_checks` shape, or a
+  `passed` result with zero selected checks against a nonempty relevant diff.
+  This is a genuine gate failure — fix the underlying problem; retrying an
+  unchanged candidate will not help. The one exception: a nonzero exit paired
+  with a result claiming `status: "passed"` is contradictory and untrustworthy
+  either way, so it is still reported as `failed`, never treated as a pass.
+- `killed` — no valid, schema-matching result was ever produced: the child
+  died by signal (an external SIGKILL, not this helper's own `--timeout`), it
+  produced no final JSON line at all, or what it emitted did not parse as a
+  schema-matching JSON object (invalid JSON, not an object, or a
+  `schema_version` mismatch). This status exists because none of those cases
+  can be told apart from an externally killed process, so — unlike
+  `failed` — it is reasonable to inspect the log and rerun once before
+  concluding the gate itself is broken.
+- `timeout` — this helper's own `--timeout` killed the command. The command
+  is likely too slow for the given budget, not necessarily broken.
+
+The command's raw, unfiltered stdout+stderr is always persisted to
+`<candidate>/.land-work/verifier.log` (override with `--log <path>`),
+regardless of `verifier_status`. On `killed` or `timeout`, the diagnostics
+JSON also includes `verifier_log_tail` (the log's last 20 lines) inline, so a
+first look at what happened does not require a separate file read; `killed`
+additionally includes `killed_signal` when the child died by signal.
+
 ## Diagnostics
 
 The helper emits one JSON object on stdout with `base_sha`, `head_sha`,
 `candidate`, categorized `changed_paths`, `relevant_paths`, the exact
-`exemptions` used, the `verifier_command`, `verifier_status`,
+`exemptions` used, the `verifier_command`, `verifier_status`, `verifier_log`,
 `selected_check_count`, and `unverified_paths`. Diagnostics never include file
-contents. Exit 0 means verified; any nonzero exit stops the landing.
+contents beyond the verifier's own stdout/stderr captured in the log and its
+tail. Exit 0 means verified; any nonzero exit stops the landing.
