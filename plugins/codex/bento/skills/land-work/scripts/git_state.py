@@ -54,8 +54,12 @@ class NotAWorkTreeError(RuntimeError):
         self.diagnostic = diagnostic
 
 
+def is_bare_repository(cwd: Path) -> bool:
+    return try_git_stdout("rev-parse", "--is-bare-repository", cwd=cwd) == "true"
+
+
 def _not_a_work_tree_diagnostic(cwd: Path, detail: str) -> dict:
-    is_bare = try_git_stdout("rev-parse", "--is-bare-repository", cwd=cwd) == "true"
+    is_bare = is_bare_repository(cwd)
     is_inside_git_dir = try_git_stdout("rev-parse", "--is-inside-git-dir", cwd=cwd) == "true"
     is_git_repository = git("rev-parse", "--git-dir", cwd=cwd, check=False).returncode == 0
     return {

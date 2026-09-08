@@ -336,9 +336,10 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
      depending on what `land-work-prepare.py`'s `primary_local_vs_remote`
      reported at step 1 (concurrent sessions can also move the primary
      between then and now, so re-check if time has passed):
-     - **Normal route** (`equal` or `behind`, i.e. the primary checkout's
-       local branch is not ahead of the leased origin ref): merge in the
-       primary checkout as usual, then push it.
+     - **Normal route** (`equal`, `behind`, or `null` — the primary
+       checkout's local branch is not ahead of the leased origin ref, or no
+       remote-tracking ref exists to compare against): merge in the primary
+       checkout as usual, then push it.
      - **Push-from-preview route** (`ahead` or `diverged` — the primary
        checkout's local branch already has commits the leased origin ref
        doesn't, so a normal merge-then-push from the primary would either

@@ -21,6 +21,8 @@ it.
   primary with `git fetch origin` + `git merge --ff-only
   origin/<integration-branch>`. This is the standard route for that
   diagnostic regardless of which branch name is the real integration branch.
+  `equal`, `behind`, or `null` (no remote-tracking ref exists to compare
+  against) all take the normal merge-in-the-primary route instead.
 - If the integration branch cannot be identified confidently, stop and report
   the ambiguity instead of guessing.
 - Keep tracker closure, lease verification, and post-land validation exactly as

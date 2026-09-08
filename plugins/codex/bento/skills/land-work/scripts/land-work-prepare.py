@@ -13,16 +13,12 @@ from git_state import (
     current_branch,
     detect_checkout_root,
     detect_primary_branch,
+    is_bare_repository,
     is_linked_worktree,
     primary_checkout_root,
     ref_exists,
-    try_git_stdout,
     working_tree_dirty,
 )
-
-
-def _primary_bare(primary_root: Path) -> bool:
-    return try_git_stdout("rev-parse", "--is-bare-repository", cwd=primary_root) == "true"
 
 
 def _primary_divergence(
@@ -80,10 +76,18 @@ def main() -> int:
     behind_primary, ahead_primary = ahead_behind(primary_branch, branch, checkout_root)
 
     primary_root = primary_checkout_root(checkout_root)
-    primary_bare = _primary_bare(primary_root)
+    primary_bare = is_bare_repository(primary_root)
     # `git status` itself fails ("must be run in a work tree") on a bare
     # checkout, so the dirty check only makes sense once bare is ruled out.
-    primary_dirty = None if primary_bare else working_tree_dirty(primary_root)
+    # Reuse the feature-worktree's own dirty result when it *is* the primary
+    # (running land-work-prepare.py directly from the primary checkout)
+    # instead of issuing an identical `git status` a second time.
+    if primary_bare:
+        primary_dirty = None
+    elif primary_root == checkout_root:
+        primary_dirty = dirty
+    else:
+        primary_dirty = working_tree_dirty(primary_root)
     if primary_bare:
         primary_local_vs_remote, primary_ahead, primary_behind = None, None, None
     else:
