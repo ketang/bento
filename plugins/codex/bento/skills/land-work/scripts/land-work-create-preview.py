@@ -10,6 +10,7 @@ import tempfile
 from pathlib import Path
 
 from git_state import (
+    NotAWorkTreeError,
     current_branch,
     detect_checkout_root,
     detect_primary_branch,
@@ -392,4 +393,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except NotAWorkTreeError as exc:
+        json.dump(exc.diagnostic, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        exit_code = 1
+    raise SystemExit(exit_code)

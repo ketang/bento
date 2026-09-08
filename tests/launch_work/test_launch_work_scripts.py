@@ -220,6 +220,72 @@ class LaunchWorkScriptsTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["linked_worktree"])
 
+    # -- bento-rdtn.13: bare checkout reports a diagnostic, never a traceback #
+
+    def test_bootstrap_bare_checkout_reports_diagnostic_not_traceback(self) -> None:
+        git(self.repo, "config", "core.bare", "true")
+        target_worktree = Path(self.temp_dir.name) / "feature-bare"
+
+        result = self.run_bootstrap(
+            "--branch", "feature/test", "--worktree", str(target_worktree), check=False
+        )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"], "not_a_work_tree")
+        self.assertIn("work tree", payload["detail"])
+        self.assertIn("core.bare", payload["hint"])
+        self.assertTrue(payload["is_bare_repository"])
+        self.assertFalse(payload["is_inside_git_dir"])
+        self.assertTrue(payload["is_git_repository"])
+
+    def test_verify_bare_checkout_reports_diagnostic_not_traceback(self) -> None:
+        git(self.repo, "config", "core.bare", "true")
+
+        result = self.run_verify(cwd=self.repo, check=False)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"], "not_a_work_tree")
+        self.assertTrue(payload["is_bare_repository"])
+
+    def test_bootstrap_inside_git_dir_reports_diagnostic(self) -> None:
+        target_worktree = Path(self.temp_dir.name) / "feature-inside-git-dir"
+
+        result = self.run_bootstrap(
+            "--branch",
+            "feature/test",
+            "--worktree",
+            str(target_worktree),
+            cwd=self.repo / ".git",
+            check=False,
+        )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"], "not_a_work_tree")
+        self.assertFalse(payload["is_bare_repository"])
+        self.assertTrue(payload["is_inside_git_dir"])
+        self.assertTrue(payload["is_git_repository"])
+
+    def test_bootstrap_non_repo_reports_diagnostic(self) -> None:
+        non_repo = Path(self.temp_dir.name) / "plain-dir"
+        non_repo.mkdir()
+        target_worktree = Path(self.temp_dir.name) / "feature-non-repo"
+
+        result = self.run_bootstrap(
+            "--branch", "feature/test", "--worktree", str(target_worktree), cwd=non_repo, check=False
+        )
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"], "not_a_work_tree")
+        self.assertFalse(payload["is_bare_repository"])
+        self.assertFalse(payload["is_inside_git_dir"])
+        self.assertFalse(payload["is_git_repository"])
+
 
 if __name__ == "__main__":
     unittest.main()

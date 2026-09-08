@@ -206,6 +206,20 @@ class SwarmWorktreeVerifyTest(unittest.TestCase):
         self.assertTrue(payload["ok"])
         self.assertTrue(payload["expected_branch_match"])
 
+    def test_bare_checkout_reports_diagnostic_not_traceback(self) -> None:
+        # bento-rdtn.13: swarm-worktree-verify.py shares git_state.py's
+        # detect_checkout_root with launch-work/land-work; a bare checkout
+        # must report the same structured diagnostic, not a traceback.
+        git(self.repo, "config", "core.bare", "true")
+
+        result = self.run_verify(self.repo, check=False)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"], "not_a_work_tree")
+        self.assertTrue(payload["is_bare_repository"])
+
 
 if __name__ == "__main__":
     unittest.main()

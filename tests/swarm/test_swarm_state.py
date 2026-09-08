@@ -93,6 +93,31 @@ class SwarmStateTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("CODEX_THREAD_ID is required", payload["error"])
 
+    def test_bare_checkout_reports_diagnostic_not_traceback(self) -> None:
+        # bento-rdtn.13: swarm-state.py shares git_state.py's
+        # detect_checkout_root with launch-work/land-work; a bare checkout
+        # must report the same structured diagnostic, not a traceback.
+        with tempfile.TemporaryDirectory() as temp_dir_name:
+            temp_repo = Path(temp_dir_name) / "repo"
+            temp_repo.mkdir()
+            subprocess.run(
+                ["git", "init", "-b", "main"], cwd=temp_repo, check=True,
+                capture_output=True, text=True,
+            )
+            subprocess.run(
+                ["git", "config", "core.bare", "true"], cwd=temp_repo, check=True,
+                capture_output=True, text=True,
+            )
+            result = self.run_state(
+                "--runtime", "codex", "--thread-id", "bare-thread", cwd=temp_repo, check=False
+            )
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"], "not_a_work_tree")
+        self.assertTrue(payload["is_bare_repository"])
+
 
 if __name__ == "__main__":
     unittest.main()

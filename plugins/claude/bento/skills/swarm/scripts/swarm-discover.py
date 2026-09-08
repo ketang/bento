@@ -8,7 +8,7 @@ import shutil
 import sys
 from pathlib import Path
 
-from git_state import detect_checkout_root, detect_primary_branch, is_linked_worktree, primary_checkout_root
+from git_state import NotAWorkTreeError, detect_checkout_root, detect_primary_branch, is_linked_worktree, primary_checkout_root
 from _agent_plugins_bootstrap import ensure_agent_plugins_resolver_importable
 
 ensure_agent_plugins_resolver_importable()
@@ -330,4 +330,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except NotAWorkTreeError as exc:
+        json.dump(exc.diagnostic, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        exit_code = 1
+    raise SystemExit(exit_code)

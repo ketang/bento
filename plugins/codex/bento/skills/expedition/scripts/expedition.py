@@ -36,6 +36,7 @@ from expedition_state import (
     write_state,
 )
 from git_state import (
+    NotAWorkTreeError,
     detect_checkout_root,
     detect_primary_branch,
     git,
@@ -675,4 +676,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except NotAWorkTreeError as exc:
+        json.dump(exc.diagnostic, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        exit_code = 1
+    raise SystemExit(exit_code)

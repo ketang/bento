@@ -104,6 +104,21 @@ class LandWorkScriptsTest(unittest.TestCase):
             payload["errors"],
         )
 
+    def test_prepare_bare_primary_reports_diagnostic_not_traceback(self) -> None:
+        # bento-rdtn.13: a bare primary checkout (git rev-parse --show-toplevel
+        # fails with "must be run in a work tree") must never surface as an
+        # uncaught CalledProcessError traceback.
+        git(self.repo, "config", "core.bare", "true")
+
+        result = self.run_prepare(cwd=self.repo, check=False)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(result.stderr.strip(), "")
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["error"], "not_a_work_tree")
+        self.assertTrue(payload["is_bare_repository"])
+        self.assertIn("core.bare", payload["hint"])
+
     def test_prepare_rejects_dirty_worktree(self) -> None:
         (self.worktree / "feature.txt").write_text("dirty\n", encoding="utf-8")
 
