@@ -36,8 +36,39 @@ def resolve_git_path(raw_path: str, cwd: Path) -> Path:
     return (cwd / path).resolve()
 
 
+class NotAWorkTreeError(RuntimeError):
+    """Raised when git cannot resolve a work tree root for cwd: a bare
+    checkout (core.bare=true, typically with orphaned working-tree files
+    left behind), a location literally inside a .git directory, or a
+    directory that is not a git repository at all. Carries a ready-to-emit
+    diagnostic so every caller reports this the same way instead of leaking
+    an uncaught CalledProcessError traceback with no next step (bento-
+    rdtn.13)."""
+
+    def __init__(self, diagnostic: dict):
+        super().__init__(diagnostic.get("detail") or "not a work tree")
+        self.diagnostic = diagnostic
+
+
+def _not_a_work_tree_diagnostic(cwd: Path, detail: str) -> dict:
+    is_bare = try_git_stdout("rev-parse", "--is-bare-repository", cwd=cwd) == "true"
+    is_inside_git_dir = try_git_stdout("rev-parse", "--is-inside-git-dir", cwd=cwd) == "true"
+    is_git_repository = git("rev-parse", "--git-dir", cwd=cwd, check=False).returncode == 0
+    return {
+        "error": "not_a_work_tree",
+        "detail": detail,
+        "hint": "git config --get core.bare; unset core.bare or run from a linked worktree",
+        "is_bare_repository": is_bare,
+        "is_inside_git_dir": is_inside_git_dir,
+        "is_git_repository": is_git_repository,
+    }
+
+
 def detect_checkout_root(cwd: Path) -> Path:
-    return Path(git_stdout("rev-parse", "--show-toplevel", cwd=cwd)).resolve()
+    result = git("rev-parse", "--show-toplevel", cwd=cwd, check=False)
+    if result.returncode != 0:
+        raise NotAWorkTreeError(_not_a_work_tree_diagnostic(cwd, result.stderr.strip()))
+    return Path(result.stdout.strip()).resolve()
 
 
 def detect_primary_branch(cwd: Path) -> tuple[str, list[str]]:

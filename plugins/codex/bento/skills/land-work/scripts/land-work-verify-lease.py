@@ -7,7 +7,7 @@ import json
 import sys
 from pathlib import Path
 
-from git_state import current_branch, detect_checkout_root, detect_primary_branch, is_linked_worktree, ref_exists, rev_parse
+from git_state import NotAWorkTreeError, current_branch, detect_checkout_root, detect_primary_branch, is_linked_worktree, ref_exists, rev_parse
 
 
 def parse_args() -> argparse.Namespace:
@@ -62,4 +62,10 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        exit_code = main()
+    except NotAWorkTreeError as exc:
+        json.dump(exc.diagnostic, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        exit_code = 1
+    raise SystemExit(exit_code)
