@@ -11,6 +11,18 @@
       "command": "land-work/scripts/land-work-batch-assemble.py --worktree <integration-worktree> --base-ref <leased-sha> --branch <branch-1> --branch <branch-2> ...",
       "script": "scripts/land-work-batch-assemble.py",
       "subcommand": null
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "land-work/scripts/land-work-batch-bisect.py --worktree <integration-worktree> --base-ref <leased-sha> --gate-command <landing.full_gate command> --branch <branch-1> --branch <branch-2> ...",
+      "script": "scripts/land-work-batch-bisect.py",
+      "subcommand": null
+    },
+    {
+      "doc": "references/batch-landing.md",
+      "command": "land-work/scripts/land-work-batch-bisect.py --worktree <path> --base-ref <leased-sha> --gate-command <shell command> --branch <ref> [--branch <ref> ...]",
+      "script": "scripts/land-work-batch-bisect.py",
+      "subcommand": null
     }
   ]
 }
