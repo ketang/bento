@@ -154,6 +154,17 @@ target branch in the teammate prompt so the teammate knows which branch their
 work merges into. Require the teammate to stop and report back if the task is
 broader or more coupled than expected.
 
+For a batch-mode repo (`swarm-config.json` declares `landing.mode: batch` —
+see `swarm/references/landing-config.md`), the teammate scoped-gate contract
+applies: include the `landing.gate_scope` command in the teammate prompt in
+place of the repo's full fixed gate list, and instruct the teammate to run it
+against their own final diff, execute every gate command it emits, and report
+each emitted command's output verbatim — the existing rule that gate outputs
+are reported in full, not paraphrased, is unchanged; only the *set* of gates
+to run is scoped to the diff instead of fixed. Serial-mode repos (no
+`swarm-config.json`, or `landing.mode` absent/`serial`) keep listing the
+repo's full fixed gate commands in the prompt, unchanged.
+
 Teammate instructions must treat worktree placement as part of setup, not an
 implementation detail. Require a durable dedicated root and reject placements
 under `/tmp`, the top level of the user's home directory, the project parent,
@@ -252,6 +263,14 @@ to the task, no unresolved overlap with active teammates, and any required
 pre-completion step. Reject plans that reference the primary checkout or do
 not explain how the task will be verified.
 
+For a batch-mode repo, a scoped-gate plan — one that runs `landing.gate_scope`'s
+emitted commands against the teammate's own diff instead of the repo's full
+fixed gate list — is acceptable under the teammate scoped-gate contract; judge
+it on the same terms as a full-list plan (explicit worktree+branch
+verification, correct gate execution, appropriate test coverage, no
+unresolved overlap). Serial-mode repos are unaffected: a serial-mode plan must
+still run the repo's full fixed gate list.
+
 Reject any teammate plan that does not include an explicit
 `swarm-worktree-verify.py --require-linked-worktree --expected-branch
 <assigned-branch>` step (or the equivalent worktree-verify gate with the
@@ -286,8 +305,15 @@ signal.
 For each ready-to-land signal received:
 
 1. Confirm the gate summary in the teammate's signal covers all required gates
-   for that task. If any gate is missing or failed, SendMessage the teammate
-   to fix and re-signal; do not proceed.
+   for that task. For a batch-mode repo, do this under the teammate
+   scoped-gate contract: re-run `landing.gate_scope` yourself against the
+   teammate's actual final diff — do not trust the teammate's self-report of
+   which gates were "required" — and confirm the teammate's reported gate
+   summary covers exactly that emitted set. For a serial-mode repo (no
+   `swarm-config.json`, or `landing.mode` absent/`serial`), this step is
+   unchanged: confirm the gate summary covers the repo's full fixed gate list.
+   If any gate is missing or failed, SendMessage the teammate to fix and
+   re-signal; do not proceed.
 2. Navigate to the teammate's worktree path, then invoke `bento:land-work`
    from within it. The teammate has already exited, so the worktree is
    unoccupied and land-work's cleanup step can remove it safely.
