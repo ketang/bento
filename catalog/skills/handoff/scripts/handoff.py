@@ -280,4 +280,10 @@ def main(argv: list[str] | None = None) -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    try:
+        exit_code = main()
+    except git_state.NotAWorkTreeError as exc:
+        json.dump(exc.diagnostic, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        exit_code = 1
+    sys.exit(exit_code)
