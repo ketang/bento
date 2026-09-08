@@ -58,15 +58,26 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def leftover_preview_worktrees(checkout_root: Path) -> list[Path]:
+def leftover_preview_worktrees(checkout_root: Path) -> tuple[list[Path], list[str]]:
     """Registered land-work-preview-* worktrees left behind by an earlier,
     uncleaned landing attempt (bento-rdtn.3): each one is a live git worktree
-    that slows every later `git worktree` probe until removed."""
+    that slows every later `git worktree` probe until removed.
+
+    Returns (leftovers, warnings). A failure listing worktrees degrades to "no
+    leftovers found" (so it never blocks a landing on a git plumbing hiccup)
+    but is surfaced as a warning rather than silently swallowed, matching how
+    the same failure is handled elsewhere in this file (e.g.
+    integration_worktree_unusable_reason)."""
     try:
         registered = registered_worktree_paths(checkout_root)
-    except subprocess.CalledProcessError:
-        return []
-    return sorted(p for p in registered if p.name.startswith("land-work-preview-"))
+    except subprocess.CalledProcessError as exc:
+        stderr = (exc.stderr or "").strip()
+        return [], [
+            "unable to check for leftover land-work-preview-* worktrees "
+            f"(`git worktree list` failed: {stderr or exc})"
+        ]
+    leftovers = sorted(p for p in registered if p.name.startswith("land-work-preview-"))
+    return leftovers, []
 
 
 def default_preview_dir() -> Path:
@@ -238,7 +249,8 @@ def main() -> int:
     feature_ref = args.feature_ref or branch
 
     if not args.allow_existing:
-        leftover = leftover_preview_worktrees(checkout_root)
+        leftover, leftover_warnings = leftover_preview_worktrees(checkout_root)
+        warnings.extend(leftover_warnings)
         if leftover:
             cleanup_hint = "; ".join(
                 f"land-work-create-preview.py --cleanup --preview-dir {p}" for p in leftover
