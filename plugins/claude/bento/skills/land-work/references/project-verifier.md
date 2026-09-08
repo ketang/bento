@@ -82,21 +82,31 @@ this script still never infers or rubber-stamps a verifier command.
 
 ## Verifier status and the raw log
 
-`verifier_status` is always one of four values:
+`verifier_status` is one of four values once the verifier command has
+actually been invoked. It stays `null` for a landing failure that occurs
+*before* invocation — a missing verifier manifest, a `git diff` error while
+building the candidate's path union, an invalid `--timeout` value, or an
+invalid `verified_noop` exemption — since there is no command run yet to
+classify.
 
 - `passed` — the command produced a valid, schema-matching result whose
   status was `passed` and every relevant path was covered by a passed
   selected check (or nothing relevant remained).
-- `failed` — the command produced a valid, schema-matching result, but that
-  result reports a real failure: an explicit `status` other than `passed`, a
+- `failed` — the command produced a valid, schema-matching result, and that
+  result reports a real failure: an explicit `status` other than `passed`
+  (including when the process also exited nonzero — a verifier may
+  legitimately report a failure via this JSON while still exiting nonzero), a
   selected check that didn't pass, a malformed `selected_checks` shape, or a
   `passed` result with zero selected checks against a nonempty relevant diff.
   This is a genuine gate failure — fix the underlying problem; retrying an
-  unchanged candidate will not help.
-- `killed` — no usable result was ever produced: the child died by signal (an
-  external SIGKILL, not this helper's own `--timeout`), it exited without
-  emitting any final JSON line, or what it emitted did not parse as a
-  schema-matching JSON object. This status exists because none of those cases
+  unchanged candidate will not help. The one exception: a nonzero exit paired
+  with a result claiming `status: "passed"` is contradictory and untrustworthy
+  either way, so it is still reported as `failed`, never treated as a pass.
+- `killed` — no valid, schema-matching result was ever produced: the child
+  died by signal (an external SIGKILL, not this helper's own `--timeout`), it
+  produced no final JSON line at all, or what it emitted did not parse as a
+  schema-matching JSON object (invalid JSON, not an object, or a
+  `schema_version` mismatch). This status exists because none of those cases
   can be told apart from an externally killed process, so — unlike
   `failed` — it is reasonable to inspect the log and rerun once before
   concluding the gate itself is broken.

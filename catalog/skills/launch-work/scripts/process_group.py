@@ -14,7 +14,7 @@ import signal
 import subprocess
 
 
-def kill_process_group(proc: subprocess.Popen):
+def kill_process_group(proc: subprocess.Popen) -> tuple[str | None, str | None]:
     """Kill the whole process group `start_new_session=True` created, and reap it.
 
     Covers every exit from `communicate()`, not just a reported timeout: a

@@ -256,6 +256,9 @@ class LandWorkVerifierTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         payload = json.loads(result.stdout)
         self.assertTrue(any("no verifier manifest" in e for e in payload["errors"]))
+        # No verifier command was ever invoked, so there is nothing to
+        # classify as passed/failed/killed/timeout.
+        self.assertIsNone(payload["verifier_status"])
 
     def test_manifest_present_empty_diff_short_circuits_without_running_command(self) -> None:
         # base == head, no staged/unstaged/untracked changes: nothing to verify,
@@ -465,6 +468,55 @@ class LandWorkVerifierTest(unittest.TestCase):
         self.assertEqual(result.returncode, 1)
         payload = json.loads(result.stdout)
         self.assertEqual(payload["verifier_status"], "timeout")
+
+    def test_nonzero_exit_with_valid_failed_json_reports_failed_not_killed(self) -> None:
+        # A verifier may legitimately report a failure via its result JSON
+        # while still exiting nonzero (the same contract wire-land-verifier.py
+        # validates against) -- this must not be lumped in with "killed".
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"failed","selected_checks":[]}\'\n'
+            'exit 1\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "failed")
+
+    def test_nonzero_exit_claiming_passed_is_untrustworthy_and_reported_failed(self) -> None:
+        # A nonzero exit paired with status "passed" is contradictory; it
+        # must never be treated as a pass.
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed","selected_checks":[]}\'\n'
+            'exit 1\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "failed")
+        self.assertTrue(any("untrustworthy" in e for e in payload["errors"]))
+
+    def test_schema_version_mismatch_reports_killed_not_failed(self) -> None:
+        # A schema-version mismatch means the result never parsed as a
+        # schema-matching JSON object -- per the killed/failed contract, that
+        # is "killed" (worth a retry / inspection), not "failed" (a real,
+        # trustworthy failure verdict).
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":99,"status":"passed","selected_checks":[]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "killed")
+        self.assertTrue(payload["verifier_log_tail"])
 
     def test_custom_log_path_override(self) -> None:
         self.install_verifier(PASS_ONE_CHECK_VERIFIER)

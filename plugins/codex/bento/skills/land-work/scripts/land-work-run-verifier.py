@@ -27,6 +27,7 @@ verification or merge.
 from __future__ import annotations
 
 import argparse
+import collections
 import json
 import subprocess
 import sys
@@ -117,7 +118,27 @@ def _validate_exemption(path_value: str) -> tuple[str | None, str | None]:
     return "/".join(parts), None
 
 
-def _fail(diagnostics: dict, errors: list[str]) -> int:
+def _fail(
+    diagnostics: dict,
+    errors: list[str],
+    *,
+    status: str | None = None,
+    log_text: str | None = None,
+) -> int:
+    """Emit the failing diagnostics payload.
+
+    Centralizing the verifier_status/verifier_log_tail assignment here (bento-
+    rdtn.4 review) makes omitting them on a new failure branch structurally
+    impossible instead of relying on every call site to remember both lines.
+    `status` is omitted for failures that occur before the verifier command is
+    ever invoked (missing manifest, git-diff errors, invalid --timeout);
+    `verifier_status` stays None for those, which references/project-
+    verifier.md documents explicitly.
+    """
+    if status is not None:
+        diagnostics["verifier_status"] = status
+        if status in ("killed", "timeout") and log_text is not None:
+            diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
     diagnostics["errors"] = errors
     diagnostics["ok"] = False
     json.dump(diagnostics, sys.stdout, indent=2)
@@ -141,7 +162,42 @@ def _write_log(log_path: Path, text: str) -> None:
 
 
 def _tail_lines(text: str, count: int) -> list[str]:
-    return text.splitlines()[-count:]
+    """Last `count` lines of text, without materializing every line in
+    memory first (a verifier log can be arbitrarily large; only the tail
+    needs to exist as a list of strings)."""
+    tail: collections.deque[str] = collections.deque(maxlen=count)
+    start = 0
+    for index, char in enumerate(text):
+        if char == "\n":
+            tail.append(text[start:index])
+            start = index + 1
+    if start < len(text):
+        tail.append(text[start:])
+    return list(tail)
+
+
+def _parse_verifier_result(stdout: str, schema_version: int) -> tuple[dict | None, str | None]:
+    """Parse the final stdout line as the verifier result JSON.
+
+    Returns (result, None) for a valid, schema-matching JSON object, or
+    (None, error_message) otherwise. Checked regardless of the process's exit
+    code: a verifier may legitimately report a failure via this JSON while
+    still exiting nonzero (the same contract wire-land-verifier.py already
+    validates against — only a nonzero exit claiming status "passed" is
+    treated as dishonest, not a nonzero exit reporting a real failure).
+    """
+    result_lines = [line for line in stdout.splitlines() if line.strip()]
+    if not result_lines:
+        return None, "verifier command produced no JSON result line"
+    try:
+        result = json.loads(result_lines[-1])
+    except ValueError as exc:
+        return None, f"verifier result is not valid JSON: {exc}"
+    if not isinstance(result, dict):
+        return None, "verifier result must be a JSON object"
+    if result.get("schema_version") != schema_version:
+        return None, f"verifier result schema_version must be {schema_version}"
+    return result, None
 
 
 def parse_args() -> argparse.Namespace:
@@ -327,9 +383,7 @@ def main() -> int:
             timeout_stdout, timeout_stderr = process_group.kill_process_group(popen)
             log_text = _format_log(timeout_stdout or "", timeout_stderr or "")
             _write_log(log_path, log_text)
-            diagnostics["verifier_status"] = "timeout"
-            diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
-            return _fail(diagnostics, ["verifier command timed out"])
+            return _fail(diagnostics, ["verifier command timed out"], status="timeout", log_text=log_text)
         except BaseException:
             # Not just TimeoutExpired: a KeyboardInterrupt or other
             # interruption during communicate() must still reach the group,
@@ -345,71 +399,83 @@ def main() -> int:
     log_text = _format_log(proc.stdout, proc.stderr)
     _write_log(log_path, log_text)
 
-    # bento-rdtn.4: a returncode < 0 means the child died by signal (e.g. an
-    # external SIGKILL, not this helper's own --timeout path above) -- and
-    # any other path that never reaches a parsed, schema-valid, "passed" or
-    # "failed" result is indistinguishable from that, so both are reported as
-    # "killed" rather than folded into an undifferentiated generic failure.
-    # Only a result JSON that actually parses is ever labeled "failed".
-    if proc.returncode < 0:
-        signal_number = -proc.returncode
-        diagnostics["verifier_status"] = "killed"
-        diagnostics["killed_signal"] = signal_number
-        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
-        return _fail(diagnostics, [f"verifier command was killed by signal {signal_number}"])
+    # bento-rdtn.4: always attempt to parse a result first, regardless of exit
+    # code -- a verifier may legitimately report a failure via JSON while
+    # still exiting nonzero (mirrored from wire-land-verifier.py's own
+    # contract, which only treats a nonzero exit claiming status "passed" as
+    # dishonest). Only when no valid, schema-matching result exists at all is
+    # this run classified "killed": that bucket covers a signal-killed child
+    # (returncode < 0), a plain command failure with no parseable output, and
+    # a malformed/schema-mismatched result -- none of which can be told apart
+    # from an externally killed process, unlike a real, valid "failed" result.
+    result, parse_error = _parse_verifier_result(proc.stdout, lifecycle_extensions.VERIFIER_SCHEMA_VERSION)
+
+    if result is None:
+        if proc.returncode < 0:
+            signal_number = -proc.returncode
+            diagnostics["killed_signal"] = signal_number
+            return _fail(
+                diagnostics,
+                [f"verifier command was killed by signal {signal_number}"],
+                status="killed",
+                log_text=log_text,
+            )
+        if proc.returncode != 0:
+            return _fail(
+                diagnostics,
+                [f"verifier command exited {proc.returncode} with no usable result: {parse_error}"],
+                status="killed",
+                log_text=log_text,
+            )
+        return _fail(diagnostics, [parse_error], status="killed", log_text=log_text)
 
     if proc.returncode != 0:
-        diagnostics["verifier_status"] = "killed"
-        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
+        # A parseable, schema-matching result exists despite the nonzero
+        # exit. A result claiming "passed" here is contradictory (this is
+        # exactly the dishonest combination wire-land-verifier.py flags) and
+        # untrustworthy either way, so it is never treated as a pass.
+        result_status = result.get("status")
+        if result_status == "passed":
+            return _fail(
+                diagnostics,
+                [
+                    f"verifier command exited {proc.returncode} but reported status "
+                    "'passed' -- untrustworthy result"
+                ],
+                status="failed",
+                log_text=log_text,
+            )
         return _fail(
             diagnostics,
-            [f"verifier command exited {proc.returncode}: {proc.stderr.strip()[:500]}"],
-        )
-
-    result_lines = [line for line in proc.stdout.splitlines() if line.strip()]
-    if not result_lines:
-        diagnostics["verifier_status"] = "killed"
-        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
-        return _fail(diagnostics, ["verifier command produced no JSON result line"])
-    try:
-        result = json.loads(result_lines[-1])
-    except ValueError as exc:
-        diagnostics["verifier_status"] = "killed"
-        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
-        return _fail(diagnostics, [f"verifier result is not valid JSON: {exc}"])
-
-    if not isinstance(result, dict):
-        diagnostics["verifier_status"] = "killed"
-        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
-        return _fail(diagnostics, ["verifier result must be a JSON object"])
-    if result.get("schema_version") != lifecycle_extensions.VERIFIER_SCHEMA_VERSION:
-        diagnostics["verifier_status"] = "failed"
-        return _fail(
-            diagnostics,
-            [f"verifier result schema_version must be {lifecycle_extensions.VERIFIER_SCHEMA_VERSION}"],
+            [f"verifier command exited {proc.returncode} with status {result_status!r}"],
+            status="failed",
+            log_text=log_text,
         )
 
     status = result.get("status")
     if status != "passed":
-        diagnostics["verifier_status"] = "failed"
-        return _fail(diagnostics, [f"verifier status is not 'passed': {status!r}"])
+        return _fail(diagnostics, [f"verifier status is not 'passed': {status!r}"], status="failed", log_text=log_text)
 
     selected_checks = result.get("selected_checks")
     if not isinstance(selected_checks, list):
-        diagnostics["verifier_status"] = "failed"
-        return _fail(diagnostics, ["verifier selected_checks must be a list"])
+        return _fail(diagnostics, ["verifier selected_checks must be a list"], status="failed", log_text=log_text)
 
     passed_checks = 0
     for index, check in enumerate(selected_checks):
         if not isinstance(check, dict):
-            diagnostics["verifier_status"] = "failed"
-            return _fail(diagnostics, [f"selected_checks[{index}] must be an object"])
+            return _fail(
+                diagnostics,
+                [f"selected_checks[{index}] must be an object"],
+                status="failed",
+                log_text=log_text,
+            )
         check_status = check.get("status")
         if check_status != "passed":
-            diagnostics["verifier_status"] = "failed"
             return _fail(
                 diagnostics,
                 [f"selected check {check.get('name')!r} did not pass: {check_status!r}"],
+                status="failed",
+                log_text=log_text,
             )
         passed_checks += 1
     diagnostics["selected_check_count"] = passed_checks
@@ -417,7 +483,6 @@ def main() -> int:
 
     # ---- Apply the fixed precedence. --------------------------------------- #
     if relevant and passed_checks == 0:
-        diagnostics["verifier_status"] = "failed"
         diagnostics["unverified_paths"] = relevant
         return _fail(
             diagnostics,
@@ -425,6 +490,8 @@ def main() -> int:
                 "verifier passed with zero selected checks but the candidate has "
                 f"{len(relevant)} unverified relevant path(s)"
             ],
+            status="failed",
+            log_text=log_text,
         )
 
     diagnostics["ok"] = True
