@@ -1,5 +1,4 @@
 import contextlib
-import importlib.util
 import io
 import json
 import os
@@ -10,7 +9,7 @@ import unittest
 import unittest.mock
 from pathlib import Path
 
-from tests.script_test_utils import git, run
+from tests.script_test_utils import git, load_script_module_with_git_state, run
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -22,29 +21,10 @@ def load_assemble_module():
     not a normal import) to unit-test main() with mocked git_state helpers,
     for races that are impractical to reproduce via real concurrency.
 
-    Several skills ship their own same-named git_state.py; another test in
-    this suite may already have cached a *different* one under
-    sys.modules["git_state"]. Explicitly load this script's own git_state.py
-    under that name for the duration of this import, then restore whatever
-    was cached before.
+    See load_script_module_with_git_state() for why the git_state.py swap is
+    necessary.
     """
-    scripts_dir = ASSEMBLE_SCRIPT.parent
-    original_git_state = sys.modules.get("git_state")
-    try:
-        gs_spec = importlib.util.spec_from_file_location("git_state", scripts_dir / "git_state.py")
-        gs_module = importlib.util.module_from_spec(gs_spec)
-        gs_spec.loader.exec_module(gs_module)
-        sys.modules["git_state"] = gs_module
-
-        spec = importlib.util.spec_from_file_location("land_work_batch_assemble", ASSEMBLE_SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    finally:
-        if original_git_state is not None:
-            sys.modules["git_state"] = original_git_state
-        else:
-            sys.modules.pop("git_state", None)
-    return module
+    return load_script_module_with_git_state("land_work_batch_assemble", ASSEMBLE_SCRIPT)
 
 
 class LandWorkBatchAssembleTest(unittest.TestCase):
@@ -265,32 +245,46 @@ class LandWorkBatchAssembleTest(unittest.TestCase):
     def test_reset_hard_failure_is_a_structured_error_not_a_crash(self) -> None:
         # Regression: `git reset --hard` was unguarded, unlike
         # land-work-create-preview.py's equivalent reset. A filesystem
-        # hiccup must produce the JSON error contract, not a raw traceback.
-        # Make the worktree's own git-admin dir read-only so `git status`
-        # (a read) still succeeds and passes the pre-checks, but `git reset
-        # --hard` (which must write the index and HEAD) fails.
+        # hiccup or corrupted worktree must produce the JSON error contract,
+        # not a raw traceback. A real failure is simulated by mocking the
+        # module's own `git` call rather than chmod-ing the git-admin dir
+        # read-only: chmod is a no-op for a root-run test process (root
+        # bypasses file-mode permission checks), which would make this test
+        # silently stop exercising the guarded path under a root-run
+        # test/CI container.
         self._make_branch("branch-a", "a.txt", "a\n")
-        real_git_dir = Path(git(self.integration, "rev-parse", "--git-dir").stdout.strip())
-        if not real_git_dir.is_absolute():
-            real_git_dir = self.integration / real_git_dir
-        original_mode = real_git_dir.stat().st_mode
-        real_git_dir.chmod(0o555)
-        try:
-            result = self.run_assemble(
-                "--worktree", str(self.integration),
-                "--base-ref", self.base_sha,
-                "--branch", "branch-a",
-                check=False,
-            )
-        finally:
-            real_git_dir.chmod(original_mode)
+        module = load_assemble_module()
+        original_git = module.git
 
-        payload = json.loads(result.stdout)
+        def guarded_git(*args, **kwargs):
+            if args[:2] == ("reset", "--hard"):
+                raise subprocess.CalledProcessError(128, ["git", *args], stderr="fatal: simulated reset failure")
+            return original_git(*args, **kwargs)
 
-        self.assertNotEqual(result.returncode, 0)
+        argv = [
+            str(ASSEMBLE_SCRIPT),
+            "--worktree", str(self.integration),
+            "--base-ref", self.base_sha,
+            "--branch", "branch-a",
+        ]
+        stdout = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", argv), unittest.mock.patch.object(
+            module, "git", new=guarded_git
+        ), contextlib.redirect_stdout(stdout):
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(self.repo)
+                exit_code = module.main()
+            finally:
+                os.chdir(original_cwd)
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertNotEqual(exit_code, 0)
         self.assertFalse(payload["ok"])
         self.assertTrue(payload["errors"])
         self.assertIn("reset --hard", payload["errors"][0])
+        self.assertEqual(payload["base_sha"], self.base_sha)
 
     def test_corrupted_registered_worktree_is_a_structured_error_not_a_crash(self) -> None:
         # Regression: foreign_untracked_files()/registered_worktree_paths()
@@ -340,6 +334,57 @@ class LandWorkBatchAssembleTest(unittest.TestCase):
         self.assertIn("already up to date", payload["evicted"][0]["reason"])
         merge_shas = [entry["merge_commit_sha"] for entry in payload["assembled"]]
         self.assertEqual(len(merge_shas), len(set(merge_shas)))
+
+    def test_worktree_becoming_unusable_mid_batch_is_a_structured_error_not_a_crash(self) -> None:
+        # Regression: the per-branch merge loop's own git_stdout calls (the
+        # post-merge HEAD lookup used for both merge_commit_sha and the
+        # no-op-merge check) were unguarded even after the pre-loop setup
+        # calls were hardened. The shared worktree can become unusable
+        # between two of this script's own calls (another swarm agent, a
+        # concurrent cleanup sweep) -- that must degrade to the JSON error
+        # contract, with whatever was already assembled reported for
+        # diagnosis, not an unhandled traceback.
+        self._make_branch("branch-a", "a.txt", "a\n")
+        self._make_branch("branch-b", "b.txt", "b\n")
+        module = load_assemble_module()
+        original_try_git_stdout = module.try_git_stdout
+        calls_after_merge = {"count": 0}
+
+        def guarded_try_git_stdout(*args, **kwargs):
+            if args[:2] == ("rev-parse", "HEAD"):
+                calls_after_merge["count"] += 1
+                if calls_after_merge["count"] == 1:
+                    # Let the first (post-branch-a-merge) lookup succeed so
+                    # branch-a lands, then fail the next one.
+                    return original_try_git_stdout(*args, **kwargs)
+                return None
+            return original_try_git_stdout(*args, **kwargs)
+
+        argv = [
+            str(ASSEMBLE_SCRIPT),
+            "--worktree", str(self.integration),
+            "--base-ref", self.base_sha,
+            "--branch", "branch-a",
+            "--branch", "branch-b",
+        ]
+        stdout = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", argv), unittest.mock.patch.object(
+            module, "try_git_stdout", new=guarded_try_git_stdout
+        ), contextlib.redirect_stdout(stdout):
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(self.repo)
+                exit_code = module.main()
+            finally:
+                os.chdir(original_cwd)
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertNotEqual(exit_code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["errors"])
+        self.assertEqual([entry["branch"] for entry in payload["assembled"]], ["branch-a"])
+        self.assertIsNone(payload["tip_sha"])
 
     def test_merge_commit_message_references_branch(self) -> None:
         self._make_branch("branch-a", "a.txt", "a\n")

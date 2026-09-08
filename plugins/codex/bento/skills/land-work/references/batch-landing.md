@@ -49,14 +49,32 @@ land-work/scripts/land-work-batch-assemble.py \
   never blocks the rest of the batch and the worktree is left exactly as it
   was before that branch was attempted. A branch that does not resolve to a
   commit (a name typo, a deleted ref) is evicted the same way, with its own
-  reason.
+  reason. A branch that resolves to a commit already an ancestor of the
+  current tip (a duplicate branch in the queue, or one transitively
+  contained via an earlier branch's own history) makes `git merge --no-ff`
+  exit 0 with no new commit ("Already up to date"); this is also evicted
+  (reason: `"already up to date: no-op merge (duplicate or already-contained
+  branch)"`), not recorded as assembled — a no-op merge produces no
+  merge-commit SHA of its own to report.
 - Output: `assembled` (branch, branch SHA, merge-commit SHA — in order),
   `evicted` (branch, reason, conflicting paths if applicable), `tip_sha` /
   `tip_tree` for the assembled worktree's current `HEAD` (equal to
   `base_sha` when every branch was evicted, or none were given).
-- Exit 0 whenever the script itself ran without an input error (an
-  unregistered worktree, a missing base ref) — a fully-evicted batch is not
-  a script failure, it's a caller decision ("nothing to land this round").
+- Exit 0 whenever the script itself ran without an input error and the
+  shared worktree stayed usable throughout — a fully-evicted batch is not a
+  script failure, it's a caller decision ("nothing to land this round").
+  Exit 1 with a structured `{ok: false, errors: [...]}` payload (never an
+  unhandled traceback) for: an unregistered `--worktree`, a `--base-ref` that
+  doesn't resolve, a registered-but-corrupted worktree (`git status` fails in
+  it), foreign untracked files, a `--base-ref` that stops resolving between
+  the initial check and the reset (a race with a concurrent lease refresh,
+  branch cleanup, or another swarm agent — the same class of race the
+  per-branch loop has always guarded against), a failed `git reset --hard`,
+  or the worktree becoming unusable partway through assembly (any of the
+  loop's own git calls failing after one or more branches already merged).
+  The last case reports whatever was already assembled/evicted so far for
+  diagnosis, with `tip_sha`/`tip_tree` left `null` since the final state
+  could not be confirmed.
 
 ## Orchestration (Land-Work Steps 1-10, Batch Variant)
 

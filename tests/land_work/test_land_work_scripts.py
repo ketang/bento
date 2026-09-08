@@ -1,13 +1,11 @@
-import importlib.util
 import json
 import subprocess
-import sys
 import tempfile
 import unittest
 import unittest.mock
 from pathlib import Path
 
-from tests.script_test_utils import git, run
+from tests.script_test_utils import git, load_script_module_with_git_state, run
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -21,30 +19,10 @@ def load_preview_module():
     """Import land-work-create-preview.py directly (hyphenated filename, so
     not a normal import) to unit-test its helpers without a subprocess.
 
-    Several skills ship their own same-named git_state.py; another test in
-    this suite may already have cached a *different* one under sys.modules
-    ["git_state"], which would make our `from git_state import (...)` resolve
-    to the wrong module (or fail with ImportError for a name it doesn't
-    define). Explicitly load this script's own git_state.py under that name
-    for the duration of this import, then restore whatever was cached before.
+    See load_script_module_with_git_state() for why the git_state.py swap is
+    necessary.
     """
-    scripts_dir = PREVIEW_SCRIPT.parent
-    original_git_state = sys.modules.get("git_state")
-    try:
-        gs_spec = importlib.util.spec_from_file_location("git_state", scripts_dir / "git_state.py")
-        gs_module = importlib.util.module_from_spec(gs_spec)
-        gs_spec.loader.exec_module(gs_module)
-        sys.modules["git_state"] = gs_module
-
-        spec = importlib.util.spec_from_file_location("land_work_create_preview", PREVIEW_SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-    finally:
-        if original_git_state is not None:
-            sys.modules["git_state"] = original_git_state
-        else:
-            sys.modules.pop("git_state", None)
-    return module
+    return load_script_module_with_git_state("land_work_create_preview", PREVIEW_SCRIPT)
 
 
 class LandWorkScriptsTest(unittest.TestCase):

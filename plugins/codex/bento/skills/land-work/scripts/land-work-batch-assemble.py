@@ -12,6 +12,13 @@ attempted, and assembly continues with the remaining branches. Gating the
 assembled tip (landing.full_gate), re-verifying the primary-branch lease
 (land-work-verify-lease.py), and pushing are separate steps this script does
 not perform — it only produces the candidate.
+
+Every git call after the initial validation runs in a worktree shared with
+other swarm agents across the lifetime of this process, so any of them can
+start failing partway through assembly (the worktree can be reset, removed,
+or corrupted by someone else between two of our own calls). Every such call
+is guarded and a failure degrades to the same {ok: false, errors: [...]}
+JSON contract every exit path here uses, never an unhandled traceback.
 """
 
 from __future__ import annotations
@@ -30,6 +37,7 @@ from git_state import (
     registered_worktree_paths,
     rev_exists,
     rev_parse,
+    try_git_stdout,
 )
 
 
@@ -69,17 +77,43 @@ def main() -> int:
     errors: list[str] = []
     warnings: list[str] = []
 
-    registered: set[Path] | None
+    def emit(
+        *,
+        ok: bool,
+        errors: list[str],
+        base_sha: str | None = None,
+        assembled: list[dict[str, object]] | None = None,
+        evicted: list[dict[str, object]] | None = None,
+        tip_sha: str | None = None,
+        tip_tree: str | None = None,
+    ) -> int:
+        payload = {
+            "cwd": str(cwd),
+            "checkout_root": str(checkout_root),
+            "worktree": str(worktree),
+            "base_ref": args.base_ref,
+            "base_sha": base_sha,
+            "assembled": assembled or [],
+            "evicted": evicted or [],
+            "tip_sha": tip_sha,
+            "tip_tree": tip_tree,
+            "ok": ok,
+            "warnings": warnings,
+            "errors": errors,
+        }
+        json.dump(payload, sys.stdout, indent=2)
+        sys.stdout.write("\n")
+        return 0 if ok else 1
+
     try:
         registered = registered_worktree_paths(checkout_root)
+        if worktree not in registered:
+            errors.append(f"{worktree} is not a registered git worktree of {checkout_root}")
     except subprocess.CalledProcessError as exc:
         errors.append(
             f"unable to list registered worktrees of {checkout_root} "
             f"(`git worktree list` failed: {(exc.stderr or '').strip() or exc})"
         )
-        registered = None
-    if registered is not None and worktree not in registered:
-        errors.append(f"{worktree} is not a registered git worktree of {checkout_root}")
 
     if not rev_exists(args.base_ref, checkout_root):
         errors.append(f"base revision does not exist: {args.base_ref}")
@@ -98,47 +132,24 @@ def main() -> int:
                 "refusing to reset over them"
             )
 
-    def error_payload(these_errors: list[str]) -> dict[str, object]:
-        return {
-            "cwd": str(cwd),
-            "checkout_root": str(checkout_root),
-            "worktree": str(worktree),
-            "base_ref": args.base_ref,
-            "base_sha": None,
-            "assembled": [],
-            "evicted": [],
-            "tip_sha": None,
-            "tip_tree": None,
-            "ok": False,
-            "warnings": warnings,
-            "errors": these_errors,
-        }
-
     if errors:
-        json.dump(error_payload(errors), sys.stdout, indent=2)
-        sys.stdout.write("\n")
-        return 1
+        return emit(ok=False, errors=errors)
 
     try:
         # base_ref was confirmed resolvable by rev_exists() above, but that is
         # a separate git call: a branch/tag base_ref can stop resolving
         # between the two calls (concurrent lease refresh, branch cleanup
-        # sweep, another swarm agent). Survive that race the same way the
-        # per-branch loop below survives it.
+        # sweep, another swarm agent). Survive that race the same way every
+        # other git call below survives it.
         base_sha = rev_parse(args.base_ref, checkout_root)
     except subprocess.CalledProcessError as exc:
-        json.dump(
-            error_payload(
-                [
-                    f"base revision {args.base_ref!r} stopped resolving before reset "
-                    f"(`git rev-parse` failed: {(exc.stderr or '').strip() or exc})"
-                ]
-            ),
-            sys.stdout,
-            indent=2,
+        return emit(
+            ok=False,
+            errors=[
+                f"base revision {args.base_ref!r} stopped resolving before reset "
+                f"(`git rev-parse` failed: {(exc.stderr or '').strip() or exc})"
+            ],
         )
-        sys.stdout.write("\n")
-        return 1
 
     try:
         # `reset --hard` clears any leftover merge state (including an
@@ -146,18 +157,15 @@ def main() -> int:
         # land-work-create-preview.py's persistent-worktree reuse path does.
         git("reset", "--hard", base_sha, cwd=worktree)
     except subprocess.CalledProcessError as exc:
-        json.dump(
-            error_payload(
-                [f"`git reset --hard {base_sha}` failed in {worktree}: {(exc.stderr or '').strip() or exc}"]
-            ),
-            sys.stdout,
-            indent=2,
+        return emit(
+            ok=False,
+            errors=[f"`git reset --hard {base_sha}` failed in {worktree}: {(exc.stderr or '').strip() or exc}"],
+            base_sha=base_sha,
         )
-        sys.stdout.write("\n")
-        return 1
 
     assembled: list[dict[str, object]] = []
     evicted: list[dict[str, object]] = []
+    current_head = base_sha
 
     for branch in args.branches:
         try:
@@ -169,11 +177,19 @@ def main() -> int:
             # cleanly rather than crash mid-batch with no JSON output at all.
             evicted.append({"branch": branch, "reason": f"revision does not exist: {branch}", "conflicting_paths": []})
             continue
-        pre_merge_head = git_stdout("rev-parse", "HEAD", cwd=worktree)
+
         merge_result = git("merge", "--no-ff", branch_sha, "-m", f"batch: merge {branch}", cwd=worktree, check=False)
         if merge_result.returncode == 0:
-            post_merge_head = git_stdout("rev-parse", "HEAD", cwd=worktree)
-            if post_merge_head == pre_merge_head:
+            post_merge_head = try_git_stdout("rev-parse", "HEAD", cwd=worktree)
+            if post_merge_head is None:
+                return emit(
+                    ok=False,
+                    errors=[f"`git rev-parse HEAD` failed in {worktree} after merging {branch!r}"],
+                    base_sha=base_sha,
+                    assembled=assembled,
+                    evicted=evicted,
+                )
+            if post_merge_head == current_head:
                 # `git merge --no-ff` exits 0 with no new commit ("Already up
                 # to date.") when branch_sha is already an ancestor of HEAD --
                 # a duplicate branch in the queue, or one transitively
@@ -189,40 +205,50 @@ def main() -> int:
                     }
                 )
                 continue
+            current_head = post_merge_head
             assembled.append(
                 {
                     "branch": branch,
                     "branch_sha": branch_sha,
-                    "merge_commit_sha": post_merge_head,
+                    "merge_commit_sha": current_head,
                 }
             )
             continue
-        conflicting_paths = [
-            line
-            for line in git_stdout("diff", "--name-only", "--diff-filter=U", cwd=worktree).splitlines()
-            if line
-        ]
+
+        conflicting_raw = try_git_stdout("diff", "--name-only", "--diff-filter=U", cwd=worktree)
+        if conflicting_raw is None:
+            return emit(
+                ok=False,
+                errors=[f"unable to list conflicting paths in {worktree} after merging {branch!r} failed"],
+                base_sha=base_sha,
+                assembled=assembled,
+                evicted=evicted,
+            )
+        conflicting_paths = [line for line in conflicting_raw.splitlines() if line]
         git("merge", "--abort", cwd=worktree, check=False)
         reason = "conflict" if conflicting_paths else (merge_result.stderr.strip() or "merge failed")
         evicted.append({"branch": branch, "reason": reason, "conflicting_paths": conflicting_paths})
 
-    payload = {
-        "cwd": str(cwd),
-        "checkout_root": str(checkout_root),
-        "worktree": str(worktree),
-        "base_ref": args.base_ref,
-        "base_sha": base_sha,
-        "assembled": assembled,
-        "evicted": evicted,
-        "tip_sha": git_stdout("rev-parse", "HEAD", cwd=worktree),
-        "tip_tree": git_stdout("rev-parse", "HEAD^{tree}", cwd=worktree),
-        "ok": True,
-        "warnings": warnings,
-        "errors": [],
-    }
-    json.dump(payload, sys.stdout, indent=2)
-    sys.stdout.write("\n")
-    return 0
+    tip_sha = try_git_stdout("rev-parse", "HEAD", cwd=worktree)
+    tip_tree = try_git_stdout("rev-parse", "HEAD^{tree}", cwd=worktree) if tip_sha is not None else None
+    if tip_sha is None or tip_tree is None:
+        return emit(
+            ok=False,
+            errors=[f"unable to resolve the assembled tip in {worktree} after assembly finished"],
+            base_sha=base_sha,
+            assembled=assembled,
+            evicted=evicted,
+        )
+
+    return emit(
+        ok=True,
+        errors=[],
+        base_sha=base_sha,
+        assembled=assembled,
+        evicted=evicted,
+        tip_sha=tip_sha,
+        tip_tree=tip_tree,
+    )
 
 
 if __name__ == "__main__":
