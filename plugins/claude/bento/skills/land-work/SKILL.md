@@ -604,20 +604,48 @@ queue and lands as part of the next assembled batch, gated once at the tip.
      mechanics as a clean batch). `culprits` are returned as rework. Record
      the full `trail` (every subset tried, its gate result, and which
      branch(es) were isolated) in the tracker issue for the batch.
+   - If `final` is `null` (every input branch turned out to be a culprit, so
+     there was nothing to reassemble/confirm — e.g. two branches that are
+     each independently broken): the script itself still reports `ok: true`
+     (it did its job correctly), but `landable` is empty. Treat this exactly
+     like the old full-stop path — return **every** originally assembled
+     branch as rework, and record the trail in the tracker. Do not reuse the
+     integration worktree for the next landing round without resetting it
+     first: it is left checked out at whatever the last bisection attempt
+     assembled, not at a clean base.
    - If `final.ok` is `false` (the confirmation gate on `landable` itself
      failed — a residual non-monotonic interaction among the survivors that
      pairwise halving did not catch) or the script itself reports `ok: false`
-     (an infra failure: unregistered worktree, bad base-ref, or the shared
-     worktree becoming unusable mid-bisect): treat this exactly like the old
-     full-stop path — do not land any part of the batch, return **every**
-     originally assembled branch as rework (not just `culprits`), and record
-     the failure and trail in the tracker.
+     (an infra failure: unregistered worktree, bad base-ref, a duplicate
+     `--branch`, or the shared worktree becoming unusable mid-bisect,
+     including a branch silently evicted during a subset's reassembly):
+     treat this exactly like the old full-stop path — do not land any part
+     of the batch, return **every** originally assembled branch as rework
+     (not just `culprits`), and record the failure and trail in the tracker.
    - If the project verifier (step 4a), not the gate, is what failed at the
      tip: run bisect the same way, substituting a verifier-invocation command
-     for `--gate-command` (wrap `land-work-run-verifier.py` with the fixed
-     `--repo-root`/`--base-sha`/`--runtime` flags for this batch, varying only
-     `--head-sha` per reassembled subset's tip) so the same halving loop
-     applies.
+     for `--gate-command`. Because `--gate-command` is one fixed shell string
+     reused unchanged for every reassembled subset, `--head-sha` cannot be
+     supplied as a plain flag value (there is no per-attempt templating
+     point) — embed a command substitution inside the string instead, so the
+     shell re-resolves it fresh for each subset's own tip at the moment that
+     subset's gate command actually runs:
+     ```bash
+     --gate-command "land-work/scripts/land-work-run-verifier.py --repo-root <repo-root> --candidate <integration-worktree> --base-sha <leased-sha> --head-sha \$(git -C <integration-worktree> rev-parse HEAD) --runtime <runtime>"
+     ```
+     (escape the `$(...)` so it survives whatever quoting wraps the whole
+     `--gate-command` value, and only expands when the shell that
+     `land-work-batch-bisect.py` invokes actually runs the command, inside
+     that subset's freshly-reassembled worktree.)
+   - A gate command that writes a non-gitignored artifact (a coverage report,
+     a generated file) leaves it untracked in the shared worktree after that
+     attempt. `land-work-batch-assemble.py`'s own foreign-untracked-files
+     guard then refuses the *next* reassembly in the bisect loop, which
+     aborts the whole bisect as an infra failure rather than a false
+     "resolved" verdict — but it does mean `landing.full_gate` (or a
+     verifier wrapper used as `--gate-command`) must not write anything
+     outside `.gitignore` for a batch-mode repo, or bisect cannot run more
+     than one attempt.
 6. **Lease-checked advance.** On a green gate and verifier, re-verify the
    lease against the same SHA captured in step 2:
 

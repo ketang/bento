@@ -1,10 +1,15 @@
+import contextlib
+import io
 import json
+import os
 import subprocess
+import sys
 import tempfile
 import unittest
+import unittest.mock
 from pathlib import Path
 
-from tests.script_test_utils import git, run
+from tests.script_test_utils import git, load_script_module_with_git_state, run
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -81,6 +86,14 @@ class LandWorkBatchBisectTest(unittest.TestCase):
         attempts = [entry for entry in payload["trail"] if entry["kind"] == "attempt"]
         self.assertGreaterEqual(len(attempts), 2)
         self.assertTrue(all("result" in entry for entry in attempts))
+        # The final confirmation subset ([branch-good]) exactly matches the
+        # halving loop's own attempt at that half, which already gated
+        # green -- the gate must be reused, not re-run, but the worktree
+        # must still be reassembled fresh to the landable tip regardless
+        # (never left at whatever the last bisection attempt happened to
+        # leave behind -- here, the branch-bad half, attempted last).
+        self.assertTrue(attempts[-1].get("gate_reused"))
+        self.assertEqual(attempts[-1]["branches"], ["branch-good"])
         # The worktree ends up reset to the confirmed landable tip.
         self.assertTrue((self.integration / "good.txt").exists())
         self.assertFalse((self.integration / "bad.txt").exists())
@@ -170,10 +183,16 @@ class LandWorkBatchBisectTest(unittest.TestCase):
             "--branch", "branch-good",
             "--branch", "branch-good-2",
             "--branch", "branch-bad",
+            check=False,
         )
         payload = json.loads(result.stdout)
 
-        self.assertTrue(payload["ok"])
+        # Regression: a caller checking only the process exit code (never
+        # parsing `final.ok` out of the JSON body) must not see this
+        # reported as success -- the top-level `ok`/exit code must reflect
+        # that `landable` is not actually safe to land.
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
         # branch-bad is still isolated by halving.
         self.assertIn("branch-bad", payload["culprits"])
         # But the final confirmation of the two "good" survivors together
@@ -202,6 +221,94 @@ class LandWorkBatchBisectTest(unittest.TestCase):
         self.assertNotEqual(result.returncode, 0)
         self.assertFalse(payload["ok"])
         self.assertIn("at least 2", payload["errors"][0])
+
+    def test_duplicate_branch_is_rejected(self) -> None:
+        self._make_branch("branch-a", "a.txt", "a\n")
+        self._make_branch("branch-b", "b.txt", "b\n")
+
+        result = self.run_bisect(
+            "--worktree", str(self.integration),
+            "--base-ref", self.base_sha,
+            "--gate-command", "true",
+            "--branch", "branch-a",
+            "--branch", "branch-b",
+            "--branch", "branch-a",
+            check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("branch-a", payload["errors"][0])
+
+    def test_evicted_branch_during_subset_reassembly_aborts_bisect(self) -> None:
+        # Regression: a branch that land-work-batch-assemble.py silently
+        # evicts while reassembling a bisection subset (here, a branch with
+        # no commits ahead of base -- assemble.py's own no-op-merge eviction
+        # from bento-yank) must abort the whole bisect with a structured
+        # error. Trusting that attempt's gate result would misattribute a
+        # culprit or a landable branch that was never actually present in
+        # the gated tree.
+        git(self.repo, "branch", "branch-noop", "main")
+        self._make_branch("branch-other", "other.txt", "other\n")
+
+        result = self.run_bisect(
+            "--worktree", str(self.integration),
+            "--base-ref", self.base_sha,
+            "--gate-command", "true",
+            "--branch", "branch-noop",
+            "--branch", "branch-other",
+            check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("assembling a bisection subset failed", payload["errors"][0])
+        self.assertIn("evicted", payload["errors"][0])
+
+    def test_run_assemble_launch_failure_is_a_structured_error_not_a_crash(self) -> None:
+        # Regression: run_assemble()'s subprocess.run() had no OSError
+        # handling, unlike run_gate()'s equivalent call -- a launch failure
+        # (lost executable bit, unresolvable interpreter) must not crash
+        # main() with an unhandled traceback.
+        module = load_script_module_with_git_state(
+            "land_work_batch_bisect", BISECT_SCRIPT
+        )
+        self._make_branch("branch-a", "a.txt", "a\n")
+        self._make_branch("branch-b", "b.txt", "b\n")
+
+        original_subprocess_run = module.subprocess.run
+
+        def guarded_run(args, *a, **kw):
+            if args and args[0] == str(module.ASSEMBLE_SCRIPT):
+                raise OSError("simulated launch failure")
+            return original_subprocess_run(args, *a, **kw)
+
+        argv = [
+            str(BISECT_SCRIPT),
+            "--worktree", str(self.integration),
+            "--base-ref", self.base_sha,
+            "--gate-command", "true",
+            "--branch", "branch-a",
+            "--branch", "branch-b",
+        ]
+        stdout = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", argv), unittest.mock.patch.object(
+            module.subprocess, "run", side_effect=guarded_run
+        ), contextlib.redirect_stdout(stdout):
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(self.repo)
+                exit_code = module.main()
+            finally:
+                os.chdir(original_cwd)
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertNotEqual(exit_code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertIn("unable to launch", payload["errors"][0])
 
     def test_rejects_worktree_not_registered_to_this_repo(self) -> None:
         self._make_branch("branch-a", "a.txt", "a\n")

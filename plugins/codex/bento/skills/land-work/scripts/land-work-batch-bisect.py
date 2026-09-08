@@ -60,14 +60,31 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 ASSEMBLE_SCRIPT = SCRIPT_DIR / "land-work-batch-assemble.py"
 
 
-class AssembleFailedError(RuntimeError):
+class BisectAbortError(RuntimeError):
+    """Base for errors that abort the whole bisect rather than continuing
+    against evidence that can no longer be trusted."""
+
+    def __init__(self, payload: dict) -> None:
+        super().__init__("; ".join(payload.get("errors") or ["bisect aborted"]))
+        self.payload = payload
+
+
+class AssembleFailedError(BisectAbortError):
     """Raised when a bisection subset failed to assemble (an infra failure,
     not a red gate) -- aborts the whole bisect rather than bisecting further
     against a worktree that may no longer be trustworthy."""
 
-    def __init__(self, payload: dict) -> None:
-        super().__init__("; ".join(payload.get("errors") or ["assemble failed"]))
-        self.payload = payload
+
+class IncompleteAssemblyError(BisectAbortError):
+    """Raised when land-work-batch-assemble.py reported ok:true but evicted
+    one or more of the requested branches (a merge conflict specific to this
+    subset, or a no-op duplicate/already-contained merge) instead of merging
+    every branch it was asked to. Bisection's culprit attribution assumes
+    every attempt's gate result reflects exactly the requested branch set --
+    an eviction breaks that assumption, so this aborts rather than risk
+    attributing a culprit that was never actually present in the gated tree,
+    or reporting a false `landable`/`final.ok: true` for a subset that was
+    never fully assembled."""
 
 
 def _tail_lines(text: str, count: int) -> list[str]:
@@ -91,7 +108,18 @@ def _tail_lines(text: str, count: int) -> list[str]:
 def run_assemble(worktree: Path, base_ref: str, branches: list[str]) -> dict:
     args = [str(ASSEMBLE_SCRIPT), "--worktree", str(worktree), "--base-ref", base_ref]
     args.extend(itertools.chain.from_iterable(("--branch", b) for b in branches))
-    proc = subprocess.run(args, capture_output=True, text=True, check=False)
+    try:
+        proc = subprocess.run(args, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        raise AssembleFailedError(
+            {
+                "ok": False,
+                "errors": [
+                    f"unable to launch land-work-batch-assemble.py for branches "
+                    f"{branches!r}: {exc}"
+                ],
+            }
+        ) from exc
     try:
         payload = json.loads(proc.stdout)
     except ValueError as exc:
@@ -107,6 +135,21 @@ def run_assemble(worktree: Path, base_ref: str, branches: list[str]) -> dict:
         ) from exc
     if not payload.get("ok"):
         raise AssembleFailedError(payload)
+    evicted = payload.get("evicted") or []
+    if evicted:
+        evicted_branches = [entry.get("branch") for entry in evicted]
+        raise IncompleteAssemblyError(
+            {
+                "ok": False,
+                "errors": [
+                    f"land-work-batch-assemble.py evicted branch(es) "
+                    f"{evicted_branches!r} while assembling {branches!r} -- "
+                    "bisection cannot trust this attempt's gate result for the "
+                    "full requested subset"
+                ],
+                "assemble": payload,
+            }
+        )
     return payload
 
 
@@ -170,6 +213,40 @@ class Bisector:
                 "message": message,
             }
         )
+
+    def find_green_attempt(self, branches: list[str]) -> dict | None:
+        """An already-recorded trail entry that gated this exact ordered
+        subset green, if any -- lets the caller skip a guaranteed-identical
+        *gate* run (the gate result only depends on the subset and
+        gate_command, both unchanged), while still reassembling fresh (see
+        attempt_reusing_gate) since the worktree's actual tree content after
+        this call must match `branches` exactly for a subsequent push."""
+        target = list(branches)
+        for entry in self.trail:
+            if entry.get("kind") == "attempt" and entry.get("branches") == target and entry.get("result") == "green":
+                return entry
+        return None
+
+    def attempt_reusing_gate(self, branches: list[str], reused_gate: dict) -> tuple[dict, dict]:
+        """Like attempt(), but skips re-running the (potentially expensive)
+        gate command, reusing an already-proven-green gate result instead.
+        Still calls run_assemble(): the worktree's tree content must match
+        `branches` exactly afterward, since this is the same worktree the
+        caller pushes directly once landing.verify-lease/land-work confirm
+        it -- only the gate run itself is skippable, not the reassembly."""
+        assemble_payload = run_assemble(self.worktree, self.base_ref, branches)
+        self.trail.append(
+            {
+                "kind": "attempt",
+                "index": next(self._next_index),
+                "branches": list(branches),
+                "assemble": assemble_payload,
+                "gate": reused_gate,
+                "result": "green",
+                "gate_reused": True,
+            }
+        )
+        return assemble_payload, reused_gate
 
     def bisect(self, branches: list[str]) -> list[str]:
         """Given a subset already known red (by construction: the top-level
@@ -273,10 +350,22 @@ def main() -> int:
             ],
         )
 
+    duplicates = sorted({b for b in args.branches if args.branches.count(b) > 1})
+    if duplicates:
+        return emit(
+            ok=False,
+            errors=[
+                f"--branch given more than once for: {duplicates!r} -- a duplicate "
+                "branch can land in different halves during bisection and get "
+                "evicted as a no-op merge in one of them, skewing which half's "
+                "gate result actually reflects that branch's presence"
+            ],
+        )
+
     bisector = Bisector(worktree, args.base_ref, args.gate_command)
     try:
         culprits = bisector.bisect(list(args.branches))
-    except AssembleFailedError as exc:
+    except BisectAbortError as exc:
         return emit(
             ok=False,
             errors=[f"assembling a bisection subset failed: {exc}"],
@@ -288,9 +377,13 @@ def main() -> int:
 
     final: dict | None = None
     if landable:
+        reused = bisector.find_green_attempt(landable)
         try:
-            final_assemble, final_gate = bisector.attempt(landable)
-        except AssembleFailedError as exc:
+            if reused is not None:
+                final_assemble, final_gate = bisector.attempt_reusing_gate(landable, reused["gate"])
+            else:
+                final_assemble, final_gate = bisector.attempt(landable)
+        except BisectAbortError as exc:
             return emit(
                 ok=False,
                 errors=[f"final confirmation assemble of the landable subset failed: {exc}"],
@@ -312,9 +405,22 @@ def main() -> int:
                 "not just `culprits` -- do not land `landable` as-is.",
             )
 
+    # `final is None` means every input branch turned out to be a culprit --
+    # a valid, successful bisect outcome (nothing to land, report it as such).
+    # `final["ok"] is False` means the opposite: the subset this script itself
+    # identified as landable is not actually safe to land. A caller that only
+    # checks the process exit code (not the JSON body's `final.ok`) must not
+    # see that case reported as success.
+    overall_ok = final is None or bool(final["ok"])
     return emit(
-        ok=True,
-        errors=[],
+        ok=overall_ok,
+        errors=[]
+        if overall_ok
+        else [
+            "final confirmation gate failed on `landable`; do not land it -- "
+            "treat this as a full stop for the whole input batch (see `final` "
+            "and the trail note)"
+        ],
         trail=bisector.trail,
         culprits=culprits,
         landable=landable,

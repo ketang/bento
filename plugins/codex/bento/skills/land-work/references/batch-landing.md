@@ -113,10 +113,34 @@ land-work/scripts/land-work-batch-bisect.py \
   repeated, in the same order `land-work-batch-assemble.py` was given). Does
   **not** re-gate that full list itself — the caller (SKILL.md step 4/4a)
   already confirmed it is red; re-running the same full-list gate a second
-  time inside this script would just repeat that work.
+  time inside this script would just repeat that work. Refuses (`ok: false`)
+  if `--branch` is given fewer than 2 times, or if the same branch is given
+  more than once — a duplicate can land in different halves and get evicted
+  as a no-op merge in one of them (see the eviction bullet below), skewing
+  which half's gate result actually reflects that branch's presence.
 - `--gate-command` is a plain shell string, run via the shell in the worktree
   for every reassembled subset (`landing.full_gate`, or a project-verifier
-  invocation when it was the verifier that failed — see `SKILL.md` step 5).
+  invocation when it was the verifier that failed — see `SKILL.md` step 5,
+  which also covers the `$(...)`-substitution technique needed to vary
+  `--head-sha` per subset since `--gate-command` itself cannot be templated
+  per attempt). A gate command that writes a non-gitignored artifact leaves
+  it untracked in the shared worktree, which then makes the *next*
+  reassembly in the loop refuse via `land-work-batch-assemble.py`'s own
+  foreign-untracked-files guard — aborting the whole bisect as an infra
+  failure. `landing.full_gate`/a verifier wrapper used here must not write
+  anything outside `.gitignore`.
+- **Evicted branches abort the bisect.** If a reassembled subset's
+  `land-work-batch-assemble.py` call reports `ok: true` but evicted one or
+  more of the requested branches (a merge conflict specific to that subset,
+  or a no-op duplicate/already-contained merge), that attempt's gate result
+  does not actually cover the full requested subset — trusting it risks
+  attributing a culprit that was never present in the gated tree, or
+  reporting a false `landable`/`final.ok: true` for branches that were never
+  fully assembled together. This script does not try to work around it: it
+  aborts the whole bisect with a structured `{ok: false, errors: [...]}`
+  payload (never an unhandled traceback — the same contract covers a launch
+  failure running `land-work-batch-assemble.py` itself, e.g. a lost
+  executable bit or an unresolvable interpreter).
 - **Halving.** Splits `--branch` into two ordered halves (first half, second
   half — a branch's position never changes, only which half it lands in),
   reassembles each half fresh against `--base-ref` via
@@ -138,25 +162,42 @@ land-work/scripts/land-work-batch-bisect.py \
   bug, given the failure mode isn't guaranteed monotonic.
 - **Final confirmation.** Once bisection settles on `landable` (the input
   branches minus every culprit, in original order), it is reassembled fresh
-  against `--base-ref` one more time and gated once more — the actual
-  candidate to push, and the one piece of evidence that the survivors
-  themselves combine cleanly (catching a residual non-monotonic interaction
-  among them that pairwise halving alone would not).
+  against `--base-ref` one more time — the actual candidate to push, so the
+  worktree's tree content must match `landable` exactly regardless of what
+  the last bisection attempt happened to leave behind. It is then gated once
+  more, the one piece of evidence that the survivors themselves combine
+  cleanly (catching a residual non-monotonic interaction among them that
+  pairwise halving alone would not) — unless `landable` exactly matches a
+  subset the halving loop already gated green (the common case for a
+  2-branch batch with one culprit — the other branch's own half-attempt
+  already proved it green), in which case that already-proven gate result is
+  reused instead of re-running the (potentially expensive) gate command a
+  second time on an identical input. The reassemble step itself is never
+  skipped, reused or not — only the gate run is.
 - Output: `trail` (every subset attempted or noted, in order — each attempt
-  carries its own `land-work-batch-assemble.py` payload and gate result;
-  each note carries the `ambiguous_non_monotonic` explanation), `culprits`,
-  `landable`, and `final` (`{assemble, gate, ok}`, or `null` when `landable`
-  is empty — every branch turned out to be a culprit).
-- **Reading the result.** `ok: true` at the top level means the script itself
-  ran without an infra failure — it says nothing about whether anything is
-  landable. Check `final`: `final.ok: true` means `landable` is the subset to
-  land (normal step 6 mechanics) and `culprits` go back as rework. `final`
-  being `null`, or non-null with `ok: false`, or the top-level `ok: false`
-  (an infra failure: unregistered worktree, bad `--base-ref`, or the shared
-  worktree becoming unusable mid-bisect, surfaced through
-  `land-work-batch-assemble.py`'s own structured errors) all mean: land
-  nothing, return every originally assembled branch as rework — see
-  `SKILL.md` step 5 for the exact decision table.
+  carries its own `land-work-batch-assemble.py` payload, gate result, and a
+  `gate_reused: true` flag when the gate result was reused rather than
+  freshly run; each note carries the `ambiguous_non_monotonic` explanation),
+  `culprits`, `landable`, and `final`
+  (`{assemble, gate, ok}`, or `null` when `landable` is empty — every branch
+  turned out to be a culprit).
+- **Reading the result.** The top-level `ok` reflects whether it is actually
+  safe to proceed with `landable` — a caller that only checks the process
+  exit code (`$?`), never parsing `final` out of the JSON body, still gets
+  the right answer. `ok: true` covers two cases: `final.ok: true` (`landable`
+  is the subset to land, normal step 6 mechanics, `culprits` go back as
+  rework) and `final: null` (every input branch turned out to be a culprit —
+  a successful bisect outcome, just with nothing to land; return every
+  originally assembled branch as rework, and reset the integration worktree
+  before its next reuse, since bisection left it checked out at whatever the
+  last attempt assembled, not at a clean base). `ok: false` covers `final.ok:
+  false` (the confirmation gate on `landable` itself failed — a residual
+  non-monotonic interaction among the survivors) and an infra failure
+  (unregistered worktree, bad `--base-ref`, a duplicate `--branch`, an
+  evicted branch during a subset's reassembly, or the shared worktree
+  becoming unusable mid-bisect) — in every `ok: false` case: land nothing,
+  return every originally assembled branch as rework — see `SKILL.md` step 5
+  for the exact decision table.
 - Record the full `trail` in the tracker issue for the batch — the acceptance
   contract this script exists to satisfy (bento-faac) is that a later reader
   can see exactly which subsets were tried, which gate failed, and which
