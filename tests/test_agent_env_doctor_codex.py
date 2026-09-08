@@ -40,15 +40,27 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
             ["git", "init", "-q"], cwd=self.repo, check=True,
             capture_output=True,
         )
+        self.home = self.root / "home"
+        self.home.mkdir()
+        # Empty by default so the stale-preview and orphan-worktree checks
+        # never pick up real host state unless a test deliberately populates
+        # it.
+        self.tmp_root = self.root / "tmp"
+        self.tmp_root.mkdir()
         self.mod = load_module()
 
     def tearDown(self) -> None:
         self.temp.cleanup()
 
-    def _evaluate(self, **overrides):
+    def _evaluate(self, home=None, tmp_root=None, now=None, **overrides):
         payload = {"session_id": "sess1", "cwd": str(self.repo)}
         payload.update(overrides)
-        return self.mod.evaluate(payload)
+        return self.mod.evaluate(
+            payload,
+            home=home if home is not None else self.home,
+            tmp_root=tmp_root if tmp_root is not None else self.tmp_root,
+            now=now,
+        )
 
     def _context(self, decision) -> str:
         self.assertIsNotNone(decision)
@@ -216,6 +228,101 @@ class CodexAgentEnvDoctorTest(unittest.TestCase):
             ),
             encoding="utf-8",
         )
+        self.assertIsNone(self._evaluate())
+
+    # --- check 5: bare primary checkout with a working tree -----------------
+
+    def test_bare_primary_with_working_tree_detected(self) -> None:
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init", "-q"],
+            cwd=self.repo, check=True, capture_output=True,
+        )
+        subprocess.run(
+            ["git", "config", "core.bare", "true"],
+            cwd=self.repo, check=True, capture_output=True,
+        )
+        (self.repo / "some-file.txt").write_text("hi\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("core.bare", context)
+
+    # --- check 6: prunable git worktrees -------------------------------------
+
+    def test_unrelated_git_failure_does_not_fall_back_to_cwd(self) -> None:
+        # A .git dir that git itself refuses to recognize for a reason
+        # *other* than the bare-checkout bug (here: no HEAD/refs at all, so
+        # `git rev-parse --show-toplevel` fails with "not a git repository")
+        # must stay silent, not be treated as a project root via the
+        # bare-checkout fallback.
+        import shutil as _shutil
+
+        _shutil.rmtree(self.repo / ".git")
+        (self.repo / ".git").mkdir()
+        (self.repo / ".git" / "config").write_text(
+            "[core]\n\tbare = false\n", encoding="utf-8"
+        )
+        (self.repo / "AGENTS.md").write_text("@gone.md\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_prunable_worktree_detected(self) -> None:
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init", "-q"],
+            cwd=self.repo, check=True, capture_output=True,
+        )
+        linked = self.root / "linked"
+        subprocess.run(
+            ["git", "worktree", "add", str(linked), "-b", "feature", "-q"],
+            cwd=self.repo, check=True, capture_output=True,
+        )
+        import shutil as _shutil
+
+        _shutil.rmtree(linked)
+        context = self._context(self._evaluate())
+        self.assertIn("prunable", context)
+
+    # --- check 7: stale previews and orphan worktree directories -----------
+
+    def test_stale_preview_dir_flagged(self) -> None:
+        preview = self.tmp_root / "land-work-preview-abc123"
+        preview.mkdir()
+        old_time = 1_000_000.0
+        os.utime(preview, (old_time, old_time))
+        context = self._context(self._evaluate(now=old_time + 25 * 3600))
+        self.assertIn("stale land-work preview", context)
+
+    def test_orphan_worktree_directory_flagged(self) -> None:
+        subprocess.run(
+            ["git", "commit", "--allow-empty", "-m", "init", "-q"],
+            cwd=self.repo, check=True, capture_output=True,
+        )
+        wt_root = self.home / ".local" / "share" / "worktrees" / self.repo.name
+        wt_root.mkdir(parents=True)
+        (wt_root / "dead-branch").mkdir()
+        context = self._context(self._evaluate())
+        self.assertIn("orphan worktree directory", context)
+
+    # --- check 8: orphan dolt sql-server --------------------------------------
+
+    def test_orphan_dolt_server_detected(self) -> None:
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        dolt_dir = beads_dir / "dolt"
+        fake = subprocess.Popen(
+            ["sh", "-c", f"sleep 30 # dolt sql-server {dolt_dir}"]
+        )
+        try:
+            import time as _time
+
+            _time.sleep(0.3)
+            context = self._context(self._evaluate())
+            self.assertIn("orphan dolt sql-server", context)
+        finally:
+            fake.terminate()
+            fake.wait(timeout=5)
+
+    def test_dolt_server_with_port_file_present_is_silent(self) -> None:
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        (beads_dir / "dolt-server.port").write_text("12345\n", encoding="utf-8")
         self.assertIsNone(self._evaluate())
 
     # --- contract -----------------------------------------------------------

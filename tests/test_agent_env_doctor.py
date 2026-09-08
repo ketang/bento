@@ -5,6 +5,7 @@ import os
 import subprocess
 import sys
 import tempfile
+import time
 import unittest
 from pathlib import Path
 
@@ -41,6 +42,11 @@ class AgentEnvDoctorTest(unittest.TestCase):
         # considered installed unless a test writes one.
         self.plugins_file = self.root / "installed_plugins.json"
         self._write_installed({})
+        # Empty by default so the stale-preview and orphan-worktree checks
+        # never pick up real host state (e.g. actual /tmp/land-work-preview-*
+        # dirs) unless a test deliberately populates it.
+        self.tmp_root = self.root / "tmp"
+        self.tmp_root.mkdir()
         self.mod = load_module()
 
     def tearDown(self) -> None:
@@ -58,12 +64,14 @@ class AgentEnvDoctorTest(unittest.TestCase):
         payload.update(overrides)
         return payload
 
-    def _evaluate(self, env=None, **overrides):
+    def _evaluate(self, env=None, tmp_root=None, now=None, **overrides):
         return self.mod.evaluate(
             self._hook_input(**overrides),
             home=self.home,
             env=env if env is not None else {"HOME": str(self.home), "PATH": ""},
             plugins_file=self.plugins_file,
+            tmp_root=tmp_root if tmp_root is not None else self.tmp_root,
+            now=now,
         )
 
     def _context(self, decision) -> str:
@@ -668,6 +676,238 @@ class AgentEnvDoctorTest(unittest.TestCase):
         finally:
             os.chmod(doc, 0o644)
         self.assertEqual(result.returncode, 0)
+
+    # --- check 5: bare primary checkout with a working tree -----------------
+
+    def test_bare_primary_with_working_tree_detected(self) -> None:
+        git_dir = self.repo / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text(
+            "[core]\n\tbare = true\n", encoding="utf-8"
+        )
+        (self.repo / "some-file.txt").write_text("hi\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn("core.bare", context)
+        self.assertIn(".git/config", context)
+
+    def test_bare_config_without_working_tree_files_is_silent(self) -> None:
+        # A real bare repo has no working-tree files alongside .git — no bug.
+        git_dir = self.repo / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text(
+            "[core]\n\tbare = true\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_non_bare_git_config_is_silent(self) -> None:
+        git_dir = self.repo / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text(
+            "[core]\n\tbare = false\n", encoding="utf-8"
+        )
+        (self.repo / "some-file.txt").write_text("hi\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_bare_true_outside_core_section_not_flagged(self) -> None:
+        # A same-named `bare = true` key in an unrelated section (e.g. a
+        # submodule's) must not be mistaken for core.bare.
+        git_dir = self.repo / ".git"
+        git_dir.mkdir()
+        (git_dir / "config").write_text(
+            '[core]\n\tbare = false\n[submodule "x"]\n\tbare = true\n',
+            encoding="utf-8",
+        )
+        (self.repo / "some-file.txt").write_text("hi\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_linked_worktree_gitdir_file_not_flagged_as_bare(self) -> None:
+        # A linked worktree's .git is a file (gitdir pointer), not a
+        # directory; the bare-primary check must not misfire on it.
+        (self.repo / ".git").write_text(
+            "gitdir: /somewhere/.git/worktrees/x\n", encoding="utf-8"
+        )
+        (self.repo / "some-file.txt").write_text("hi\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    # --- check 6: prunable git worktrees -------------------------------------
+
+    def _git(self, *args, cwd=None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args], cwd=cwd or self.repo, capture_output=True, text=True,
+            check=True,
+        )
+
+    def test_prunable_worktree_detected(self) -> None:
+        self._git("init", "-q")
+        self._git("commit", "--allow-empty", "-m", "init", "-q")
+        linked = self.root / "linked"
+        self._git("worktree", "add", str(linked), "-b", "feature", "-q")
+        import shutil as _shutil
+
+        _shutil.rmtree(linked)
+        context = self._context(self._evaluate())
+        self.assertIn("prunable", context)
+
+    def test_no_prunable_worktrees_is_silent(self) -> None:
+        self._git("init", "-q")
+        self._git("commit", "--allow-empty", "-m", "init", "-q")
+        self.assertIsNone(self._evaluate())
+
+    def test_non_git_repo_prune_check_is_silent(self) -> None:
+        # self.repo has no .git at all in most tests; the prune check must
+        # not misfire on git's "not a git repository" error output.
+        self.assertIsNone(self._evaluate())
+
+    # --- check 7: stale previews and orphan worktree directories -----------
+
+    def test_stale_preview_dir_flagged(self) -> None:
+        preview = self.tmp_root / "land-work-preview-abc123"
+        preview.mkdir()
+        old_time = 1_000_000.0
+        os.utime(preview, (old_time, old_time))
+        context = self._context(
+            self._evaluate(now=old_time + 25 * 3600)
+        )
+        self.assertIn("stale land-work preview", context)
+        self.assertIn(str(preview), context)
+
+    def test_fresh_preview_dir_is_silent(self) -> None:
+        preview = self.tmp_root / "land-work-preview-abc123"
+        preview.mkdir()
+        now = time.time()
+        os.utime(preview, (now, now))
+        self.assertIsNone(self._evaluate(now=now + 3600))
+
+    def test_preview_max_age_override_respected(self) -> None:
+        preview = self.tmp_root / "land-work-preview-abc123"
+        preview.mkdir()
+        old_time = 1_000_000.0
+        os.utime(preview, (old_time, old_time))
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_preview_max_age_hours=48\n", encoding="utf-8"
+        )
+        # 25h old: stale under the 24h default but not under a 48h override.
+        self.assertIsNone(self._evaluate(now=old_time + 25 * 3600))
+
+    def test_orphan_worktree_directory_flagged(self) -> None:
+        self._git("init", "-q")
+        self._git("commit", "--allow-empty", "-m", "init", "-q")
+        wt_root = self.home / ".local" / "share" / "worktrees" / self.repo.name
+        wt_root.mkdir(parents=True)
+        orphan = wt_root / "dead-branch"
+        orphan.mkdir()
+        context = self._context(self._evaluate())
+        self.assertIn("orphan worktree directory", context)
+        self.assertIn(str(orphan), context)
+
+    def test_registered_worktree_directory_not_flagged(self) -> None:
+        self._git("init", "-q")
+        self._git("commit", "--allow-empty", "-m", "init", "-q")
+        wt_root = self.home / ".local" / "share" / "worktrees" / self.repo.name
+        wt_root.mkdir(parents=True)
+        linked = wt_root / "feature"
+        self._git("worktree", "add", str(linked), "-b", "feature", "-q")
+        self.assertIsNone(self._evaluate())
+
+    # --- check 8: orphan dolt sql-server --------------------------------------
+
+    def test_orphan_dolt_server_detected(self) -> None:
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        dolt_dir = beads_dir / "dolt"
+        # A process whose command-line args reference the dolt sql-server
+        # binary and this repo's .beads/dolt path (the shell comment makes
+        # `ps -eo pid,args` show these tokens without needing a real dolt
+        # binary on PATH).
+        fake = subprocess.Popen(
+            ["sh", "-c", f"sleep 30 # dolt sql-server {dolt_dir}"]
+        )
+        try:
+            time.sleep(0.3)
+            decision = self._evaluate()
+            context = self._context(decision)
+            self.assertIn("orphan dolt sql-server", context)
+            self.assertIn(str(fake.pid), context)
+        finally:
+            fake.terminate()
+            fake.wait(timeout=5)
+
+    def test_dolt_server_for_sibling_directory_not_flagged(self) -> None:
+        # A dolt sql-server for a sibling directory whose path merely has
+        # this repo's .beads/dolt as a *string prefix* (e.g. a "-staging"
+        # suffix) must not be mistaken for this repo's orphan.
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        sibling_dolt_dir = str(beads_dir / "dolt") + "-staging"
+        fake = subprocess.Popen(
+            ["sh", "-c", f"sleep 30 # dolt sql-server {sibling_dolt_dir}"]
+        )
+        try:
+            time.sleep(0.3)
+            self.assertIsNone(self._evaluate())
+        finally:
+            fake.terminate()
+            fake.wait(timeout=5)
+
+    def test_dolt_server_cwd_in_sibling_directory_not_flagged(self) -> None:
+        # A process whose cwd is a sibling directory that merely starts with
+        # ".beads" as a string (e.g. ".beads-backup") must not be mistaken
+        # for a process running inside this repo's .beads dir.
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        sibling = self.repo / ".beads-backup"
+        sibling.mkdir()
+        fake = subprocess.Popen(
+            ["sh", "-c", "sleep 30 # dolt sql-server unrelated-path"],
+            cwd=sibling,
+        )
+        try:
+            time.sleep(0.3)
+            self.assertIsNone(self._evaluate())
+        finally:
+            fake.terminate()
+            fake.wait(timeout=5)
+
+    def test_dolt_server_with_port_file_present_is_silent(self) -> None:
+        beads_dir = self.repo / ".beads"
+        beads_dir.mkdir()
+        (beads_dir / "dolt-server.port").write_text("12345\n", encoding="utf-8")
+        self.assertIsNone(self._evaluate())
+
+    def test_no_beads_dir_skips_process_scan(self) -> None:
+        self.assertIsNone(self._evaluate())
+
+    def test_no_beads_dir_process_scan_never_invoked(self) -> None:
+        # Patch subprocess.run to fail if the doctor ever shells out to `ps`
+        # when .beads/ is absent — the acceptance contract for check 8.
+        import unittest.mock as mock
+
+        real_run = subprocess.run
+
+        def guarded_run(args, *a, **kw):
+            if args and args[0] == "ps":
+                self.fail("ps was invoked despite no .beads/ directory")
+            return real_run(args, *a, **kw)
+
+        with mock.patch.object(subprocess, "run", side_effect=guarded_run):
+            self.assertIsNone(self._evaluate())
+
+    # --- latency ---------------------------------------------------------
+
+    def test_healthy_repo_latency_under_budget(self) -> None:
+        # A healthy repo (including a real .beads/ dir so the dolt-server
+        # process scan runs) must add well under 300ms of SessionStart
+        # latency.
+        self._git("init", "-q")
+        self._git("commit", "--allow-empty", "-m", "init", "-q")
+        (self.repo / ".beads").mkdir()
+        (self.repo / ".beads" / "dolt-server.port").write_text(
+            "12345\n", encoding="utf-8"
+        )
+        start = time.monotonic()
+        self.assertIsNone(self._evaluate())
+        elapsed = time.monotonic() - start
+        self.assertLess(elapsed, 0.3, f"doctor took {elapsed:.3f}s on a healthy repo")
 
     def test_closed_stdout_broken_pipe_exits_zero(self) -> None:
         # fix A: a BrokenPipeError while emitting the decision must not surface
