@@ -12,7 +12,17 @@ it.
 - Detect the integration branch from repo-specific configuration or the remote
   default branch before rebasing or merging.
 - Land into that branch directly using the normal `land-work` safety checks and
-  compare-and-set merge flow.
+  compare-and-set merge flow. When `land-work-prepare.py` reports
+  `primary_local_vs_remote` as `ahead` or `diverged` for the primary
+  checkout's local `<integration-branch>`, use the push-from-preview route
+  (SKILL.md step 8) exactly as for `main`/`master`: commit the merge in the
+  preview worktree, push straight from there with
+  `git push origin HEAD:refs/heads/<integration-branch>`, then sync the
+  primary with `git fetch origin` + `git merge --ff-only
+  origin/<integration-branch>`. This is the standard route for that
+  diagnostic regardless of which branch name is the real integration branch.
+  `equal`, `behind`, or `null` (no remote-tracking ref exists to compare
+  against) all take the normal merge-in-the-primary route instead.
 - If the integration branch cannot be identified confidently, stop and report
   the ambiguity instead of guessing.
 - Keep tracker closure, lease verification, and post-land validation exactly as
