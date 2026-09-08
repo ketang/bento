@@ -125,6 +125,25 @@ def _fail(diagnostics: dict, errors: list[str]) -> int:
     return 1
 
 
+def _format_log(stdout: str, stderr: str) -> str:
+    text = "----- stdout -----\n" + stdout
+    if stdout and not stdout.endswith("\n"):
+        text += "\n"
+    text += "----- stderr -----\n" + stderr
+    if stderr and not stderr.endswith("\n"):
+        text += "\n"
+    return text
+
+
+def _write_log(log_path: Path, text: str) -> None:
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    log_path.write_text(text, encoding="utf-8")
+
+
+def _tail_lines(text: str, count: int) -> list[str]:
+    return text.splitlines()[-count:]
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--repo-root", required=True, help="repo root used for manifest discovery")
@@ -134,6 +153,12 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--base-ref", default="", help="human-facing base ref name (diagnostics only)")
     parser.add_argument("--runtime", default="unknown", help="agent runtime: claude, codex, or unknown")
     parser.add_argument("--timeout", default="", help="verifier command timeout in seconds")
+    parser.add_argument(
+        "--log",
+        default="",
+        help="path to persist the verifier command's raw stdout+stderr; "
+        "defaults to <candidate>/.land-work/verifier.log",
+    )
     return parser.parse_args()
 
 
@@ -155,6 +180,7 @@ def main() -> int:
         "exemptions": [],
         "verifier_command": None,
         "verifier_status": None,
+        "verifier_log": None,
         "selected_check_count": 0,
         "unverified_paths": [],
     }
@@ -269,6 +295,9 @@ def main() -> int:
         except ValueError:
             return _fail(diagnostics, [f"invalid --timeout value: {args.timeout!r}"])
 
+    log_path = Path(args.log).resolve() if args.log else candidate / ".land-work" / "verifier.log"
+    diagnostics["verifier_log"] = str(log_path)
+
     try:
         # A plain `subprocess.run(..., timeout=...)` only kills the verifier
         # command itself; a gate that backgrounds work (`sleep 30 &`) keeps
@@ -291,7 +320,15 @@ def main() -> int:
         try:
             stdout, stderr = popen.communicate(timeout=timeout_seconds)
         except subprocess.TimeoutExpired:
-            process_group.kill_process_group(popen)
+            # bento-rdtn.4: persist whatever the child managed to write before
+            # our own timeout killed it, and label this run "timeout" (not
+            # "killed") -- it is this helper's own deliberate kill, not an
+            # externally killed child with unknown cause.
+            timeout_stdout, timeout_stderr = process_group.kill_process_group(popen)
+            log_text = _format_log(timeout_stdout or "", timeout_stderr or "")
+            _write_log(log_path, log_text)
+            diagnostics["verifier_status"] = "timeout"
+            diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
             return _fail(diagnostics, ["verifier command timed out"])
         except BaseException:
             # Not just TimeoutExpired: a KeyboardInterrupt or other
@@ -305,7 +342,25 @@ def main() -> int:
         list(manifest.command), popen.returncode, stdout, stderr
     )
 
+    log_text = _format_log(proc.stdout, proc.stderr)
+    _write_log(log_path, log_text)
+
+    # bento-rdtn.4: a returncode < 0 means the child died by signal (e.g. an
+    # external SIGKILL, not this helper's own --timeout path above) -- and
+    # any other path that never reaches a parsed, schema-valid, "passed" or
+    # "failed" result is indistinguishable from that, so both are reported as
+    # "killed" rather than folded into an undifferentiated generic failure.
+    # Only a result JSON that actually parses is ever labeled "failed".
+    if proc.returncode < 0:
+        signal_number = -proc.returncode
+        diagnostics["verifier_status"] = "killed"
+        diagnostics["killed_signal"] = signal_number
+        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
+        return _fail(diagnostics, [f"verifier command was killed by signal {signal_number}"])
+
     if proc.returncode != 0:
+        diagnostics["verifier_status"] = "killed"
+        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
         return _fail(
             diagnostics,
             [f"verifier command exited {proc.returncode}: {proc.stderr.strip()[:500]}"],
@@ -313,44 +368,56 @@ def main() -> int:
 
     result_lines = [line for line in proc.stdout.splitlines() if line.strip()]
     if not result_lines:
+        diagnostics["verifier_status"] = "killed"
+        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
         return _fail(diagnostics, ["verifier command produced no JSON result line"])
     try:
         result = json.loads(result_lines[-1])
     except ValueError as exc:
+        diagnostics["verifier_status"] = "killed"
+        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
         return _fail(diagnostics, [f"verifier result is not valid JSON: {exc}"])
 
     if not isinstance(result, dict):
+        diagnostics["verifier_status"] = "killed"
+        diagnostics["verifier_log_tail"] = _tail_lines(log_text, 20)
         return _fail(diagnostics, ["verifier result must be a JSON object"])
     if result.get("schema_version") != lifecycle_extensions.VERIFIER_SCHEMA_VERSION:
+        diagnostics["verifier_status"] = "failed"
         return _fail(
             diagnostics,
             [f"verifier result schema_version must be {lifecycle_extensions.VERIFIER_SCHEMA_VERSION}"],
         )
 
     status = result.get("status")
-    diagnostics["verifier_status"] = status if isinstance(status, str) else None
     if status != "passed":
+        diagnostics["verifier_status"] = "failed"
         return _fail(diagnostics, [f"verifier status is not 'passed': {status!r}"])
 
     selected_checks = result.get("selected_checks")
     if not isinstance(selected_checks, list):
+        diagnostics["verifier_status"] = "failed"
         return _fail(diagnostics, ["verifier selected_checks must be a list"])
 
     passed_checks = 0
     for index, check in enumerate(selected_checks):
         if not isinstance(check, dict):
+            diagnostics["verifier_status"] = "failed"
             return _fail(diagnostics, [f"selected_checks[{index}] must be an object"])
         check_status = check.get("status")
         if check_status != "passed":
+            diagnostics["verifier_status"] = "failed"
             return _fail(
                 diagnostics,
                 [f"selected check {check.get('name')!r} did not pass: {check_status!r}"],
             )
         passed_checks += 1
     diagnostics["selected_check_count"] = passed_checks
+    diagnostics["verifier_status"] = "passed"
 
     # ---- Apply the fixed precedence. --------------------------------------- #
     if relevant and passed_checks == 0:
+        diagnostics["verifier_status"] = "failed"
         diagnostics["unverified_paths"] = relevant
         return _fail(
             diagnostics,

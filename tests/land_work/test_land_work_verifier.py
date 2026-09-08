@@ -408,6 +408,75 @@ class LandWorkVerifierTest(unittest.TestCase):
         alive = subprocess.run(["kill", "-0", child_pid]).returncode == 0
         self.assertFalse(alive, "backgrounded child survived SIGTERM to the helper")
 
+    # -- bento-rdtn.4: killed vs. failed, and the persisted verifier log ---- #
+
+    def test_sigkilled_child_reports_killed_status_with_signal_and_log(self) -> None:
+        self.install_verifier("#!/bin/sh\necho partial-output\nkill -9 $$\n")
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "killed")
+        self.assertEqual(payload["killed_signal"], 9)
+        self.assertTrue(any("killed by signal 9" in e for e in payload["errors"]))
+
+        log_path = Path(payload["verifier_log"])
+        self.assertTrue(log_path.is_file())
+        self.assertIn("partial-output", log_path.read_text(encoding="utf-8"))
+        self.assertTrue(any("partial-output" in line for line in payload["verifier_log_tail"]))
+
+    def test_failed_selected_check_reports_failed_status_and_writes_log(self) -> None:
+        self.install_verifier(FAILED_CHECK_VERIFIER)
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "failed")
+
+        log_path = Path(payload["verifier_log"])
+        self.assertTrue(log_path.is_file())
+        self.assertIn("make test-quick", log_path.read_text(encoding="utf-8"))
+
+    def test_passed_run_reports_passed_status(self) -> None:
+        self.install_verifier(PASS_ONE_CHECK_VERIFIER)
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "passed")
+
+    def test_no_json_output_reports_killed_status(self) -> None:
+        self.install_verifier(INVALID_JSON_VERIFIER)
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "killed")
+
+    def test_timeout_reports_timeout_status_not_killed(self) -> None:
+        self.install_verifier(SLOW_VERIFIER)
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier(timeout="1")
+
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_status"], "timeout")
+
+    def test_custom_log_path_override(self) -> None:
+        self.install_verifier(PASS_ONE_CHECK_VERIFIER)
+        self.write_manifest(command=[str(self.verifier_path)])
+        custom_log = Path(self.temp_dir.name) / "custom-verifier.log"
+        result = self.run_verifier("--log", str(custom_log))
+
+        self.assertEqual(result.returncode, 0)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["verifier_log"], str(custom_log))
+        self.assertTrue(custom_log.is_file())
+
     # -- Git path union categories --------------------------------------- #
 
     def test_staged_change_enters_union(self) -> None:
