@@ -525,10 +525,13 @@ queue and lands as part of the next assembled batch, gated once at the tip.
 1. **Resolve the worktree.** Batch landing always uses the repo's
    `landing.integration_worktree` (required for `mode: batch` to be usable at
    all in practice, though `swarm-discover.py` does not enforce that — an
-   absent worktree just means no warm reuse). Resolve and validate it exactly
-   as `land-work-create-preview.py` does for a single landing (registered,
-   not foreign-dirty; fall back and halt rather than guessing if it is not
-   usable — see `references/integration-worktree.md`).
+   absent worktree just means no warm reuse). Validate it using the same
+   registered/not-foreign-dirty checks `land-work-create-preview.py` applies
+   for a single landing (see `references/integration-worktree.md`), but with
+   a deliberately different outcome on failure: `land-work-create-preview.py`
+   falls back to a scratch `/tmp` worktree and proceeds, while batch mode
+   halts instead of guessing — a mid-batch fallback to scratch would defeat
+   the point of assembling N branches into one shared, warm worktree.
 2. **Capture the lease.** Refresh and capture the primary-branch ref SHA, the
    same compare-and-set base every branch in the batch will assemble against.
 3. **Assemble.**
