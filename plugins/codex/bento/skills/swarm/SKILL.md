@@ -304,7 +304,7 @@ teammate plan that attempts to land is a protocol violation.
 | "The tasks look independent from their titles; I can launch them together." | Titles are not enough to predict overlap. Inspect scope, likely paths, dependencies, and active work before batching, then re-triage after each landed branch. |
 | "A teammate can fix worktree setup after starting edits." | Worktree verification is a hard gate before any file edit or write command. If verification fails, the teammate must stop and create or enter the correct worktree first. |
 | "The teammate promised to be careful, so a weak plan is acceptable." | Plan review is the lead's safety checkpoint. Reject plans that omit branch/worktree proof, quality gates, test strategy, or overlap handling. |
-| "Several teammates are done, so I can land them as a batch." | Landing changes the base for every remaining branch. Land one branch at a time, run required post-land hooks, then re-triage conflicts and readiness before continuing — unless the repo's `swarm-config.json` declares `landing.mode: batch` (Phase 0), then follow the batch queue protocol in Phase 4's Batch-Mode Landing instead. |
+| "Several teammates are done, so I can land them as a batch." | Landing changes the base for every remaining branch. Land one branch at a time, run required post-land hooks, then re-triage conflicts and readiness before continuing — unless the repo is batch-mode (Phase 0's "Batch vs. serial mode"), then follow the batch queue protocol in Phase 4's Batch-Mode Landing instead. |
 | "The user is silent, so the human-gated step is approved." | Silence is not approval. Teammates park and idle, the lead serializes user attention, and work resumes only after the lead routes an explicit decision back. |
 | "A stalled teammate is probably done enough to clean up." | Runtime resources close only after the work is safely landed or explicitly deferred. Never discard a teammate's branch or worktree while its status is unresolved. |
 | "The teammate's gates all passed, so it can just run land-work itself." | Landing is the lead's job regardless of how clean the branch is. The auto mode classifier can block landing operations in teammate agents. The lead owns the single serialized landing path. |
@@ -348,10 +348,9 @@ Continue directly from step 2 above:
 5. Re-triage remaining branches against the new primary-branch base before
    landing the next one.
 
-Never land more than one branch at a time, unless the repo's
-`swarm-config.json` declares `landing.mode: batch` (Phase 0) — then follow
-Batch-Mode Landing below instead. Each landing changes the base for all
-remaining branches.
+Never land more than one branch at a time, unless the repo is batch-mode
+(Phase 0's "Batch vs. serial mode") — then follow Batch-Mode Landing below
+instead. Each landing changes the base for all remaining branches.
 
 When teammates are safely landed or explicitly deferred, close the runtime
 resources that were created for them.
@@ -383,9 +382,10 @@ not restated here.
      branch joining at minute 4 does not push the deadline to minute 9.
    - The window ends, and assembly starts on whatever is queued at that
      moment, at the earliest of: the window elapsing, the queue reaching
-     `max_batch_size` (landing config, default 5), or the last active
-     teammate finishing (nothing left in flight that could still add to
-     this batch).
+     `max_batch_size` (landing config, default 5), the last active teammate
+     finishing (nothing left in flight that could still add to this batch),
+     or a boundary branch arriving (step 4 below forces immediate closure
+     regardless of the other three conditions).
 3. **Assembly membership.** A branch confirmed while the linger window is
    still open (assembly has not started) joins the batch being formed. A
    branch confirmed while the runner is busy (a batch is currently
@@ -393,7 +393,7 @@ not restated here.
 4. **Boundary flush.** A branch touching any of the repo's
    `batch_boundary_paths` (landing config) does not queue with the rest.
    First close out the current batch: if one is queued or assembling, land
-   it now (steps 5-7 below) before touching the boundary branch. Then land
+   it now (steps 5-8 below) before touching the boundary branch. Then land
    the boundary branch alone, under `landing.full_gate`, with no linger —
    the same immediate one-branch landing serial mode uses, just for this one
    branch. Once it lands, batching resumes for subsequently confirmed
@@ -406,35 +406,44 @@ not restated here.
    `land-work`'s `## Batch Landing` step 5 calls `land-work-batch-bisect.py`.
    Interpret its result with the corrected exit-code contract
    (`land-work/SKILL.md`'s `## Batch Landing` step 5 and
-   `land-work/references/batch-landing.md`'s `## Bisect` section):
-   - `ok: false` — an infra failure, not a verdict. Land nothing; every
-     originally assembled branch returns to its teammate as rework.
-   - `ok: true` with `final: null` — every branch was independently a
-     culprit, so nothing was left to reassemble and confirm. Land nothing;
-     every originally assembled branch returns as rework. Reset the
-     integration worktree before reusing it for the next batch — it is left
-     wherever the last bisection attempt assembled, not at a clean base.
-   - `ok: true` with `final.ok: true` — `landable` is confirmed safe to
-     push; land it (step 5 above). `culprits`, and any branch evicted during
-     reassembly, return to their teammates as rework. Record the full
-     `trail` in the batch's tracker note.
-   - `ok: true` with `final.ok: false` — the confirmation gate on
-     `landable` itself failed (a residual non-monotonic interaction pairwise
-     halving didn't catch). Treat like `ok: false`: land nothing, every
-     originally assembled branch returns as rework.
+   `land-work/references/batch-landing.md`'s `## Bisect` section, "Reading
+   the result"). The script's top-level `ok` already collapses to exactly
+   two outcomes — do not invent a third by treating `final.ok: false` as
+   distinct from `ok: false`; the script can never return `ok: true` with
+   `final.ok: false`, since its own exit logic sets `overall_ok = final is
+   None or bool(final["ok"])`:
+   - `ok: true` — safe to proceed with `landable`. Two sub-cases: `final.ok:
+     true` (`landable` is the subset to land, step 5 above; `culprits` go
+     back to their teammates as rework) and `final: null` (every input
+     branch turned out to be a culprit — a successful bisect outcome with
+     nothing to land; return every originally assembled branch as rework,
+     and reset the integration worktree before reusing it for the next
+     batch, since bisection left it checked out at whatever the last attempt
+     assembled, not at a clean base). Record the full `trail` in the
+     tracker issue for the batch either way.
+   - `ok: false` — land nothing; return every originally assembled branch
+     as rework. Covers both `final.ok: false` (the confirmation gate on
+     `landable` itself failed — a residual non-monotonic interaction
+     pairwise halving didn't catch) and an infra failure (unregistered
+     worktree, bad base-ref, a duplicate `--branch`, a branch evicted during
+     a subset's reassembly, or the worktree becoming unusable mid-bisect).
+     Record the trail and failure in the tracker issue for the batch.
 
    A branch returned as rework re-enters the normal Phase 1/3 lifecycle
    (teammate fixes, re-verifies, re-signals); it does not silently
    re-auto-queue.
 7. **Re-triage, per batch.** After each batch lands (or a boundary branch
    lands alone), re-triage remaining in-flight branches against the new
-   primary-branch base — the same rule the serial path applies per branch
-   (Phase 1, step 9), applied once per landed batch instead.
-8. **Teardown.** Close each landed branch's tracker issue and remove its
-   feature worktree, per `land-work`'s `## Batch Landing` step 7, for every
-   branch in `assembled` (not the evicted ones). Run any configured
-   post-land hook once per batch, the same way serial mode runs it once per
-   branch.
+   primary-branch base — the same rule the serial path applies after each
+   landing (Serial-Mode Landing step 5 above), applied once per landed batch
+   instead of once per landed branch.
+8. **Teardown.** Per-branch tracker close and feature-worktree removal are
+   `land-work`'s `## Batch Landing` step 7 (already covered by this
+   section's intro, not restated here). What step 7 does not cover: if a
+   post-land hook is configured for this swarm, run it once per landed
+   batch (or once for a boundary branch landed alone) — the same hook
+   invocation Serial-Mode Landing step 4 uses, just once per batch instead
+   of once per branch.
 
 Batch mode intentionally lands more than one branch per push — that is the
 point of the feature. What does not change from serial mode: the lead is
