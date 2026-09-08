@@ -85,6 +85,21 @@ This loads the matching runtime-specific config if present and otherwise falls
 back to the shared `swarm-config.json` at the repo root. Use the output as the
 deterministic base layer, then fill remaining gaps from repo docs.
 
+**Batch vs. serial mode.** Later phases refer to a "batch-mode repo" or
+"serial-mode repo" — this always means `swarm-discover.py`'s reported
+`landing.mode` output, the already fail-safe-validated value (see
+`references/landing-config.md`), never the raw `swarm-config.json` file's
+literal `mode` field read directly. A `mode: batch` config with a missing or
+non-executable `gate_scope`/`full_gate` degrades to `serial` in that output,
+specifically so a broken batch config can't silently run as an under-gated
+batch; treat the degraded value as authoritative. **Batch-mode** means
+`swarm-discover.py` reports `landing.mode: "batch"` — the queue/linger model
+in `## Batch Landing` and the teammate scoped-gate contract (Phase 2-4 below)
+apply. **Serial-mode** means everything else (no `swarm-config.json`,
+`landing` absent, or `landing.mode` resolving to `"serial"`, including a
+degraded batch config) — today's one-branch-at-a-time flow, entirely
+unaffected by the batch-mode text throughout this skill.
+
 If the project does not document these items clearly enough to swarm safely,
 stop and ask the user to narrow the scope or clarify the workflow.
 
@@ -153,6 +168,15 @@ clause below. Include the landing
 target branch in the teammate prompt so the teammate knows which branch their
 work merges into. Require the teammate to stop and report back if the task is
 broader or more coupled than expected.
+
+For a batch-mode repo (Phase 0), the teammate scoped-gate contract applies:
+include the `landing.gate_scope` command in the teammate prompt in place of
+the repo's full fixed gate list, and instruct the teammate to run it against
+their own final diff and execute every gate command it emits, reporting each
+in the same ready-to-land Gate summary format below (which gates ran and
+passed) — only the *set* of gates to run is scoped to the diff instead of
+fixed; the reporting format itself does not change. Serial-mode repos (Phase
+0) keep listing the repo's full fixed gate commands in the prompt, unchanged.
 
 Teammate instructions must treat worktree placement as part of setup, not an
 implementation detail. Require a durable dedicated root and reject placements
@@ -252,6 +276,14 @@ to the task, no unresolved overlap with active teammates, and any required
 pre-completion step. Reject plans that reference the primary checkout or do
 not explain how the task will be verified.
 
+For a batch-mode repo (Phase 0), a scoped-gate plan — one that runs
+`landing.gate_scope`'s emitted commands against the teammate's own diff
+instead of the repo's full fixed gate list — is acceptable under the teammate
+scoped-gate contract; judge it on the same terms as a full-list plan (explicit
+worktree+branch verification, correct gate execution, appropriate test
+coverage, no unresolved overlap). Serial-mode repos (Phase 0) are unaffected:
+a serial-mode plan must still run the repo's full fixed gate list.
+
 Reject any teammate plan that does not include an explicit
 `swarm-worktree-verify.py --require-linked-worktree --expected-branch
 <assigned-branch>` step (or the equivalent worktree-verify gate with the
@@ -285,18 +317,27 @@ signal.
 
 For each ready-to-land signal received:
 
-1. Confirm the gate summary in the teammate's signal covers all required gates
-   for that task. If any gate is missing or failed, SendMessage the teammate
-   to fix and re-signal; do not proceed.
-2. Navigate to the teammate's worktree path, then invoke `bento:land-work`
-   from within it. The teammate has already exited, so the worktree is
-   unoccupied and land-work's cleanup step can remove it safely.
-3. If a post-land hook is configured for this swarm, run it after `land-work`
+1. Navigate to the teammate's worktree path. The teammate has already
+   exited, so the worktree is unoccupied.
+2. From within that worktree, confirm the gate summary in the teammate's
+   signal covers all required gates for that task. For a batch-mode repo
+   (Phase 0), do this under the teammate scoped-gate contract: re-run
+   `landing.gate_scope` yourself, from within this same worktree (so it
+   scopes the same diff the teammate's own final run scoped — the teammate's
+   branch checked out against the landing target) — do not trust the
+   teammate's self-report of which gates were "required" — and confirm the
+   teammate's reported gate summary covers exactly that emitted set. For a
+   serial-mode repo (Phase 0), this step is unchanged: confirm the gate
+   summary covers the repo's full fixed gate list. If any gate is missing or
+   failed, SendMessage the teammate to fix and re-signal; do not proceed.
+3. Invoke `bento:land-work` from within the teammate's worktree — land-work's
+   cleanup step can remove it safely once landing succeeds.
+4. If a post-land hook is configured for this swarm, run it after `land-work`
    completes:
    `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
    If the hook fails, stop and report — do not continue landing more branches
    until the hook succeeds.
-4. Re-triage remaining branches against the new primary-branch base before
+5. Re-triage remaining branches against the new primary-branch base before
    landing the next one.
 
 Never land more than one branch at a time. Each landing changes the base for
