@@ -2,8 +2,8 @@
 """SessionStart hook (Codex): agent-env doctor — runtime-agnostic subset.
 
 Detects agent wiring that is silently broken and injects loud, non-blocking
-warnings into the session context. This Codex peer runs only the two checks
-that are meaningful independent of the Claude runtime:
+warnings into the session context. This Codex peer runs the checks that are
+meaningful independent of the Claude runtime:
 
   1. Every ``@import`` in CLAUDE.md / AGENTS.md / GEMINI.md (followed
      recursively) resolves to a non-empty file. Flags dangling imports,
@@ -11,6 +11,13 @@ that are meaningful independent of the Claude runtime:
      file where a directory is expected.
   4. .agent-mode.local, if present, contains only recognized key=value
      lines; unknown tokens are flagged.
+  5. This checkout's .git/config has core.bare = true while the checkout
+     still has a working tree.
+  6. `git worktree prune --dry-run` reports prunable worktrees.
+  7. Stale /tmp/land-work-preview-* directories and directories under
+     ~/.local/share/worktrees/<repo>/ that are not registered git worktrees.
+  8. When .beads/ exists: an orphan dolt sql-server process holding the
+     beads DB lock while .beads/dolt-server.port is absent.
 
 The Claude peer additionally runs check 2 (hook binaries registered in
 ``.claude/settings.json``) and check 3 (dormant Claude plugins from the
@@ -35,6 +42,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 from pathlib import Path
 
 # Bounded read: no single file contributes more than this many bytes to a
@@ -55,8 +63,12 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
         "hygiene_check",
         "agent_env_doctor",
         "agent_env_doctor_skip_plugin",
+        "agent_env_doctor_preview_max_age_hours",
     }
 )
+
+# Default staleness threshold for /tmp/land-work-preview-* directories.
+DEFAULT_PREVIEW_MAX_AGE_HOURS = 24.0
 
 # .agent-mode.local also carries syntax owned by dotfiles' agent-mode launcher
 # (bashrc.agent-mode.sh), not by Bento: a bare "dangerous" token, a quoted
@@ -282,6 +294,236 @@ def check_agent_mode(root: Path) -> list[str]:
     return warnings
 
 
+# --- check 5: bare primary checkout with a working tree ---------------------
+
+
+_CORE_BARE_TRUE_RE = re.compile(r"(?im)^\s*bare\s*=\s*true\s*$")
+
+
+def check_bare_primary(root: Path) -> list[str]:
+    """Warn when .git/config sets core.bare = true but this checkout still
+    has a working tree — a corrupted primary checkout where every git
+    command fails with "fatal: this operation must be run in a work tree"."""
+    git_dir = root / ".git"
+    if not git_dir.is_dir():
+        # A file (not a directory) means this is a linked worktree's
+        # gitdir pointer, not the primary checkout; nothing to check here.
+        return []
+    config_text = _read_text_bounded(git_dir / "config")
+    if config_text is None or not _CORE_BARE_TRUE_RE.search(config_text):
+        return []
+    try:
+        has_working_tree_files = any(p.name != ".git" for p in root.iterdir())
+    except OSError:
+        has_working_tree_files = False
+    if not has_working_tree_files:
+        return []
+    return [
+        "bare primary checkout: .git/config sets core.bare = true but this "
+        "checkout has files — git commands here fail with \"fatal: this "
+        "operation must be run in a work tree\""
+    ]
+
+
+# --- check 6: prunable git worktrees -----------------------------------------
+
+
+def check_prunable_worktrees(root: Path) -> list[str]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "worktree", "prune", "--dry-run", "--verbose"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    if result.returncode != 0:
+        # Not a git repository (or git otherwise failed) — nothing to judge.
+        return []
+    lines = [
+        line.strip()
+        for line in (result.stdout + result.stderr).splitlines()
+        if line.strip()
+    ]
+    if not lines:
+        return []
+    return [
+        f"prunable git worktree(s): {'; '.join(lines)} — run "
+        "'git worktree prune' to clean them up"
+    ]
+
+
+# --- check 7: stale previews and orphan worktree directories ----------------
+
+
+def _preview_max_age_hours(root: Path) -> float:
+    text = _read_agent_mode_text(root / ".agent-mode.local")
+    if text is None:
+        return DEFAULT_PREVIEW_MAX_AGE_HOURS
+    for line in text.split("\n"):
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() == "agent_env_doctor_preview_max_age_hours":
+            try:
+                return float(value.strip())
+            except ValueError:
+                continue
+    return DEFAULT_PREVIEW_MAX_AGE_HOURS
+
+
+def check_stale_previews(root: Path, tmp_root: Path, now: float | None = None) -> list[str]:
+    now = time.time() if now is None else now
+    max_age_seconds = _preview_max_age_hours(root) * 3600
+    warnings: list[str] = []
+    try:
+        entries = sorted(tmp_root.glob("land-work-preview-*"))
+    except OSError:
+        entries = []
+    for entry in entries:
+        try:
+            age_seconds = now - entry.stat().st_mtime
+        except OSError:
+            continue
+        if age_seconds >= max_age_seconds:
+            warnings.append(
+                f"stale land-work preview: {entry} is "
+                f"{age_seconds / 3600:.1f}h old (> {max_age_seconds / 3600:.0f}h) "
+                "— remove it or let closure clean it up"
+            )
+    return warnings
+
+
+def _repo_name(root: Path) -> str | None:
+    """Project name for the worktree root, stable across every linked
+    worktree of the same repo (derived from the primary checkout that the
+    shared .git dir lives under, not from whichever worktree is running)."""
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "rev-parse", "--git-common-dir"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return None
+    if result.returncode != 0:
+        return None
+    common_dir = result.stdout.strip()
+    if not common_dir:
+        return None
+    common_path = Path(common_dir)
+    if not common_path.is_absolute():
+        common_path = root / common_path
+    try:
+        return common_path.resolve().parent.name
+    except OSError:
+        return None
+
+
+def _registered_worktree_paths(root: Path) -> set[Path]:
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(root), "worktree", "list", "--porcelain"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return set()
+    paths: set[Path] = set()
+    for line in result.stdout.splitlines():
+        if not line.startswith("worktree "):
+            continue
+        candidate = Path(line[len("worktree "):])
+        try:
+            paths.add(candidate.resolve())
+        except OSError:
+            paths.add(candidate)
+    return paths
+
+
+def check_worktree_root_orphans(root: Path, home: Path) -> list[str]:
+    repo_name = _repo_name(root)
+    if not repo_name:
+        return []
+    worktrees_dir = home / ".local" / "share" / "worktrees" / repo_name
+    if not worktrees_dir.is_dir():
+        return []
+    registered = _registered_worktree_paths(root)
+    warnings: list[str] = []
+    try:
+        entries = sorted(worktrees_dir.iterdir())
+    except OSError:
+        entries = []
+    for entry in entries:
+        if not entry.is_dir():
+            continue
+        try:
+            resolved = entry.resolve()
+        except OSError:
+            resolved = entry
+        if resolved in registered:
+            continue
+        warnings.append(
+            f"orphan worktree directory: {entry} is not a registered git "
+            "worktree — dead directory left behind, safe to remove"
+        )
+    return warnings
+
+
+# --- check 8: orphan dolt sql-server ------------------------------------------
+
+
+def check_orphan_dolt_server(root: Path) -> list[str]:
+    beads_dir = root / ".beads"
+    if not beads_dir.is_dir():
+        return []
+    if (beads_dir / "dolt-server.port").exists():
+        return []
+    dolt_dir = str(beads_dir / "dolt")
+    try:
+        result = subprocess.run(
+            ["ps", "-eo", "pid,args"],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+    except OSError:
+        return []
+    if result.returncode != 0:
+        return []
+    warnings: list[str] = []
+    for line in result.stdout.splitlines()[1:]:
+        line = line.strip()
+        if not line:
+            continue
+        parts = line.split(None, 1)
+        if len(parts) != 2:
+            continue
+        pid_str, args = parts
+        if "dolt" not in args or "sql-server" not in args:
+            continue
+        matched = dolt_dir in args
+        if not matched and sys.platform.startswith("linux"):
+            try:
+                cwd = os.readlink(f"/proc/{pid_str}/cwd")
+            except OSError:
+                cwd = None
+            if cwd is not None and (cwd == str(root) or cwd.startswith(str(beads_dir))):
+                matched = True
+        if matched:
+            warnings.append(
+                f"orphan dolt sql-server: PID {pid_str} references this "
+                "repo's .beads/dolt but .beads/dolt-server.port is absent "
+                "— bd calls will hang until it is killed or the port file "
+                "is restored"
+            )
+    return warnings
+
+
 # --- orchestration ----------------------------------------------------------
 
 
@@ -300,10 +542,17 @@ def _suppressed(root: Path) -> bool:
     return False
 
 
-def collect_warnings(root: Path) -> list[str]:
+def collect_warnings(
+    root: Path, home: Path, tmp_root: Path, now: float | None = None
+) -> list[str]:
     warnings: list[str] = []
     warnings.extend(check_imports(root))
     warnings.extend(check_agent_mode(root))
+    warnings.extend(check_bare_primary(root))
+    warnings.extend(check_prunable_worktrees(root))
+    warnings.extend(check_stale_previews(root, tmp_root, now=now))
+    warnings.extend(check_worktree_root_orphans(root, home))
+    warnings.extend(check_orphan_dolt_server(root))
     return warnings
 
 
@@ -320,10 +569,25 @@ def _project_root(hook_input: dict) -> Path | None:
         except OSError:
             return None
     root = repo_root(cwd)
-    return Path(root) if root else None
+    if root:
+        return Path(root)
+    # `git rev-parse --show-toplevel` itself fails once core.bare is flipped
+    # true on a checkout that still has a working tree — exactly the
+    # condition check_bare_primary exists to catch. Fall back to cwd when it
+    # visibly has its own .git entry, so that check stays reachable, without
+    # abandoning the "never scan a non-project directory" contract for cwds
+    # that aren't a git checkout at all.
+    if (Path(cwd) / ".git").exists():
+        return Path(cwd)
+    return None
 
 
-def evaluate(hook_input: dict) -> dict | None:
+def evaluate(
+    hook_input: dict,
+    home: Path | None = None,
+    tmp_root: Path | None = None,
+    now: float | None = None,
+) -> dict | None:
     """Return a SessionStart additionalContext payload, or None to stay silent."""
     root = _project_root(hook_input)
     if root is None:
@@ -332,7 +596,10 @@ def evaluate(hook_input: dict) -> dict | None:
     if _suppressed(root):
         return None
 
-    warnings = collect_warnings(root)
+    resolved_home = home or Path(os.environ.get("HOME", str(Path.home())))
+    resolved_tmp_root = tmp_root if tmp_root is not None else Path("/tmp")
+
+    warnings = collect_warnings(root, resolved_home, resolved_tmp_root, now=now)
     if not warnings:
         return None
 
