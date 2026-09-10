@@ -459,6 +459,45 @@ class GeneratedWrapperTimingAndCacheDetectionTest(WireLandVerifierTestBase):
         entry = payload["selected_checks"][0]
         self.assertFalse(entry["executed"])
 
+    def _fake_multi_target_task_check(self) -> str:
+        # One target (`lint`) is cached, another (`build`) genuinely runs --
+        # the whole check must NOT be marked cached just because *one* of the
+        # invoked targets was skipped.
+        task_bin = self.repo / "task"
+        write(
+            task_bin,
+            "#!/bin/sh\n"
+            "echo 'Task \"lint\" is up to date'\n"
+            "echo 'building for real'\n"
+            "exit 0\n",
+        )
+        task_bin.chmod(0o755)
+        return "gate::./task lint build"
+
+    def test_go_task_multi_target_reports_executed_true_if_any_target_ran(self) -> None:
+        self.wire("draft", "--check", self._fake_multi_target_task_check())
+        payload = self._installed_wrapper_result()
+        entry = payload["selected_checks"][0]
+        self.assertTrue(entry["executed"])
+
+    def _fake_all_cached_multi_target_task_check(self) -> str:
+        task_bin = self.repo / "task"
+        write(
+            task_bin,
+            "#!/bin/sh\n"
+            "echo 'Task \"lint\" is up to date'\n"
+            "echo 'Task \"build\" is up to date'\n"
+            "exit 0\n",
+        )
+        task_bin.chmod(0o755)
+        return "gate::./task lint build"
+
+    def test_go_task_multi_target_reports_executed_false_when_all_targets_cached(self) -> None:
+        self.wire("draft", "--check", self._fake_all_cached_multi_target_task_check())
+        payload = self._installed_wrapper_result()
+        entry = payload["selected_checks"][0]
+        self.assertFalse(entry["executed"])
+
 
 class RepoRootTest(WireLandVerifierTestBase):
     """land-work reads the manifest from the repo root only (MEDIUM 5)."""

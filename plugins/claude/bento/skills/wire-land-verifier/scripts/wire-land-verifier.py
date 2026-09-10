@@ -875,7 +875,14 @@ REPO_ROOT = Path(__file__).resolve().parents[{parents}]
 # below; only checks whose argv invokes the `task` CLI get it.
 CHECKS: list[tuple[str, list[str], bool]] = {checks}
 
-_TASK_UP_TO_DATE_RE = re.compile(r'Task ".*" is up to date')
+
+def _go_task_target_names(cmd: list[str]) -> list[str]:
+    """Requested go-task target names from its argv (everything after the
+    `task` binary itself that isn't a flag). A bare `task` with no targets
+    runs the "default" task, which go-task's own skip message names
+    "default"."""
+    names = [arg for arg in cmd[1:] if not arg.startswith("-")]
+    return names or ["default"]
 
 
 def main() -> int:
@@ -891,7 +898,15 @@ def main() -> int:
             result = subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True)
             sys.stderr.write(result.stdout)
             sys.stderr.write(result.stderr)
-            executed = not _TASK_UP_TO_DATE_RE.search(result.stdout + result.stderr)
+            combined = result.stdout + result.stderr
+            # A single invocation can run multiple targets (`task lint test
+            # build`); only call the whole check cached if EVERY requested
+            # target reports the skip message for its own name, not merely
+            # if any one of them does.
+            executed = not all(
+                re.search(rf'Task "{{re.escape(target)}}" is up to date', combined)
+                for target in _go_task_target_names(cmd)
+            )
         else:
             result = subprocess.run(cmd, cwd=REPO_ROOT, stdout=sys.stderr, stderr=sys.stderr)
             executed = None
