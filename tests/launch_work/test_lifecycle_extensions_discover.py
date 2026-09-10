@@ -165,6 +165,36 @@ class VerifierDiscoveryTest(unittest.TestCase):
             [{"path": "docs/gen.json", "reason": "generated"}],
         )
 
+    def test_valid_manifest_defaults_allow_all_cached_false(self) -> None:
+        self._write_manifest(self.repo, {
+            "schema_version": 1,
+            "command": ["./verify.sh"],
+            "verified_noop": [],
+        })
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertEqual(result.errors, [])
+        self.assertFalse(result.manifest.allow_all_cached)
+
+    def test_allow_all_cached_true_parsed(self) -> None:
+        self._write_manifest(self.repo, {
+            "schema_version": 1,
+            "command": ["./verify.sh"],
+            "allow_all_cached": True,
+        })
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertEqual(result.errors, [])
+        self.assertTrue(result.manifest.allow_all_cached)
+
+    def test_allow_all_cached_wrong_type_rejected(self) -> None:
+        self._write_manifest(self.repo, {
+            "schema_version": 1,
+            "command": ["./verify.sh"],
+            "allow_all_cached": "true",
+        })
+        result = lifecycle_extensions.discover_verifier(self.repo)
+        self.assertIsNone(result.manifest)
+        self.assertTrue(any("allow_all_cached" in e for e in result.errors))
+
     def test_repo_local_wins_whole_over_xdg(self) -> None:
         user = self.root / "userhome"
         with patch.dict(os.environ, {"XDG_CONFIG_HOME": str(user / ".config")}):

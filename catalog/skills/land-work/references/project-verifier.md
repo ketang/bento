@@ -54,6 +54,32 @@ verifier is never inferred from generic hook names.
   globs, directory/prefix entries, duplicates, and paths that exist in neither
   the candidate nor its deletion side are rejected. An exact declaration exempts
   only that exact path — `docs/a.md` never exempts `docs/a.md.bak` or a child.
+- `allow_all_cached` — optional, defaults to `false`. Opts a repo out of the
+  all-cached rule below (see "Per-check execution evidence").
+
+### Per-check execution evidence (schema v2, backward compatible)
+
+Each entry in `selected_checks` may additionally carry `executed` (boolean)
+and `wall_seconds` (number) — both optional, and a v1 payload that omits them
+entirely is still fully accepted exactly as before. They exist to catch a
+specific rubber-stamp case the plain "zero selected checks" rule can't: a task
+runner (e.g. go-task) that skips a checksummed task body because its declared
+`sources:` haven't changed, so the wrapper legitimately reports
+`{"status":"passed","selected_checks":[{"name":"test-standard","status":"passed"}]}`
+— checks *were* selected, they just did nothing.
+
+Policy: against a nonempty relevant diff, if **every** selected check reports
+`executed: false`, the landing fails — even though `status` is `passed` and
+every check passed. There is deliberately no timing-based fallback: a check
+that omits `executed` entirely is never treated as evidence of caching, so an
+unmodified v1 wrapper (no `executed` field anywhere) is completely unaffected
+by this rule. Set `allow_all_cached: true` in `verifier.json` to opt a repo
+out of the rule entirely (e.g. a repo where an all-cached result is
+sometimes legitimately fine). `wire-land-verifier`-generated wrappers record
+`wall_seconds` for every check and `executed` specifically for a `task`
+(go-task v3.x) invocation, detected from its unlocalised
+`Task "<name>" is up to date` skip message; other tools (`make`, `npm`, ...)
+get timing only, since bento has no reliable cache-skip signal for them.
 
 ## Candidate diff union and precedence
 
@@ -125,6 +151,8 @@ additionally includes `killed_signal` when the child died by signal.
 The helper emits one JSON object on stdout with `base_sha`, `head_sha`,
 `candidate`, categorized `changed_paths`, `relevant_paths`, the exact
 `exemptions` used, the `verifier_command`, `verifier_status`, `verifier_log`,
-`selected_check_count`, and `unverified_paths`. Diagnostics never include file
+`selected_check_count`, `selected_checks` (each entry's `name`, `status`,
+`executed`, and `wall_seconds` — the latter two `null` when the verifier
+omitted them), and `unverified_paths`. Diagnostics never include file
 contents beyond the verifier's own stdout/stderr captured in the log and its
 tail. Exit 0 means verified; any nonzero exit stops the landing.

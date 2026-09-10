@@ -130,6 +130,7 @@ class VerifierManifest:
     manifest_path: Path
     command: list[str]
     verified_noop: list[dict] = field(default_factory=list)
+    allow_all_cached: bool = False
 
 
 @dataclass
@@ -183,6 +184,11 @@ def _validate_verifier_shape(raw: object, manifest_path: Path) -> list[str]:
         errors.append(
             f"verifier manifest command must be a nonempty argv array of "
             f"nonempty strings: {manifest_path}"
+        )
+
+    if "allow_all_cached" in raw and not isinstance(raw.get("allow_all_cached"), bool):
+        errors.append(
+            f"verifier manifest allow_all_cached must be a boolean: {manifest_path}"
         )
 
     verified_noop = raw.get("verified_noop", [])
@@ -250,6 +256,7 @@ def discover_verifier(repo_root: Path) -> VerifierDiscovery:
             {"path": entry["path"], "reason": entry["reason"]}
             for entry in raw.get("verified_noop", [])
         ],
+        allow_all_cached=bool(raw.get("allow_all_cached", False)),
     )
     return discovery
 
