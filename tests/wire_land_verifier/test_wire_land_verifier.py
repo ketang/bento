@@ -415,6 +415,90 @@ class ApplyTest(WireLandVerifierTestBase):
         self.assertGreaterEqual(diagnostics["selected_check_count"], 1)
 
 
+class GeneratedWrapperTimingAndCacheDetectionTest(WireLandVerifierTestBase):
+    """bento-rdtn.6: the generated wrapper records wall_seconds on every
+    check, and executed specifically for a go-task command, detected from
+    go-task's own "Task \"<name>\" is up to date" cache-skip message."""
+
+    def _fake_task_check(self, up_to_date: bool) -> str:
+        task_bin = self.repo / "task"
+        if up_to_date:
+            write(task_bin, '#!/bin/sh\necho \'Task "build" is up to date\'\nexit 0\n')
+        else:
+            write(task_bin, "#!/bin/sh\necho building for real\nexit 0\n")
+        task_bin.chmod(0o755)
+        return "build::./task build"
+
+    def _installed_wrapper_result(self) -> dict:
+        self.wire("validate")
+        self.wire("apply")
+        wrapper_path = self.repo / "scripts/land-work-verifier.py"
+        result = subprocess.run(
+            [str(wrapper_path)], cwd=self.repo, capture_output=True, text=True, check=True,
+        )
+        return json.loads(result.stdout.splitlines()[-1])
+
+    def test_non_task_check_gets_wall_seconds_but_no_executed(self) -> None:
+        self.wire("draft", "--check", self.passing_check())
+        payload = self._installed_wrapper_result()
+        entry = payload["selected_checks"][0]
+        self.assertIn("wall_seconds", entry)
+        self.assertIsInstance(entry["wall_seconds"], float)
+        self.assertNotIn("executed", entry)
+
+    def test_go_task_check_reports_executed_true_when_it_runs_for_real(self) -> None:
+        self.wire("draft", "--check", self._fake_task_check(up_to_date=False))
+        payload = self._installed_wrapper_result()
+        entry = payload["selected_checks"][0]
+        self.assertTrue(entry["executed"])
+        self.assertIn("wall_seconds", entry)
+
+    def test_go_task_check_reports_executed_false_when_cache_skipped(self) -> None:
+        self.wire("draft", "--check", self._fake_task_check(up_to_date=True))
+        payload = self._installed_wrapper_result()
+        entry = payload["selected_checks"][0]
+        self.assertFalse(entry["executed"])
+
+    def _fake_multi_target_task_check(self) -> str:
+        # One target (`lint`) is cached, another (`build`) genuinely runs --
+        # the whole check must NOT be marked cached just because *one* of the
+        # invoked targets was skipped.
+        task_bin = self.repo / "task"
+        write(
+            task_bin,
+            "#!/bin/sh\n"
+            "echo 'Task \"lint\" is up to date'\n"
+            "echo 'building for real'\n"
+            "exit 0\n",
+        )
+        task_bin.chmod(0o755)
+        return "gate::./task lint build"
+
+    def test_go_task_multi_target_reports_executed_true_if_any_target_ran(self) -> None:
+        self.wire("draft", "--check", self._fake_multi_target_task_check())
+        payload = self._installed_wrapper_result()
+        entry = payload["selected_checks"][0]
+        self.assertTrue(entry["executed"])
+
+    def _fake_all_cached_multi_target_task_check(self) -> str:
+        task_bin = self.repo / "task"
+        write(
+            task_bin,
+            "#!/bin/sh\n"
+            "echo 'Task \"lint\" is up to date'\n"
+            "echo 'Task \"build\" is up to date'\n"
+            "exit 0\n",
+        )
+        task_bin.chmod(0o755)
+        return "gate::./task lint build"
+
+    def test_go_task_multi_target_reports_executed_false_when_all_targets_cached(self) -> None:
+        self.wire("draft", "--check", self._fake_all_cached_multi_target_task_check())
+        payload = self._installed_wrapper_result()
+        entry = payload["selected_checks"][0]
+        self.assertFalse(entry["executed"])
+
+
 class RepoRootTest(WireLandVerifierTestBase):
     """land-work reads the manifest from the repo root only (MEDIUM 5)."""
 

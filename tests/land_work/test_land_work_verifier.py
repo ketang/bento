@@ -85,13 +85,18 @@ class LandWorkVerifierTest(unittest.TestCase):
         # Placed outside the repo so it never enters the candidate diff union.
         return Path(self.temp_dir.name) / "verify.sh"
 
-    def write_manifest(self, verified_noop=None, *, root: Path | None = None, command=None) -> None:
+    def write_manifest(
+        self, verified_noop=None, *, root: Path | None = None, command=None,
+        allow_all_cached: bool | None = None,
+    ) -> None:
         root = root or self.repo
         manifest = {
             "schema_version": 1,
             "command": command or [str(self.verifier_path)],
             "verified_noop": verified_noop or [],
         }
+        if allow_all_cached is not None:
+            manifest["allow_all_cached"] = allow_all_cached
         path = root / ".agent-plugins/bento/bento/land-work/verifier.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_text(json.dumps(manifest), encoding="utf-8")
@@ -304,6 +309,135 @@ class LandWorkVerifierTest(unittest.TestCase):
         payload = json.loads(result.stdout)
         self.assertTrue(payload["ok"])
         self.assertEqual(payload["selected_check_count"], 1)
+
+    # -- bento-rdtn.6: executed/wall_seconds and the all-cached rule ----- #
+
+    def test_v1_payload_without_executed_field_still_accepted(self) -> None:
+        # No executed field anywhere -- deliberately never inferred from
+        # timing (no fallback); this must pass exactly as before.
+        self.install_verifier(PASS_ONE_CHECK_VERIFIER)
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertIsNone(payload["selected_checks"][0]["executed"])
+        self.assertIsNone(payload["selected_checks"][0]["wall_seconds"])
+
+    def test_executed_and_wall_seconds_recorded_in_diagnostics(self) -> None:
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"make test-quick","status":"passed",'
+            '"executed":true,"wall_seconds":12.5}]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["selected_checks"][0]["executed"], True)
+        self.assertEqual(payload["selected_checks"][0]["wall_seconds"], 12.5)
+
+    def test_all_checks_executed_false_fails_as_all_cached(self) -> None:
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"test-standard","status":"passed",'
+            '"executed":false,"wall_seconds":0.01},'
+            '{"name":"parity","status":"passed","executed":false}]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["verifier_status"], "failed")
+        self.assertTrue(any("executed: false" in e for e in payload["errors"]))
+        self.assertTrue(any("allow_all_cached" in e for e in payload["errors"]))
+
+    def test_one_executed_true_among_others_false_does_not_trigger_all_cached(self) -> None:
+        # Only unanimous executed: false trips the rule.
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"a","status":"passed","executed":false},'
+            '{"name":"b","status":"passed","executed":true}]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+
+    def test_missing_executed_among_others_false_does_not_trigger_all_cached(self) -> None:
+        # A check that omits executed entirely is not proof it was cached, so
+        # this must not be treated as "all cached" (no fallback).
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"a","status":"passed","executed":false},'
+            '{"name":"b","status":"passed"}]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+
+    def test_allow_all_cached_opts_out_of_the_rule(self) -> None:
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"test-standard","status":"passed","executed":false}]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)], allow_all_cached=True)
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 0, result.stdout)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+
+    def test_invalid_executed_type_fails(self) -> None:
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"a","status":"passed","executed":"nope"}]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertTrue(any("executed" in e and "boolean" in e for e in payload["errors"]))
+
+    def test_invalid_wall_seconds_type_fails(self) -> None:
+        self.install_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"a","status":"passed","wall_seconds":"slow"}]}\'\n'
+        )
+        self.write_manifest(command=[str(self.verifier_path)])
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertTrue(any("wall_seconds" in e and "number" in e for e in payload["errors"]))
+
+    def test_allow_all_cached_manifest_field_wrong_type_fails(self) -> None:
+        path = self.repo / ".agent-plugins/bento/bento/land-work/verifier.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(
+            json.dumps(
+                {
+                    "schema_version": 1,
+                    "command": [str(self.verifier_path)],
+                    "allow_all_cached": "yes",
+                }
+            ),
+            encoding="utf-8",
+        )
+        result = self.run_verifier()
+        self.assertEqual(result.returncode, 1)
+        payload = json.loads(result.stdout)
+        self.assertTrue(any("allow_all_cached" in e for e in payload["errors"]))
 
     def test_failed_selected_check_fails(self) -> None:
         self.install_verifier(FAILED_CHECK_VERIFIER)

@@ -461,6 +461,7 @@ def main() -> int:
         return _fail(diagnostics, ["verifier selected_checks must be a list"], status="failed", log_text=log_text)
 
     passed_checks = 0
+    check_diagnostics: list[dict] = []
     for index, check in enumerate(selected_checks):
         if not isinstance(check, dict):
             return _fail(
@@ -477,8 +478,35 @@ def main() -> int:
                 status="failed",
                 log_text=log_text,
             )
+        executed = check.get("executed")
+        if executed is not None and not isinstance(executed, bool):
+            return _fail(
+                diagnostics,
+                [f"selected_checks[{index}].executed must be a boolean"],
+                status="failed",
+                log_text=log_text,
+            )
+        wall_seconds = check.get("wall_seconds")
+        if wall_seconds is not None and (
+            isinstance(wall_seconds, bool) or not isinstance(wall_seconds, (int, float))
+        ):
+            return _fail(
+                diagnostics,
+                [f"selected_checks[{index}].wall_seconds must be a number"],
+                status="failed",
+                log_text=log_text,
+            )
+        check_diagnostics.append(
+            {
+                "name": check.get("name"),
+                "status": check_status,
+                "executed": executed,
+                "wall_seconds": wall_seconds,
+            }
+        )
         passed_checks += 1
     diagnostics["selected_check_count"] = passed_checks
+    diagnostics["selected_checks"] = check_diagnostics
     diagnostics["verifier_status"] = "passed"
 
     # ---- Apply the fixed precedence. --------------------------------------- #
@@ -489,6 +517,32 @@ def main() -> int:
             [
                 "verifier passed with zero selected checks but the candidate has "
                 f"{len(relevant)} unverified relevant path(s)"
+            ],
+            status="failed",
+            log_text=log_text,
+        )
+
+    # bento-rdtn.6: a "passed" verifier with a real diff and >=1 selected
+    # check can still be a rubber stamp if every check was served from cache
+    # (e.g. go-task skips a checksummed task body) rather than actually
+    # re-run. Only an explicit executed: false on every single check trips
+    # this -- deliberately no timing-based fallback for checks that omit
+    # executed entirely (a v1 payload with no executed field anywhere is
+    # unaffected and stays fully accepted, per the decision on this issue).
+    if (
+        relevant
+        and passed_checks > 0
+        and not manifest.allow_all_cached
+        and all(c["executed"] is False for c in check_diagnostics)
+    ):
+        diagnostics["unverified_paths"] = relevant
+        return _fail(
+            diagnostics,
+            [
+                "every selected check reports executed: false (served from cache); "
+                "no real verification occurred for this diff. Set "
+                '"allow_all_cached": true in verifier.json to opt out, or fix the '
+                "wrapper so it actually runs."
             ],
             status="failed",
             log_text=log_text,
