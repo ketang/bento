@@ -249,6 +249,20 @@ class AgentEnvDoctorTest(unittest.TestCase):
         text = (self.repo / ".agent-mode.local").read_text(encoding="utf-8")
         self.assertIn("agent_env_doctor_seen=storystore", text)
 
+    def test_recording_a_decision_preserves_an_unrelated_crlf_dangerous_line(self) -> None:
+        # Code review: rewriting .agent-mode.local to record a dormant-plugin
+        # decision must not silently normalize an unrelated CRLF-terminated
+        # "dangerous\r\n" line into a bare "dangerous" line -- the trailing
+        # \r is what keeps the launcher's exact bash `case` match from
+        # activating on it (see the CRLF tests in check_agent_mode above);
+        # losing it here would be a silent, unrelated privilege escalation.
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_bytes(b"dangerous\r\n")
+        self._evaluate()
+        raw = (self.repo / ".agent-mode.local").read_bytes()
+        self.assertIn(b"dangerous\r\n", raw)
+        self.assertIn(b"agent_env_doctor_seen=storystore", raw)
+
     def test_second_sighting_collapses_to_one_line(self) -> None:
         self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
         self._evaluate()  # first sighting: records "seen"

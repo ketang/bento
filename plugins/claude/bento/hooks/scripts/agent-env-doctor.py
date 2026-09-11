@@ -1012,8 +1012,17 @@ def _record_dormant_plugin_decisions(root: Path, decisions: list[dict]) -> None:
         for plugin in newly_full:
             remind_after.pop(plugin, None)
 
-        text = _read_text_bounded(config) or ""
-        lines = text.splitlines()
+        # CRLF-preserving read, matching check_agent_mode's own semantics: a
+        # broken "dangerous\r\n" line (inert to the launcher's exact bash
+        # `case` match, which never sees a match against "dangerous\r") must
+        # not be silently normalized to an active "dangerous" line by this
+        # rewrite. Unmodified lines are passed through as their raw,
+        # unstripped selves; only our own newly written lines use a plain
+        # "\n" terminator.
+        text = _read_agent_mode_text(config) or ""
+        lines = text.split("\n")
+        if text.endswith("\n") and lines and lines[-1] == "":
+            lines = lines[:-1]
         new_lines: list[str] = []
         seen_written = False
         remind_written = False
@@ -1060,12 +1069,20 @@ def collect_warnings(
     tmp_root: Path,
     now: float | None = None,
     today: date | None = None,
+    dormant_plugin_warnings: list[str] | None = None,
 ) -> list[str]:
+    """dormant_plugin_warnings lets a caller (evaluate()) pass in warnings
+    derived from a decision list it already computed once, instead of this
+    function re-deriving the identical decisions from disk a second time
+    (bento-rdtn.2 review) -- computed fresh here only when omitted, e.g. by
+    a caller that only wants collect_warnings' aggregate result."""
     warnings: list[str] = []
     warnings.extend(check_imports(root))
     warnings.extend(check_hook_binaries(root, env))
     warnings.extend(
-        check_dormant_plugins(
+        dormant_plugin_warnings
+        if dormant_plugin_warnings is not None
+        else check_dormant_plugins(
             root,
             installed_plugins(plugins_file),
             _skipped_plugins(root),
@@ -1112,13 +1129,10 @@ def evaluate(
         return None
 
     pfile = plugins_file if plugins_file is not None else _plugins_file(resolved_home, environ)
-    warnings = collect_warnings(
-        root, environ, pfile, resolved_home, resolved_tmp_root, now=now, today=resolved_today
-    )
 
-    # Record dormant-plugin decisions (first sighting or remind-after
-    # expiry) so later sessions collapse the nudge, regardless of whether
-    # any *other* check also warned this session.
+    # Computed once and reused for both the warnings this session sees and
+    # the decisions recorded to .agent-mode.local, so the two can never
+    # silently desync (bento-rdtn.2 review).
     dormant_decisions = _dormant_plugin_decisions(
         root,
         installed_plugins(pfile),
@@ -1127,6 +1141,16 @@ def evaluate(
         _remind_after_dates(root),
         resolved_today,
     )
+    dormant_plugin_warnings = [_format_dormant_plugin_warning(d) for d in dormant_decisions]
+
+    warnings = collect_warnings(
+        root, environ, pfile, resolved_home, resolved_tmp_root, now=now, today=resolved_today,
+        dormant_plugin_warnings=dormant_plugin_warnings,
+    )
+
+    # Record dormant-plugin decisions (first sighting or remind-after
+    # expiry) so later sessions collapse the nudge, regardless of whether
+    # any *other* check also warned this session.
     _record_dormant_plugin_decisions(root, dormant_decisions)
 
     if not warnings:
