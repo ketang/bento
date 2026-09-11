@@ -228,6 +228,22 @@ branch and `unknown` is usually name-regex noise, not a real mismatch:
 Report only -- no `--apply` mode reads `issue_status` or `tracker_mismatch`.
 Claiming, closing, or deleting is a human/agent call, same as `correlation`.
 
+The id extracted from a branch name for a non-beads tracker is searched only
+within the leading `<prefix>-<id>` token, not the whole branch name (a bare
+`re.search` for digits anywhere in the name would also match an unrelated
+date or version number past where a real id would appear). A branch that
+happens to follow the `<prefix>-<number>-...` shape for an unrelated reason
+(e.g. `hotfix-42-notes` when 42 isn't actually an issue number) can still
+coincidentally collide with a real tracker id — this is an inherent
+limitation of guessing an id from a branch name, shared with `--claim auto`
+and `--issue auto` elsewhere in bento; always review before acting.
+`bd list --all --json`/`gh issue list` failing, or `bd`/`gh` missing from
+`PATH`, is reported as a `warnings` entry and yields `tracker_mismatch: null`
+(and no `issue_status` field on any branch) rather than a crash. A `gh`
+result at the `--limit` cap (`GH_BULK_ISSUE_LIST_LIMIT`, 1000) also adds a
+truncation warning, since older/lower-numbered issues may be missing from a
+repo with more issues than that.
+
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware

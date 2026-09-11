@@ -5,6 +5,7 @@ import subprocess
 import tempfile
 import time
 import unittest
+import unittest.mock
 from datetime import datetime, timedelta
 from pathlib import Path
 
@@ -1332,6 +1333,52 @@ class TrackerMismatchTest(unittest.TestCase):
         self.assertIsNone(scan["tracker_mismatch"])
         self.assertNotIn("issue_status", self._branch_record(scan, "proj-1-unclaimed"))
         self.assertTrue(any("bd list" in w for w in scan["warnings"]))
+
+    def test_missing_bd_binary_is_advisory_not_a_crash(self) -> None:
+        # bd list --all --json must never be attempted via a bare
+        # subprocess.run([...]) with no shutil.which guard -- bd not being
+        # installed in this execution environment (even though .beads/
+        # exists) must not raise FileNotFoundError out of the scan.
+        mod = _load_module()
+        with unittest.mock.patch.object(mod.shutil, "which", return_value=None):
+            statuses, warning = mod.bulk_beads_statuses(self.repo)
+        self.assertIsNone(statuses)
+        self.assertIn("PATH", warning)
+
+    def test_missing_gh_binary_is_advisory_not_a_crash(self) -> None:
+        mod = _load_module()
+        with unittest.mock.patch.object(mod.shutil, "which", return_value=None):
+            statuses, warning = mod.bulk_gh_statuses(self.repo)
+        self.assertIsNone(statuses)
+        self.assertIn("PATH", warning)
+
+    def test_gh_result_at_limit_warns_of_possible_truncation(self) -> None:
+        git(self.repo, "remote", "add", "origin", "https://github.com/example/repo.git")
+        mod = _load_module()
+        issues = ",".join(
+            f'{{"number": {n}, "state": "OPEN"}}' for n in range(1, mod.GH_BULK_ISSUE_LIST_LIMIT + 1)
+        )
+        bin_dir = self._fake_bin("gh", f"#!/bin/sh\necho '[{issues}]'\nexit 0\n")
+        self._branch("gh-1-fix")
+
+        scan = self._scan("--tracker", "gh", bin_dir=bin_dir)
+
+        self.assertIsNotNone(scan["tracker_mismatch"])
+        self.assertTrue(any("truncat" in w.lower() for w in scan["warnings"]))
+
+    def test_id_extraction_does_not_search_past_the_leading_token(self) -> None:
+        # An unrelated digit run later in the branch name (a date, unrelated
+        # to any tracker issue) must not produce a spurious id match -- only
+        # digits within the leading <prefix>-<id> token are candidates.
+        git(self.repo, "remote", "add", "origin", "https://github.com/example/repo.git")
+        bin_dir = self._fake_bin(
+            "gh", "#!/bin/sh\necho '[{\"number\": 2026, \"state\": \"CLOSED\"}]'\nexit 0\n"
+        )
+        self._branch("release-notes-2026-cleanup")
+
+        scan = self._scan("--tracker", "gh", bin_dir=bin_dir)
+
+        self.assertNotIn("issue_status", self._branch_record(scan, "release-notes-2026-cleanup"))
 
 
 if __name__ == "__main__":

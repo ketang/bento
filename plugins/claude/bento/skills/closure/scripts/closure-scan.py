@@ -1444,12 +1444,15 @@ def resolve_branch_issue_id(branch: str, tracker: str) -> str | None:
     Beads ids keep the dotted-subissue reconstruction ("bento-rdtn-8-slug" ->
     "bento-rdtn.8") other bento scripts use. Other trackers fall back to the
     tracker's own DEFAULT_PATTERNS convention (e.g. a bare issue number for
-    GitHub), since they don't share that dotted-subissue naming.
+    GitHub) applied only within the matched leading <prefix>-<id> token, not
+    the whole branch name -- a bare `re.search` across the entire name would
+    also match an unrelated digit run anywhere in it (a date, a version), far
+    past where any human-authored id would appear.
     """
+    match = _BRANCH_ISSUE_ID_RE.match(branch)
+    if not match:
+        return None
     if tracker == TRACKER_BEADS:
-        match = _BRANCH_ISSUE_ID_RE.match(branch)
-        if not match:
-            return None
         issue_id = match.group(1)
         remainder = branch[match.end():]
         sub_match = _BRANCH_SUBISSUE_RE.match(remainder)
@@ -1459,12 +1462,14 @@ def resolve_branch_issue_id(branch: str, tracker: str) -> str | None:
     pattern = default_issue_pattern(tracker)
     if not pattern:
         return None
-    return extract_issue_id(branch, pattern)
+    return extract_issue_id(match.group(1), pattern)
 
 
 def bulk_beads_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
     """One `bd list --all --json` call -> {issue_id: status}. Never raises;
     a failure is reported as a warning string, not an exception."""
+    if not shutil.which("bd"):
+        return None, "bd list --all --json skipped: bd not found on PATH"
     result = subprocess.run(
         ["bd", "list", "--all", "--json"], cwd=cwd, capture_output=True, text=True, check=False,
     )
@@ -1484,11 +1489,19 @@ def bulk_beads_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
     return statuses, None
 
 
+GH_BULK_ISSUE_LIST_LIMIT = 1000
+
+
 def bulk_gh_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
     """One `gh issue list --state all --json number,state` call ->
     {issue_number: state}. Never raises; a failure is a warning string."""
+    if not shutil.which("gh"):
+        return None, "gh issue list skipped: gh not found on PATH"
     result = subprocess.run(
-        ["gh", "issue", "list", "--state", "all", "--json", "number,state", "--limit", "1000"],
+        [
+            "gh", "issue", "list", "--state", "all", "--json", "number,state",
+            "--limit", str(GH_BULK_ISSUE_LIST_LIMIT),
+        ],
         cwd=cwd, capture_output=True, text=True, check=False,
     )
     if result.returncode != 0:
@@ -1504,7 +1517,15 @@ def bulk_gh_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
     for item in parsed:
         if isinstance(item, dict) and item.get("number") is not None and item.get("state"):
             statuses[str(item["number"])] = str(item["state"]).lower()
-    return statuses, None
+    truncation_warning = (
+        f"gh issue list result may be truncated at the --limit "
+        f"{GH_BULK_ISSUE_LIST_LIMIT} cap ({len(parsed)} issues returned); "
+        "older/lower-numbered issues may be missing from tracker_mismatch "
+        "for repos with more issues than that"
+        if len(parsed) >= GH_BULK_ISSUE_LIST_LIMIT
+        else None
+    )
+    return statuses, truncation_warning
 
 
 def bulk_tracker_statuses(tracker: str, cwd: Path) -> tuple[dict[str, str] | None, str | None]:
