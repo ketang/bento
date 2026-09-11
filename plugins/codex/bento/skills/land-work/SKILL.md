@@ -31,6 +31,11 @@ linked-worktree cleanup order.
 This skill includes helper scripts under `land-work/scripts/` for the risky
 state checks that should not rely on ad hoc prose reconstruction:
 
+- `land-work/scripts/land.py` (bento-rdtn.14) orchestrates the whole
+  fetch → create-preview → verify → lease-recheck → merge+push → cleanup →
+  verify-landing sequence as one command, run from the feature-branch
+  worktree after step 1's prepare/pre-hooks/gate-baseline/code-review steps.
+  Prefer it over issuing step 8's individual commands by hand — see step 7a.
 - `land-work/scripts/land-work-prepare.py` to verify the current checkout is a
   clean feature-branch worktree with something to land and, when requested,
   that it is not stale relative to the primary branch. Also reports the
@@ -250,6 +255,33 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
    prove or preserve the same exact candidate you verified. If the helper
    cannot expose equivalent candidate evidence, fall back to the explicit
    compare-and-set flow below.
+7a. **Prefer the orchestrating driver for step 8 as a whole (bento-rdtn.14).**
+    Before issuing the compare-and-set flow's individual commands by hand, run:
+
+```bash
+land-work/scripts/land.py --runtime <runtime>
+```
+
+    from the feature-branch worktree. It runs fetch → create-preview →
+    run-verifier → verify-lease (recheck) → merge+push → cleanup →
+    verify-landing as one sequence, choosing the normal or push-from-preview
+    route itself from step 1's `primary_local_vs_remote` diagnostic, printing
+    one line per step (name, status, seconds, and cached/executed for the
+    verify step), and always removing the preview worktree in a `finally` —
+    including on SIGINT/SIGTERM, and aborting an in-progress primary-checkout
+    merge on interrupt. It stops at the first failed step and reports the
+    step name, the error, and (for a verifier failure) the raw log path in
+    its final JSON. Exit 0 means every step in the sequence succeeded,
+    including verify-landing; proceed straight to step 9. A nonzero exit
+    means the failed step's own diagnostics are the source of truth — fix
+    that specific problem and re-run `land.py` from the top; do not fall
+    back to the manual flow below just because one run failed.
+
+    Use the manual compare-and-set flow in step 8 instead only when
+    `land.py` is missing from this checkout (an older bento install) or you
+    deliberately need to intervene between its steps (e.g. a `landing.mode:
+    batch` repo, which `land.py` does not handle — see `## Batch Landing`
+    below).
 8. Otherwise, perform a compare-and-set merge flow as separate commands, not
    one compound command string:
    - refresh the primary-branch ref you intend to lease
@@ -742,6 +774,7 @@ itself remains out of scope here — it lives in the `swarm` skill.
 | "The primary branch was already red, but my branch didn't break it." | Landing on a red base hides which change is responsible and lets breakage linger. Halt on a pre-existing red base. |
 | "The project verifier exited 0, so the candidate is verified." | Exit 0 alone is not evidence. A verifier can select zero checks for a real diff and still exit 0. `land-work-run-verifier.py` fails closed unless every landed path is covered by a passed selected check or an exact exemption. |
 | "No manifest exists yet; I'll just tell the user to run `wire-land-verifier` later and stop here." | Verifier setup is per-project and gets forgotten until the next landing hits the same wall. Invoke `wire-land-verifier` now, in this session — its own confirmation and go-ahead gates still protect against a rubber-stamped verifier. |
+| "I'll just type the compare-and-set commands by hand; it's the same steps `land.py` runs anyway." | `land.py` exists precisely because those nine hand-typed commands are where landings actually fail in practice — a skipped cleanup, a stale lease left unrechecked, a preview leaked on interrupt. Prefer it; fall back to the manual flow only when it is unavailable or you need to intervene mid-sequence. |
 
 ## Tracker Handoff
 
