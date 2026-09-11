@@ -4,12 +4,35 @@ from __future__ import annotations
 
 import argparse
 import json
+import re
+import shutil
+import subprocess
 import sys
 from pathlib import Path
 
-from git_state import NotAWorkTreeError, detect_checkout_root, detect_primary_branch, git, parse_worktrees, primary_checkout_root
+from git_state import (
+    NotAWorkTreeError,
+    detect_checkout_root,
+    detect_primary_branch,
+    git,
+    parse_worktrees,
+    primary_checkout_root,
+    try_git_stdout,
+)
 
 UNTRACKED_ADVISORY_LIMIT = 10
+
+# Leading <prefix>-<id> token of a branch name, e.g. "str-25kcm" out of
+# "str-25kcm-fix-thing", or "bento-rdtn.7" out of "bento-rdtn.7-foo-bar" (a
+# literal dot in the branch name, stopping before the next hyphen).
+_CLAIM_ID_RE = re.compile(r"^([a-z]+-[a-z0-9.]+)")
+
+# A purely numeric segment immediately following the prefix match, e.g. the
+# "-7" in "bento-rdtn-7-bootstrap-claim". bento's own branch-naming
+# convention renders a dotted sub-issue id ("bento-rdtn.7") with a hyphen
+# instead of a literal dot, so this reconstructs the dot rather than
+# resolving to just the epic id.
+_CLAIM_SUBISSUE_RE = re.compile(r"^-(\d+)(?:-|$)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -18,7 +41,93 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--worktree", required=True, help="target linked worktree path")
     parser.add_argument("--base-branch", help="branch to branch from; defaults to detected primary branch")
     parser.add_argument("--apply", action="store_true", help="create the branch and linked worktree")
+    parser.add_argument(
+        "--claim",
+        metavar="<id|auto>",
+        help="claim this tracker issue after the worktree is created (beads: "
+        "bd update <id> --claim; GitHub: gh issue edit <id> --add-assignee @me). "
+        "'auto' takes the leading <prefix>-<id> token of --branch",
+    )
     return parser.parse_args()
+
+
+def _resolve_claim_id(claim_arg: str, branch: str) -> str | None:
+    if claim_arg != "auto":
+        return claim_arg
+    match = _CLAIM_ID_RE.match(branch)
+    if not match:
+        return None
+    claim_id = match.group(1)
+    remainder = branch[match.end():]
+    sub_match = _CLAIM_SUBISSUE_RE.match(remainder)
+    if sub_match:
+        claim_id = f"{claim_id}.{sub_match.group(1)}"
+    return claim_id
+
+
+def _detect_tracker(checkout_root: Path, primary_root: Path) -> str | None:
+    if (primary_root / ".beads").is_dir() and shutil.which("bd"):
+        return "beads"
+    origin_url = try_git_stdout("remote", "get-url", "origin", cwd=checkout_root)
+    if origin_url and "github.com" in origin_url and shutil.which("gh"):
+        return "github"
+    return None
+
+
+def claim_issue(
+    claim_arg: str, branch: str, checkout_root: Path, primary_root: Path, warnings: list[str]
+) -> dict[str, object]:
+    """Claim the tracker issue named by --claim, after the worktree exists.
+
+    Never raises: a failed or skipped claim is recorded in the returned dict
+    and, for a failed claim, as a warning naming the exact command -- the
+    worktree has already been created by the time this runs, so a tracker
+    hiccup must not make bootstrap look like it failed outright.
+    """
+    result: dict[str, object] = {
+        "requested": claim_arg,
+        "tracker": None,
+        "id": None,
+        "status": "skipped",
+        "command": None,
+    }
+    claim_id = _resolve_claim_id(claim_arg, branch)
+    if claim_id is None:
+        warnings.append(
+            f"--claim auto: branch {branch!r} does not match <prefix>-<id>; skipping claim"
+        )
+        return result
+    result["id"] = claim_id
+
+    tracker = _detect_tracker(checkout_root, primary_root)
+    result["tracker"] = tracker
+    if tracker is None:
+        warnings.append(
+            f"--claim {claim_id}: no tracker detected (no .beads/ with bd on "
+            "PATH, no GitHub remote with gh on PATH); skipping claim"
+        )
+        return result
+
+    if tracker == "beads":
+        command = ["bd", "update", claim_id, "--claim"]
+    else:
+        command = ["gh", "issue", "edit", claim_id, "--add-assignee", "@me"]
+    result["command"] = command
+
+    try:
+        proc = subprocess.run(command, cwd=primary_root, capture_output=True, text=True, check=False)
+    except OSError as exc:
+        result["status"] = "failed"
+        warnings.append(f"claim command failed: {' '.join(command)}: {exc}")
+        return result
+
+    if proc.returncode == 0:
+        result["status"] = "claimed"
+    else:
+        result["status"] = "failed"
+        detail = (proc.stderr or proc.stdout or "").strip()
+        warnings.append(f"claim command failed: {' '.join(command)}: {detail}")
+    return result
 
 
 def untracked_advisories(root: Path) -> list[str]:
@@ -210,7 +319,19 @@ def main() -> int:
             return exec_result.returncode
         created = True
 
-    json.dump({**result, "created": created}, sys.stdout, indent=2)
+    payload = {**result, "created": created}
+    if args.claim and created:
+        warnings = list(payload["warnings"])
+        payload["claim"] = claim_issue(
+            args.claim,
+            str(result["target_branch"]),
+            Path(str(result["target_worktree"])),
+            Path(str(result["primary_checkout_root"])),
+            warnings,
+        )
+        payload["warnings"] = warnings
+
+    json.dump(payload, sys.stdout, indent=2)
     sys.stdout.write("\n")
     return 0
 
