@@ -1153,5 +1153,186 @@ class UntrackedDebrisScanTest(unittest.TestCase):
         self.assertIn("café-old/", paths)
 
 
+class TrackerMismatchTest(unittest.TestCase):
+    """bento-rdtn.9: a bulk (one-query) tracker check that tags every
+    <prefix>-<id>-named branch with issue_status and lists open/closed
+    mismatches in a report-only tracker_mismatch section."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        self._commit("README.md", "root\n", "initial commit")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _commit(self, rel: str, content: str, msg: str) -> str:
+        path = self.repo / rel
+        path.write_text(content, encoding="utf-8")
+        git(self.repo, "add", rel)
+        git(self.repo, "commit", "-m", msg)
+        return git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+    def _branch(self, name: str) -> None:
+        git(self.repo, "checkout", "-b", name)
+        self._commit(f"{name}.txt", "x\n", f"work on {name}")
+        git(self.repo, "checkout", "main")
+
+    def _fake_bin(self, name: str, script: str) -> Path:
+        bin_dir = Path(self.temp_dir.name) / "fakebin"
+        bin_dir.mkdir(exist_ok=True)
+        path = bin_dir / name
+        path.write_text(script, encoding="utf-8")
+        path.chmod(0o755)
+        return bin_dir
+
+    def _scan(self, *args: str, bin_dir: Path | None = None) -> dict:
+        env = {}
+        if bin_dir is not None:
+            env["PATH"] = os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])
+        result = run([str(SCRIPT), "--no-liveness", *args], self.repo, env=env)
+        return json.loads(result.stdout)
+
+    def _branch_record(self, scan: dict, name: str) -> dict:
+        for b in scan["local_branches"]:
+            if b["name"] == name:
+                return b
+        self.fail(f"missing branch {name}")
+
+    def test_beads_bulk_query_tags_every_matching_branch(self) -> None:
+        (self.repo / ".beads").mkdir()
+        log_path = Path(self.temp_dir.name) / "bd.log"
+        bin_dir_log = self._fake_bin(
+            "bd",
+            "#!/bin/sh\n"
+            'echo "$@" >> "' + str(log_path) + '"\n'
+            'echo \'[\n'
+            '  {"id": "proj-1", "status": "open"},\n'
+            '  {"id": "proj-2", "status": "in_progress"},\n'
+            '  {"id": "proj-3", "status": "closed"}\n'
+            "]'\n"
+            "exit 0\n",
+        )
+        self._branch("proj-1-unclaimed")
+        self._branch("proj-2-active")
+        self._branch("proj-3-stale")
+
+        scan = self._scan("--tracker", "beads", bin_dir=bin_dir_log)
+
+        self.assertEqual(self._branch_record(scan, "proj-1-unclaimed")["issue_status"], "open")
+        self.assertEqual(self._branch_record(scan, "proj-2-active")["issue_status"], "in_progress")
+        self.assertEqual(self._branch_record(scan, "proj-3-stale")["issue_status"], "closed")
+        # Exactly one bulk bd invocation, not one per branch.
+        self.assertEqual(log_path.read_text().strip().count("\n") + 1, 1)
+        self.assertIn("list", log_path.read_text())
+
+    def test_tracker_mismatch_section_lists_open_and_closed_only(self) -> None:
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin(
+            "bd",
+            "#!/bin/sh\n"
+            'echo \'[\n'
+            '  {"id": "proj-1", "status": "open"},\n'
+            '  {"id": "proj-2", "status": "in_progress"},\n'
+            '  {"id": "proj-3", "status": "closed"}\n'
+            "]'\n"
+            "exit 0\n",
+        )
+        self._branch("proj-1-unclaimed")
+        self._branch("proj-2-active")
+        self._branch("proj-3-stale")
+
+        scan = self._scan("--tracker", "beads", bin_dir=bin_dir)
+
+        mismatch_branches = {m["branch"] for m in scan["tracker_mismatch"]}
+        self.assertEqual(mismatch_branches, {"proj-1-unclaimed", "proj-3-stale"})
+        for entry in scan["tracker_mismatch"]:
+            self.assertIn("issue_id", entry)
+            self.assertIn("issue_status", entry)
+            self.assertTrue(entry["suggested_action"])
+
+    def test_unrecognized_issue_id_is_unknown_not_a_mismatch(self) -> None:
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin("bd", "#!/bin/sh\necho '[]'\nexit 0\n")
+        self._branch("proj-404-ghost")
+
+        scan = self._scan("--tracker", "beads", bin_dir=bin_dir)
+
+        self.assertEqual(self._branch_record(scan, "proj-404-ghost")["issue_status"], "unknown")
+        self.assertNotIn("proj-404-ghost", {m["branch"] for m in scan["tracker_mismatch"]})
+
+    def test_non_matching_branch_name_has_no_issue_status(self) -> None:
+        # "sandbox" has no <prefix>-<id> shape at all (no hyphen), unlike
+        # "proj-404-ghost" (shape-matching but tracker-unrecognized, which
+        # gets "unknown" instead -- see the dedicated test for that case).
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin("bd", "#!/bin/sh\necho '[]'\nexit 0\n")
+        self._branch("sandbox")
+
+        scan = self._scan("--tracker", "beads", bin_dir=bin_dir)
+
+        self.assertNotIn("issue_status", self._branch_record(scan, "sandbox"))
+
+    def test_dotted_subissue_branch_name_resolves_to_dotted_id(self) -> None:
+        # bento's convention renders a dotted sub-issue id ("bento-rdtn.9")
+        # with a hyphen in the branch name ("bento-rdtn-9-slug"); same
+        # reconstruction as launch-work-bootstrap.py's --claim auto and
+        # land-work-verify-landing.py's --issue auto.
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin(
+            "bd", "#!/bin/sh\necho '[{\"id\": \"bento-rdtn.9\", \"status\": \"open\"}]'\nexit 0\n"
+        )
+        self._branch("bento-rdtn-9-slug")
+
+        scan = self._scan("--tracker", "beads", bin_dir=bin_dir)
+
+        rec = self._branch_record(scan, "bento-rdtn-9-slug")
+        self.assertEqual(rec["issue_status"], "open")
+
+    def test_github_bulk_query_tags_matching_branches(self) -> None:
+        git(self.repo, "remote", "add", "origin", "https://github.com/example/repo.git")
+        bin_dir = self._fake_bin(
+            "gh",
+            "#!/bin/sh\n"
+            'echo \'[{"number": 42, "state": "OPEN"}, {"number": 43, "state": "CLOSED"}]\'\n'
+            "exit 0\n",
+        )
+        self._branch("gh-42-fix")
+        self._branch("gh-43-fix")
+
+        scan = self._scan("--tracker", "gh", bin_dir=bin_dir)
+
+        self.assertEqual(self._branch_record(scan, "gh-42-fix")["issue_status"], "open")
+        self.assertEqual(self._branch_record(scan, "gh-43-fix")["issue_status"], "closed")
+
+    def test_tracker_none_skips_lookup_and_mismatch_section(self) -> None:
+        bin_dir = self._fake_bin("bd", "#!/bin/sh\nexit 1\n")  # would fail loudly if invoked
+        self._branch("proj-1-unclaimed")
+
+        scan = self._scan("--tracker", "none", bin_dir=bin_dir)
+
+        self.assertIsNone(scan["tracker_mismatch"])
+        self.assertNotIn("issue_status", self._branch_record(scan, "proj-1-unclaimed"))
+
+    def test_no_tracker_available_reports_null_mismatch_section(self) -> None:
+        scan = self._scan("--tracker", "auto")
+        self.assertIsNone(scan["tracker_mismatch"])
+
+    def test_bulk_query_failure_is_advisory_not_fatal(self) -> None:
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin("bd", "#!/bin/sh\necho 'db locked' >&2\nexit 1\n")
+        self._branch("proj-1-unclaimed")
+
+        scan = self._scan("--tracker", "beads", bin_dir=bin_dir)
+
+        self.assertIsNone(scan["tracker_mismatch"])
+        self.assertNotIn("issue_status", self._branch_record(scan, "proj-1-unclaimed"))
+        self.assertTrue(any("bd list" in w for w in scan["warnings"]))
+
+
 if __name__ == "__main__":
     unittest.main()

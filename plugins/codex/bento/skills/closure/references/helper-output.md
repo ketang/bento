@@ -190,6 +190,44 @@ gitignore`, since the helper cannot tell intentional in-progress work from
 abandoned debris by size or age alone. Override the thresholds with
 `--debris-min-size-mb` and `--debris-min-age-days`.
 
+## Tracker Mismatch (`tracker_mismatch`)
+
+Always runs (regardless of `--correlate-branches`) whenever the resolved
+tracker is `beads` or `gh`; `null` when the tracker is `jira`, `none`, or the
+bulk query itself failed (a warning is added to `warnings` in that case) --
+distinct from an empty list, which means the query ran and found no
+mismatches. Unlike `correlation` (one tracker call per `review_required`
+branch, opt-in), this does exactly one bulk call regardless of branch count
+(`bd list --all --json`, or `gh issue list --state all --json
+number,state`), so it costs nothing extra to leave on.
+
+Every local branch whose name resolves to a tracker issue id (beads: the
+same `<prefix>-<id>` shape with dotted-subissue reconstruction that
+`launch-work-bootstrap.py --claim auto` and `land-work-verify-landing.py
+--issue auto` use, e.g. `bento-rdtn-8-slug` -> `bento-rdtn.8`; other trackers:
+the tracker's own `DEFAULT_PATTERNS`) gets an `issue_status` field on its
+`local_branches` record: `open`, `in_progress`, `closed`, or `unknown` (the
+tracker doesn't recognize the extracted id). A branch whose name doesn't
+resolve to any id gets no `issue_status` field at all.
+
+`tracker_mismatch` lists only the `open` and `closed` branches -- the ones
+worth a second look, since `in_progress` is the expected state for a live
+branch and `unknown` is usually name-regex noise, not a real mismatch:
+
+```json
+"tracker_mismatch": [
+  {
+    "branch": "proj-1-unclaimed",
+    "issue_id": "proj-1",
+    "issue_status": "open",
+    "suggested_action": "issue proj-1 is open (never claimed) -- bd update proj-1 --claim, or delete this branch if abandoned"
+  }
+]
+```
+
+Report only -- no `--apply` mode reads `issue_status` or `tracker_mismatch`.
+Claiming, closing, or deleting is a human/agent call, same as `correlation`.
+
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware

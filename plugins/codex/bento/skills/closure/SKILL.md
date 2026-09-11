@@ -141,6 +141,22 @@ section: path, size, age, and suggested action (commit, gitignore, or
 delete) per finding. Never delete a flagged path yourself — this scan step
 has no apply mode.
 
+### Tracker Mismatch (issue-named branches)
+
+Every scan (no flag needed) also tags every `<prefix>-<id>`-named local
+branch with `issue_status` — `open`, `in_progress`, `closed`, or `unknown` —
+whenever the resolved tracker is `beads` or `gh`, via a single bulk query
+(`bd list --all --json` / `gh issue list --state all`), not one call per
+branch. Branches whose issue is `open` (never claimed) or `closed` (stale —
+the issue closed but the branch is still around) land in a top-level
+`tracker_mismatch` list with a suggested action (claim, close, or delete
+after your review — never applied automatically). `null` (not `[]`) means
+the tracker is `jira`/`none` or the bulk query failed; see
+`closure/references/helper-output.md` for the full field list. Present these
+alongside `review_required` branches as a distinct "tracker says otherwise"
+signal — a mismatch can happen on any branch classification, not just
+`review_required`.
+
 ### Branch Correlation (review_required triage)
 
 When a `review_required` branch needs disposition (genuine outstanding work vs.
