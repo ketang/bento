@@ -471,7 +471,11 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree> --preview-d
    detected primary branch. The closure note must carry the gate evidence
    (step 6a) — each gate command and its exit status, or the recorded waiver, or
    "no gate suite discovered" when none ran. Evidence, not the bare assertion
-   that "tests pass".
+   that "tests pass". To catch a forgotten close later (a stale claim on a
+   landed branch), re-run `land-work-verify-landing.py --issue auto` (or an
+   explicit id) from that branch's worktree — it warns, without changing the
+   exit code, if the branch's tracker issue is not `closed`/`CLOSED`, naming
+   the exact `bd close ...`/`gh issue close ...` command.
 9a. Audit the primary checkout root for stray untracked files. The prepare
     helper only checks the feature worktree, so junk in the primary root
     (stray scratch files, accidental writes) survives every landing. Run the

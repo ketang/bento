@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -58,6 +59,31 @@ class LandWorkScriptsTest(unittest.TestCase):
 
     def run_verify_landing(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
         return run([str(VERIFY_LANDING_SCRIPT), *args], cwd, check=check)
+
+    def run_verify_landing_env(
+        self, *args: str, cwd: Path, env: dict | None = None, check: bool = True
+    ) -> subprocess.CompletedProcess[str]:
+        return subprocess.run(
+            [str(VERIFY_LANDING_SCRIPT), *args],
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            check=check,
+            env=env,
+        )
+
+    def _fake_bin(self, name: str, script: str) -> Path:
+        bin_dir = Path(self.temp_dir.name) / "fakebin"
+        bin_dir.mkdir(exist_ok=True)
+        path = bin_dir / name
+        path.write_text(script, encoding="utf-8")
+        path.chmod(0o755)
+        return bin_dir
+
+    def _env_with_path(self, *extra_bin_dirs: Path) -> dict:
+        env = dict(os.environ)
+        env["PATH"] = os.pathsep.join([*(str(d) for d in extra_bin_dirs), env.get("PATH", "")])
+        return env
 
     def test_prepare_accepts_clean_feature_branch_worktree(self) -> None:
         result = self.run_prepare("--expected-branch", "feature/test", "--require-linked-worktree", cwd=self.worktree)
@@ -435,6 +461,127 @@ class LandWorkScriptsTest(unittest.TestCase):
 
         self.assertTrue(payload["ok"])
         self.assertFalse(payload["preview_dir_registered"])
+
+    # -- bento-rdtn.8: --issue tracker-closed check ------------------------ #
+
+    def test_issue_explicit_id_warns_when_bd_issue_not_closed(self) -> None:
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin(
+            "bd",
+            "#!/bin/sh\n"
+            'echo \'[{"id": "proj-1", "status": "in_progress"}]\'\n'
+            "exit 0\n",
+        )
+        result = self.run_verify_landing_env(
+            "--issue", "proj-1", cwd=self.repo, env=self._env_with_path(bin_dir),
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(result.returncode, 0)
+        self.assertEqual(payload["issue_status"], "in_progress")
+        self.assertTrue(any("bd close proj-1" in w for w in payload["warnings"]))
+
+    def test_issue_explicit_id_silent_when_bd_issue_closed(self) -> None:
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin(
+            "bd",
+            "#!/bin/sh\n"
+            'echo \'[{"id": "proj-1", "status": "closed"}]\'\n'
+            "exit 0\n",
+        )
+        result = self.run_verify_landing_env(
+            "--issue", "proj-1", cwd=self.repo, env=self._env_with_path(bin_dir),
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["issue_status"], "closed")
+        self.assertFalse(any("bd close" in w for w in payload["warnings"]))
+
+    def test_issue_auto_resolves_id_from_branch_name(self) -> None:
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin(
+            "bd",
+            "#!/bin/sh\n"
+            'echo \'[{"id": "bento-rdtn.8", "status": "in_progress"}]\'\n'
+            "exit 0\n",
+        )
+        git(self.worktree, "checkout", "-b", "bento-rdtn-8-slug")
+        result = self.run_verify_landing_env(
+            "--issue", "auto", cwd=self.worktree, env=self._env_with_path(bin_dir),
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["issue_status"], "in_progress")
+        self.assertTrue(any("bd close bento-rdtn.8" in w for w in payload["warnings"]))
+
+    def test_issue_auto_skipped_on_non_matching_branch_name(self) -> None:
+        result = self.run_verify_landing("--issue", "auto", "--ref", "refs/heads/main", cwd=self.repo)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertIsNone(payload["issue_status"])
+        self.assertTrue(any("does not match" in w for w in payload["warnings"]))
+
+    def test_issue_github_tracker_warns_when_not_closed(self) -> None:
+        git(self.repo, "remote", "add", "origin", "https://github.com/example/repo.git")
+        bin_dir = self._fake_bin(
+            "gh", "#!/bin/sh\n" 'echo \'{"state": "OPEN"}\'\n' "exit 0\n"
+        )
+        result = self.run_verify_landing_env(
+            "--issue", "123", cwd=self.repo, env=self._env_with_path(bin_dir),
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["issue_status"], "OPEN")
+        self.assertTrue(any("gh issue close 123" in w for w in payload["warnings"]))
+
+    def test_issue_github_tracker_silent_when_closed(self) -> None:
+        git(self.repo, "remote", "add", "origin", "https://github.com/example/repo.git")
+        bin_dir = self._fake_bin(
+            "gh", "#!/bin/sh\n" 'echo \'{"state": "CLOSED"}\'\n' "exit 0\n"
+        )
+        result = self.run_verify_landing_env(
+            "--issue", "123", cwd=self.repo, env=self._env_with_path(bin_dir),
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["issue_status"], "CLOSED")
+        self.assertFalse(any("gh issue close" in w for w in payload["warnings"]))
+
+    def test_issue_no_tracker_detected_warns(self) -> None:
+        result = self.run_verify_landing("--issue", "proj-1", cwd=self.repo)
+        payload = json.loads(result.stdout)
+
+        self.assertTrue(payload["ok"])
+        self.assertIsNone(payload["issue_status"])
+        self.assertTrue(any("no tracker detected" in w for w in payload["warnings"]))
+
+    def test_issue_lookup_failure_does_not_change_exit_code(self) -> None:
+        # Exit code stays tied to the tree/sha/preview checks only -- a
+        # tracker hiccup is advisory, never fails landing verification.
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin("bd", "#!/bin/sh\necho 'not found' >&2\nexit 1\n")
+        result = self.run_verify_landing_env(
+            "--issue", "proj-missing", "--expected-tree", "deadbeef",
+            cwd=self.repo, env=self._env_with_path(bin_dir), check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertNotEqual(result.returncode, 0)  # fails on the tree mismatch, not the issue lookup
+        self.assertFalse(payload["ok"])
+        self.assertIsNone(payload["issue_status"])
+        self.assertTrue(any("bd show proj-missing" in w for w in payload["warnings"]))
+
+    def test_no_issue_flag_omits_issue_status_key(self) -> None:
+        result = self.run_verify_landing("--ref", "refs/heads/main", cwd=self.repo)
+        payload = json.loads(result.stdout)
+
+        self.assertNotIn("issue_status", payload)
 
 
 class PushFromPreviewLandingTest(unittest.TestCase):
