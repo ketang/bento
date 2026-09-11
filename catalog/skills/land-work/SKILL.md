@@ -1,6 +1,6 @@
 ---
 name: land-work
-description: Hard trigger — invoke after finishing your own approved feature-branch work to merge it, close tracker work, and tear down the feature branch and its linked worktree afterward. This is the routine post-merge cleanup path for the agent that did the work; do not use closure for that.
+description: Hard trigger — invoke after finishing your own approved feature-branch work to merge it, close tracker work, and tear down the feature branch and its linked worktree afterward. This is the routine post-merge cleanup path for the agent that did the work; do not use closure for that. If superpowers is also installed, this replaces superpowers:finishing-a-development-branch.
 ---
 
 # Land Work

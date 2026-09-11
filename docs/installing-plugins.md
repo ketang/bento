@@ -182,6 +182,29 @@ experiments only; the canonical hook sources live under
 `catalog/hooks/<hook-name>/<platform>/`. See
 [hooks/README.md](../hooks/README.md) for the hook source layout and contract.
 
+## Coexistence with superpowers
+
+If Anthropic's `superpowers` plugin is also installed alongside `bento`,
+two pairs of skills overlap:
+
+- `bento:launch-work` (a hard trigger — invoke before editing) **replaces**
+  `superpowers:using-git-worktrees`.
+- `bento:land-work` (invoke after finishing approved feature-branch work)
+  **replaces** `superpowers:finishing-a-development-branch`.
+
+Between those two points — after a launch-work worktree is set up, before
+land-work merges it — superpowers' process skills (brainstorming,
+test-driven-development, systematic-debugging, and the rest) remain in
+force exactly as they would in a bento-only install. Only the
+worktree-setup and finishing pair is superseded; nothing else about
+superpowers is disabled.
+
+`agent-env-doctor` (the `SessionStart` hook bundled with the `bento`
+plugin) prints a one-time pointer to this section when it detects
+`superpowers` in your installed plugins — once per repo, recorded via
+`agent_env_doctor_superpowers_pointer_seen` in `.agent-mode.local`; it does
+not repeat every session.
+
 ## For maintainers
 
 This guide is for end users installing published plugins.

@@ -1,6 +1,6 @@
 ---
 name: launch-work
-description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Creates branch+worktree. Never skip for small changes.
+description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Creates branch+worktree. Never skip for small changes. If superpowers is also installed, this replaces superpowers:using-git-worktrees.
 ---
 
 # Launch Work
