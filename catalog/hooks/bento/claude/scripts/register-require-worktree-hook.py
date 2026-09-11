@@ -27,6 +27,7 @@ from pathlib import Path
 
 
 EDIT_TOOL_MATCHERS = ("Edit", "Write", "NotebookEdit")
+GIT_GUARD_MATCHER = "Bash"
 
 
 def _looks_like_codex_plugin_root(plugin_root: str) -> bool:
@@ -67,6 +68,19 @@ def _stable_symlink_path() -> Path:
         / "hooks"
         / "bento"
         / "require-worktree.sh"
+    )
+
+
+def _stable_git_guard_symlink_path() -> Path:
+    """Stable (version-independent) path for the git-guard script symlink
+    (bento-rdtn.15). Same directory and overwrite semantics as
+    _stable_symlink_path() above."""
+    return (
+        Path(os.environ.get("HOME", str(Path.home())))
+        / ".claude"
+        / "hooks"
+        / "bento"
+        / "require-worktree-git-guard.py"
     )
 
 
@@ -140,7 +154,9 @@ def _entry_for(matcher: str, command: str) -> dict:
     }
 
 
-def register(settings: dict, command: str) -> bool:
+def register(settings: dict, entries: list[tuple[str, str]]) -> bool:
+    """Register each (matcher, command) pair as a PreToolUse hook, skipping
+    any pair already present (matched on matcher + exact command string)."""
     hooks = settings.setdefault("hooks", {})
     if not isinstance(hooks, dict):
         return False
@@ -149,7 +165,7 @@ def register(settings: dict, command: str) -> bool:
         return False
 
     changed = False
-    for matcher in EDIT_TOOL_MATCHERS:
+    for matcher, command in entries:
         already_registered = any(
             isinstance(entry, dict)
             and entry.get("matcher") == matcher
@@ -191,15 +207,25 @@ def main(argv: list[str] | None = None) -> int:
 
     try:
         plugin_root = Path(argv[1])
+
         target = plugin_root / "hooks" / "scripts" / "require-worktree.sh"
         stable = _stable_symlink_path()
         _update_symlink(target, stable)
         command = str(stable)
+
+        git_guard_target = plugin_root / "hooks" / "scripts" / "require-worktree-git-guard.py"
+        git_guard_stable = _stable_git_guard_symlink_path()
+        _update_symlink(git_guard_target, git_guard_stable)
+        git_guard_command = str(git_guard_stable)
+
+        entries = [(matcher, command) for matcher in EDIT_TOOL_MATCHERS]
+        entries.append((GIT_GUARD_MATCHER, git_guard_command))
+
         settings_path = _settings_path()
         settings = _load_settings(settings_path)
         if settings is None:
             return 0
-        if register(settings, command):
+        if register(settings, entries):
             _atomic_write_json(settings_path, settings)
     except Exception:
         return 0
