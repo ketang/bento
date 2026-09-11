@@ -70,8 +70,13 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
         "agent_env_doctor_preview_max_age_hours",
         "agent_env_doctor_seen",
         "agent_env_doctor_remind_after",
+        "agent_env_doctor_superpowers_pointer_seen",
     }
 )
+
+# Installed-plugin name whose presence triggers the one-time superpowers
+# coexistence pointer (bento-rdtn.10).
+SUPERPOWERS_PLUGIN_NAME = "superpowers"
 
 # Default staleness threshold for /tmp/land-work-preview-* directories.
 DEFAULT_PREVIEW_MAX_AGE_HOURS = 24.0
@@ -554,6 +559,28 @@ def check_dormant_plugins(
     return [_format_dormant_plugin_warning(d) for d in decisions]
 
 
+# --- check 3b: superpowers coexistence pointer (bento-rdtn.10) --------------
+
+
+def check_superpowers_coexistence(installed: set[str], seen: bool) -> list[str]:
+    """One-time pointer (never repeated once shown) toward the coexistence
+    doc when Anthropic's superpowers plugin is also installed: bento's
+    launch-work/land-work supersede superpowers' worktree/finishing skills
+    at their hard-trigger boundary, and superpowers' process skills stay in
+    force between those two points."""
+    if seen or SUPERPOWERS_PLUGIN_NAME not in installed:
+        return []
+    return [
+        "superpowers is also installed — bento's launch-work replaces "
+        "superpowers:using-git-worktrees and land-work replaces "
+        "superpowers:finishing-a-development-branch; superpowers' process "
+        "skills (brainstorming, TDD, systematic-debugging, etc.) remain in "
+        "force between those two points. See docs/installing-plugins.md "
+        "(\"Coexistence with superpowers\"). This notice prints once per "
+        "repo."
+    ]
+
+
 # --- check 4: .agent-mode.local ---------------------------------------------
 
 
@@ -993,6 +1020,61 @@ def _remind_after_dates(root: Path) -> dict[str, str]:
     return dates
 
 
+def _superpowers_pointer_seen(root: Path) -> bool:
+    """True when .agent-mode.local's agent_env_doctor_superpowers_pointer_seen
+    is exactly "true" — the coexistence pointer has already been shown once
+    and must not repeat."""
+    text = _read_text_bounded(root / ".agent-mode.local")
+    if text is None:
+        return False
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() == "agent_env_doctor_superpowers_pointer_seen" and value.strip() == "true":
+            return True
+    return False
+
+
+def _record_superpowers_pointer_seen(root: Path) -> None:
+    """After showing the coexistence pointer once, record that in
+    .agent-mode.local so later sessions stay silent. Never raises: a write
+    failure here must not block session start, matching every other check's
+    contract."""
+    config = root / ".agent-mode.local"
+    try:
+        # CRLF-preserving read/rewrite, same rationale as
+        # _record_dormant_plugin_decisions: an unrelated "dangerous\r\n"
+        # line must survive this rewrite byte-for-byte.
+        text = _read_agent_mode_text(config) or ""
+        lines = text.split("\n")
+        if text.endswith("\n") and lines and lines[-1] == "":
+            lines = lines[:-1]
+        new_lines: list[str] = []
+        written = False
+        for line in lines:
+            stripped = line.strip()
+            key = stripped.partition("=")[0].strip() if "=" in stripped else None
+            if key == "agent_env_doctor_superpowers_pointer_seen":
+                if not written:
+                    new_lines.append("agent_env_doctor_superpowers_pointer_seen=true")
+                    written = True
+                continue
+            new_lines.append(line)
+        if not written:
+            new_lines.append("agent_env_doctor_superpowers_pointer_seen=true")
+
+        new_text = "\n".join(new_lines)
+        if new_text and not new_text.endswith("\n"):
+            new_text += "\n"
+        tmp = config.with_name(config.name + ".tmp")
+        tmp.write_text(new_text, encoding="utf-8")
+        tmp.replace(config)
+    except OSError:
+        pass
+
+
 def _record_dormant_plugin_decisions(root: Path, decisions: list[dict]) -> None:
     """After showing the full nudge for a plugin (first sighting, or a
     remind_after date that has now passed), record that in .agent-mode.local:
@@ -1070,10 +1152,11 @@ def collect_warnings(
     now: float | None = None,
     today: date | None = None,
     dormant_plugin_warnings: list[str] | None = None,
+    superpowers_warnings: list[str] | None = None,
 ) -> list[str]:
-    """dormant_plugin_warnings lets a caller (evaluate()) pass in warnings
-    derived from a decision list it already computed once, instead of this
-    function re-deriving the identical decisions from disk a second time
+    """dormant_plugin_warnings and superpowers_warnings let a caller
+    (evaluate()) pass in warnings derived from state it already computed
+    once, instead of this function re-deriving them from disk a second time
     (bento-rdtn.2 review) -- computed fresh here only when omitted, e.g. by
     a caller that only wants collect_warnings' aggregate result."""
     warnings: list[str] = []
@@ -1089,6 +1172,13 @@ def collect_warnings(
             _seen_plugins(root),
             _remind_after_dates(root),
             today,
+        )
+    )
+    warnings.extend(
+        superpowers_warnings
+        if superpowers_warnings is not None
+        else check_superpowers_coexistence(
+            installed_plugins(plugins_file), _superpowers_pointer_seen(root)
         )
     )
     warnings.extend(check_agent_mode(root))
@@ -1129,13 +1219,14 @@ def evaluate(
         return None
 
     pfile = plugins_file if plugins_file is not None else _plugins_file(resolved_home, environ)
+    installed = installed_plugins(pfile)
 
     # Computed once and reused for both the warnings this session sees and
     # the decisions recorded to .agent-mode.local, so the two can never
     # silently desync (bento-rdtn.2 review).
     dormant_decisions = _dormant_plugin_decisions(
         root,
-        installed_plugins(pfile),
+        installed,
         _skipped_plugins(root),
         _seen_plugins(root),
         _remind_after_dates(root),
@@ -1143,15 +1234,21 @@ def evaluate(
     )
     dormant_plugin_warnings = [_format_dormant_plugin_warning(d) for d in dormant_decisions]
 
+    superpowers_pointer_already_seen = _superpowers_pointer_seen(root)
+    superpowers_warnings = check_superpowers_coexistence(installed, superpowers_pointer_already_seen)
+
     warnings = collect_warnings(
         root, environ, pfile, resolved_home, resolved_tmp_root, now=now, today=resolved_today,
         dormant_plugin_warnings=dormant_plugin_warnings,
+        superpowers_warnings=superpowers_warnings,
     )
 
     # Record dormant-plugin decisions (first sighting or remind-after
     # expiry) so later sessions collapse the nudge, regardless of whether
     # any *other* check also warned this session.
     _record_dormant_plugin_decisions(root, dormant_decisions)
+    if superpowers_warnings and not superpowers_pointer_already_seen:
+        _record_superpowers_pointer_seen(root)
 
     if not warnings:
         return None

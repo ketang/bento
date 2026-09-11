@@ -1072,6 +1072,65 @@ class AgentEnvDoctorTest(unittest.TestCase):
         proc.stdin.close()
         self.assertEqual(proc.wait(timeout=30), 0)
 
+    # -- bento-rdtn.10: superpowers coexistence pointer ----------------------
+
+    def test_superpowers_installed_shows_coexistence_pointer(self) -> None:
+        self._write_installed({"superpowers@anthropic": [{"version": "1.0.0"}]})
+        context = self._context(self._evaluate())
+        self.assertIn("superpowers is also installed", context)
+        self.assertIn("launch-work replaces", context)
+        self.assertIn("land-work replaces", context)
+        self.assertIn("docs/installing-plugins.md", context)
+
+    def test_superpowers_not_installed_stays_silent(self) -> None:
+        self.assertIsNone(self._evaluate())
+
+    def test_superpowers_pointer_records_seen(self) -> None:
+        self._write_installed({"superpowers@anthropic": [{"version": "1.0.0"}]})
+        self._evaluate()
+        text = (self.repo / ".agent-mode.local").read_text(encoding="utf-8")
+        self.assertIn("agent_env_doctor_superpowers_pointer_seen=true", text)
+
+    def test_superpowers_pointer_shown_only_once(self) -> None:
+        self._write_installed({"superpowers@anthropic": [{"version": "1.0.0"}]})
+        self._evaluate()  # first sighting: records seen
+        self.assertIsNone(self._evaluate())
+
+    def test_superpowers_pointer_seen_marker_set_directly_also_silences(self) -> None:
+        self._write_installed({"superpowers@anthropic": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_superpowers_pointer_seen=true\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_superpowers_pointer_recording_preserves_crlf_dangerous_line(self) -> None:
+        self._write_installed({"superpowers@anthropic": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_bytes(b"dangerous\r\n")
+        self._evaluate()
+        raw = (self.repo / ".agent-mode.local").read_bytes()
+        self.assertIn(b"dangerous\r\n", raw)
+        self.assertIn(b"agent_env_doctor_superpowers_pointer_seen=true", raw)
+
+    def test_superpowers_pointer_coexists_with_dormant_plugin_nudge(self) -> None:
+        # The two "seen" mechanisms live in the same file and must not
+        # clobber each other on a single rewrite.
+        self._write_installed(
+            {
+                "superpowers@anthropic": [{"version": "1.0.0"}],
+                "storystore@bento": [{"version": "1.0.0"}],
+            }
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("superpowers is also installed", context)
+        self.assertIn("storystore", context)
+        text = (self.repo / ".agent-mode.local").read_text(encoding="utf-8")
+        self.assertIn("agent_env_doctor_superpowers_pointer_seen=true", text)
+        self.assertIn("agent_env_doctor_seen=storystore", text)
+
+        second_context = self._context(self._evaluate())
+        self.assertNotIn("superpowers is also installed", second_context)
+        self.assertIn("storystore dormant — decision pending", second_context)
+
 
 if __name__ == "__main__":
     unittest.main()

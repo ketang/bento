@@ -118,6 +118,20 @@ class InstallDocPluginListMatchesManifest(unittest.TestCase):
         )
 
 
+class SuperpowersCoexistenceSectionExists(unittest.TestCase):
+    """(bento-rdtn.10) installing-plugins.md documents the launch-work/
+    land-work vs. superpowers precedence, so the doctor's one-time pointer
+    (agent-env-doctor.py's check_superpowers_coexistence) has somewhere to
+    send an agent."""
+
+    def test_coexistence_section_names_the_superseded_skills(self) -> None:
+        body = section(read("docs/installing-plugins.md"), "Coexistence with superpowers")
+        self.assertIn("launch-work", body)
+        self.assertIn("using-git-worktrees", body)
+        self.assertIn("land-work", body)
+        self.assertIn("finishing-a-development-branch", body)
+
+
 class ReadmeLayoutMatchesPluginsTree(unittest.TestCase):
     """(c) README's plugins-layout snippet matches the actual plugins/ tree."""
 
