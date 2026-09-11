@@ -46,6 +46,7 @@ import shutil
 import subprocess
 import sys
 import time
+from datetime import date
 from pathlib import Path
 
 # Bounded read: no single file contributes more than this many bytes to a
@@ -67,6 +68,8 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
         "agent_env_doctor",
         "agent_env_doctor_skip_plugin",
         "agent_env_doctor_preview_max_age_hours",
+        "agent_env_doctor_seen",
+        "agent_env_doctor_remind_after",
     }
 )
 
@@ -471,23 +474,84 @@ def installed_plugins(plugins_file: Path) -> set[str]:
     return {key.split("@", 1)[0] for key in plugins if isinstance(key, str) and key}
 
 
-def check_dormant_plugins(
-    root: Path, installed: set[str], skip: frozenset[str] = frozenset()
-) -> list[str]:
-    warnings: list[str] = []
+def _dormant_plugin_decisions(
+    root: Path,
+    installed: set[str],
+    skip: frozenset[str],
+    seen: frozenset[str],
+    remind_after: dict[str, str],
+    today: date,
+) -> list[dict]:
+    """One decision per dormant, non-skipped installed plugin: whether to
+    show the full first-sighting nudge (display="full"), the collapsed
+    one-liner (display="short"), or nothing at all (fully suppressed by a
+    future remind_after date — simply absent from the returned list).
+
+    An unparseable remind_after date fails safe toward re-showing the full
+    nudge (treated as already expired) rather than silently suppressing it
+    forever.
+    """
+    decisions: list[dict] = []
     for precond in PLUGIN_PRECONDITIONS:
-        if precond["plugin"] not in installed:
-            continue
-        if precond["plugin"] in skip:
+        plugin = precond["plugin"]
+        if plugin not in installed or plugin in skip:
             continue
         target = root / precond["path"]
         present = target.is_dir() if precond["kind"] == "dir" else target.is_file()
-        if not present:
-            warnings.append(
-                f"{precond['plugin']} is installed but dormant — {precond['path']} "
-                f"is missing; {precond['activate']}"
-            )
-    return warnings
+        if present:
+            continue
+
+        remind_date_str = remind_after.get(plugin)
+        if remind_date_str:
+            try:
+                remind_date = date.fromisoformat(remind_date_str)
+            except ValueError:
+                remind_date = None
+            if remind_date is not None and today < remind_date:
+                continue
+            display = "full"
+        elif plugin in seen:
+            display = "short"
+        else:
+            display = "full"
+
+        decisions.append(
+            {
+                "plugin": plugin,
+                "path": precond["path"],
+                "activate": precond["activate"],
+                "display": display,
+            }
+        )
+    return decisions
+
+
+def _format_dormant_plugin_warning(decision: dict) -> str:
+    plugin = decision["plugin"]
+    if decision["display"] == "short":
+        return f"{plugin} dormant — decision pending, see .agent-mode.local"
+    return (
+        f"{plugin} is installed but dormant — {decision['path']} is missing; "
+        f"{decision['activate']}. Options (edit .agent-mode.local): wire it "
+        f"now ({decision['activate']}); skip permanently — "
+        f"agent_env_doctor_skip_plugin={plugin}; remind later — "
+        f"agent_env_doctor_remind_after={plugin}:<YYYY-MM-DD>"
+    )
+
+
+def check_dormant_plugins(
+    root: Path,
+    installed: set[str],
+    skip: frozenset[str] = frozenset(),
+    seen: frozenset[str] = frozenset(),
+    remind_after: dict[str, str] | None = None,
+    today: date | None = None,
+) -> list[str]:
+    resolved_today = today if today is not None else date.today()
+    decisions = _dormant_plugin_decisions(
+        root, installed, skip, seen, remind_after or {}, resolved_today
+    )
+    return [_format_dormant_plugin_warning(d) for d in decisions]
 
 
 # --- check 4: .agent-mode.local ---------------------------------------------
@@ -534,6 +598,43 @@ def check_agent_mode(root: Path) -> list[str]:
                     warnings.append(
                         f".agent-mode.local: unknown plugin '{name}' in "
                         f"agent_env_doctor_skip_plugin — it toggles nothing"
+                    )
+        elif key == "agent_env_doctor_seen":
+            known_plugins = {precond["plugin"] for precond in PLUGIN_PRECONDITIONS}
+            for name in (n.strip() for n in value.split(",")):
+                if name and name not in known_plugins:
+                    warnings.append(
+                        f".agent-mode.local: unknown plugin '{name}' in "
+                        f"agent_env_doctor_seen — it toggles nothing"
+                    )
+        elif key == "agent_env_doctor_remind_after":
+            known_plugins = {precond["plugin"] for precond in PLUGIN_PRECONDITIONS}
+            for entry in (e.strip() for e in value.split(",")):
+                if not entry:
+                    continue
+                if ":" not in entry:
+                    warnings.append(
+                        f".agent-mode.local: '{entry}' in "
+                        "agent_env_doctor_remind_after is not <plugin>:<date> — it "
+                        "toggles nothing"
+                    )
+                    continue
+                name, _, date_str = entry.partition(":")
+                name = name.strip()
+                date_str = date_str.strip()
+                if name and name not in known_plugins:
+                    warnings.append(
+                        f".agent-mode.local: unknown plugin '{name}' in "
+                        f"agent_env_doctor_remind_after — it toggles nothing"
+                    )
+                    continue
+                try:
+                    date.fromisoformat(date_str)
+                except ValueError:
+                    warnings.append(
+                        f".agent-mode.local: '{date_str}' in "
+                        f"agent_env_doctor_remind_after={name}:{date_str} is not a "
+                        "YYYY-MM-DD date — it toggles nothing"
                     )
     return warnings
 
@@ -847,6 +948,119 @@ def _skipped_plugins(root: Path) -> frozenset[str]:
     return frozenset(skipped)
 
 
+def _seen_plugins(root: Path) -> frozenset[str]:
+    """Plugin names in .agent-mode.local's agent_env_doctor_seen — plugins
+    that have already shown the full first-sighting dormancy nudge at least
+    once, so subsequent sessions collapse it to a one-line reminder."""
+    text = _read_text_bounded(root / ".agent-mode.local")
+    if text is None:
+        return frozenset()
+    seen: set[str] = set()
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() != "agent_env_doctor_seen":
+            continue
+        seen.update(name.strip() for name in value.split(",") if name.strip())
+    return frozenset(seen)
+
+
+def _remind_after_dates(root: Path) -> dict[str, str]:
+    """{plugin: "YYYY-MM-DD", ...} from .agent-mode.local's
+    agent_env_doctor_remind_after=<plugin>:<date>[,<plugin>:<date>...]."""
+    text = _read_text_bounded(root / ".agent-mode.local")
+    if text is None:
+        return {}
+    dates: dict[str, str] = {}
+    for line in text.splitlines():
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in stripped:
+            continue
+        key, _, value = stripped.partition("=")
+        if key.strip() != "agent_env_doctor_remind_after":
+            continue
+        for entry in value.split(","):
+            entry = entry.strip()
+            if not entry or ":" not in entry:
+                continue
+            name, _, date_str = entry.partition(":")
+            name = name.strip()
+            date_str = date_str.strip()
+            if name and date_str:
+                dates[name] = date_str
+    return dates
+
+
+def _record_dormant_plugin_decisions(root: Path, decisions: list[dict]) -> None:
+    """After showing the full nudge for a plugin (first sighting, or a
+    remind_after date that has now passed), record that in .agent-mode.local:
+    add the plugin to agent_env_doctor_seen and drop it from
+    agent_env_doctor_remind_after, so later sessions collapse to the short
+    form instead of re-showing the full nudge every time. Never raises: a
+    write failure here must not block session start, matching every other
+    check's contract."""
+    newly_full = [d["plugin"] for d in decisions if d["display"] == "full"]
+    if not newly_full:
+        return
+
+    config = root / ".agent-mode.local"
+    try:
+        seen = set(_seen_plugins(root)) | set(newly_full)
+        remind_after = _remind_after_dates(root)
+        for plugin in newly_full:
+            remind_after.pop(plugin, None)
+
+        # CRLF-preserving read, matching check_agent_mode's own semantics: a
+        # broken "dangerous\r\n" line (inert to the launcher's exact bash
+        # `case` match, which never sees a match against "dangerous\r") must
+        # not be silently normalized to an active "dangerous" line by this
+        # rewrite. Unmodified lines are passed through as their raw,
+        # unstripped selves; only our own newly written lines use a plain
+        # "\n" terminator.
+        text = _read_agent_mode_text(config) or ""
+        lines = text.split("\n")
+        if text.endswith("\n") and lines and lines[-1] == "":
+            lines = lines[:-1]
+        new_lines: list[str] = []
+        seen_written = False
+        remind_written = False
+        for line in lines:
+            stripped = line.strip()
+            key = stripped.partition("=")[0].strip() if "=" in stripped else None
+            if key == "agent_env_doctor_seen":
+                if seen and not seen_written:
+                    new_lines.append(f"agent_env_doctor_seen={','.join(sorted(seen))}")
+                    seen_written = True
+                continue
+            if key == "agent_env_doctor_remind_after":
+                if remind_after and not remind_written:
+                    new_lines.append(
+                        "agent_env_doctor_remind_after="
+                        + ",".join(f"{p}:{d}" for p, d in sorted(remind_after.items()))
+                    )
+                    remind_written = True
+                continue
+            new_lines.append(line)
+        if seen and not seen_written:
+            new_lines.append(f"agent_env_doctor_seen={','.join(sorted(seen))}")
+        if remind_after and not remind_written:
+            new_lines.append(
+                "agent_env_doctor_remind_after="
+                + ",".join(f"{p}:{d}" for p, d in sorted(remind_after.items()))
+            )
+
+        new_text = "\n".join(new_lines)
+        if new_text and not new_text.endswith("\n"):
+            new_text += "\n"
+        tmp = config.with_name(config.name + ".tmp")
+        tmp.write_text(new_text, encoding="utf-8")
+        tmp.replace(config)
+    except OSError:
+        pass
+
+
 def collect_warnings(
     root: Path,
     env: dict,
@@ -854,13 +1068,27 @@ def collect_warnings(
     home: Path,
     tmp_root: Path,
     now: float | None = None,
+    today: date | None = None,
+    dormant_plugin_warnings: list[str] | None = None,
 ) -> list[str]:
+    """dormant_plugin_warnings lets a caller (evaluate()) pass in warnings
+    derived from a decision list it already computed once, instead of this
+    function re-deriving the identical decisions from disk a second time
+    (bento-rdtn.2 review) -- computed fresh here only when omitted, e.g. by
+    a caller that only wants collect_warnings' aggregate result."""
     warnings: list[str] = []
     warnings.extend(check_imports(root))
     warnings.extend(check_hook_binaries(root, env))
     warnings.extend(
-        check_dormant_plugins(
-            root, installed_plugins(plugins_file), _skipped_plugins(root)
+        dormant_plugin_warnings
+        if dormant_plugin_warnings is not None
+        else check_dormant_plugins(
+            root,
+            installed_plugins(plugins_file),
+            _skipped_plugins(root),
+            _seen_plugins(root),
+            _remind_after_dates(root),
+            today,
         )
     )
     warnings.extend(check_agent_mode(root))
@@ -884,11 +1112,13 @@ def evaluate(
     plugins_file: Path | None = None,
     tmp_root: Path | None = None,
     now: float | None = None,
+    today: date | None = None,
 ) -> dict | None:
     """Return a SessionStart additionalContext payload, or None to stay silent."""
     environ = os.environ if env is None else env
     resolved_home = home or Path(environ.get("HOME", str(Path.home())))
     resolved_tmp_root = tmp_root if tmp_root is not None else Path("/tmp")
+    resolved_today = today if today is not None else date.today()
 
     cwd = hook_input.get("cwd") or ""
     if not cwd or not os.path.isdir(cwd):
@@ -899,9 +1129,30 @@ def evaluate(
         return None
 
     pfile = plugins_file if plugins_file is not None else _plugins_file(resolved_home, environ)
-    warnings = collect_warnings(
-        root, environ, pfile, resolved_home, resolved_tmp_root, now=now
+
+    # Computed once and reused for both the warnings this session sees and
+    # the decisions recorded to .agent-mode.local, so the two can never
+    # silently desync (bento-rdtn.2 review).
+    dormant_decisions = _dormant_plugin_decisions(
+        root,
+        installed_plugins(pfile),
+        _skipped_plugins(root),
+        _seen_plugins(root),
+        _remind_after_dates(root),
+        resolved_today,
     )
+    dormant_plugin_warnings = [_format_dormant_plugin_warning(d) for d in dormant_decisions]
+
+    warnings = collect_warnings(
+        root, environ, pfile, resolved_home, resolved_tmp_root, now=now, today=resolved_today,
+        dormant_plugin_warnings=dormant_plugin_warnings,
+    )
+
+    # Record dormant-plugin decisions (first sighting or remind-after
+    # expiry) so later sessions collapse the nudge, regardless of whether
+    # any *other* check also warned this session.
+    _record_dormant_plugin_decisions(root, dormant_decisions)
+
     if not warnings:
         return None
 
