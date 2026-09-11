@@ -1420,6 +1420,180 @@ def lookup_jira_status(
     return str(name) if name else None
 
 
+# ---------------------------------------------------------------------------
+# Bulk tracker-mismatch check (bento-rdtn.9)
+#
+# Unlike correlate_branch (one tracker call per review_required branch, opt-in
+# via --correlate-branches), this tags every <prefix>-<id>-shaped branch --
+# any classification -- with issue_status via a single bulk query, so a
+# branch whose issue was never claimed (open) or was closed long ago (stale)
+# is visible without a per-branch round trip.
+# ---------------------------------------------------------------------------
+
+# Same regex pair launch-work-bootstrap.py's --claim auto and
+# land-work-verify-landing.py's --issue auto use, kept in sync by convention
+# (each skill's scripts/ is copied standalone into the generated plugin).
+_BRANCH_ISSUE_ID_RE = re.compile(r"^([a-z]+-[a-z0-9.]+)")
+_BRANCH_SUBISSUE_RE = re.compile(r"^-(\d+)(?:-|$)")
+
+
+def resolve_branch_issue_id(branch: str, tracker: str) -> str | None:
+    """Extract the tracker issue id implied by a branch name, or None if the
+    branch doesn't look tagged with one at all.
+
+    Beads ids keep the dotted-subissue reconstruction ("bento-rdtn-8-slug" ->
+    "bento-rdtn.8") other bento scripts use. Other trackers fall back to the
+    tracker's own DEFAULT_PATTERNS convention (e.g. a bare issue number for
+    GitHub) applied only within the matched leading <prefix>-<id> token, not
+    the whole branch name -- a bare `re.search` across the entire name would
+    also match an unrelated digit run anywhere in it (a date, a version), far
+    past where any human-authored id would appear.
+    """
+    match = _BRANCH_ISSUE_ID_RE.match(branch)
+    if not match:
+        return None
+    if tracker == TRACKER_BEADS:
+        issue_id = match.group(1)
+        remainder = branch[match.end():]
+        sub_match = _BRANCH_SUBISSUE_RE.match(remainder)
+        if sub_match:
+            issue_id = f"{issue_id}.{sub_match.group(1)}"
+        return issue_id
+    pattern = default_issue_pattern(tracker)
+    if not pattern:
+        return None
+    return extract_issue_id(match.group(1), pattern)
+
+
+def bulk_beads_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
+    """One `bd list --all --json` call -> {issue_id: status}. Never raises;
+    a failure is reported as a warning string, not an exception."""
+    if not shutil.which("bd"):
+        return None, "bd list --all --json skipped: bd not found on PATH"
+    result = subprocess.run(
+        ["bd", "list", "--all", "--json"], cwd=cwd, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return None, f"bd list --all --json failed: {detail}"
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None, "bd list --all --json returned unparseable JSON"
+    if not isinstance(parsed, list):
+        return None, "bd list --all --json returned an unexpected shape (not a list)"
+    statuses: dict[str, str] = {}
+    for item in parsed:
+        if isinstance(item, dict) and item.get("id") and item.get("status"):
+            statuses[str(item["id"])] = str(item["status"])
+    return statuses, None
+
+
+GH_BULK_ISSUE_LIST_LIMIT = 1000
+
+
+def bulk_gh_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
+    """One `gh issue list --state all --json number,state` call ->
+    {issue_number: state}. Never raises; a failure is a warning string."""
+    if not shutil.which("gh"):
+        return None, "gh issue list skipped: gh not found on PATH"
+    result = subprocess.run(
+        [
+            "gh", "issue", "list", "--state", "all", "--json", "number,state",
+            "--limit", str(GH_BULK_ISSUE_LIST_LIMIT),
+        ],
+        cwd=cwd, capture_output=True, text=True, check=False,
+    )
+    if result.returncode != 0:
+        detail = (result.stderr or result.stdout or "").strip()
+        return None, f"gh issue list failed: {detail}"
+    try:
+        parsed = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None, "gh issue list returned unparseable JSON"
+    if not isinstance(parsed, list):
+        return None, "gh issue list returned an unexpected shape (not a list)"
+    statuses: dict[str, str] = {}
+    for item in parsed:
+        if isinstance(item, dict) and item.get("number") is not None and item.get("state"):
+            statuses[str(item["number"])] = str(item["state"]).lower()
+    truncation_warning = (
+        f"gh issue list result may be truncated at the --limit "
+        f"{GH_BULK_ISSUE_LIST_LIMIT} cap ({len(parsed)} issues returned); "
+        "older/lower-numbered issues may be missing from tracker_mismatch "
+        "for repos with more issues than that"
+        if len(parsed) >= GH_BULK_ISSUE_LIST_LIMIT
+        else None
+    )
+    return statuses, truncation_warning
+
+
+def bulk_tracker_statuses(tracker: str, cwd: Path) -> tuple[dict[str, str] | None, str | None]:
+    if tracker == TRACKER_BEADS:
+        return bulk_beads_statuses(cwd)
+    if tracker == TRACKER_GH:
+        return bulk_gh_statuses(cwd)
+    return None, None
+
+
+def suggest_tracker_mismatch_action(tracker: str, issue_id: str, status: str) -> str:
+    if status == "open":
+        claim_cmd = (
+            f"bd update {issue_id} --claim"
+            if tracker == TRACKER_BEADS
+            else f"gh issue edit {issue_id} --add-assignee @me"
+        )
+        return f"issue {issue_id} is open (never claimed) -- {claim_cmd}, or delete this branch if abandoned"
+    close_cmd = (
+        f'bd close {issue_id} --reason "<sha> landed"'
+        if tracker == TRACKER_BEADS
+        else f"gh issue reopen {issue_id}"
+    )
+    return (
+        f"issue {issue_id} is already closed but this branch still exists -- confirm the work "
+        f"landed and delete the branch, or {close_cmd} if the closure was premature"
+    )
+
+
+def annotate_branches_with_tracker_mismatch(
+    branches: list[dict[str, object]],
+    tracker: str,
+    cwd: Path,
+    warnings: list[str],
+) -> list[dict[str, object]] | None:
+    """Report-only: tags every branch whose name resolves to a tracker issue
+    id with issue_status (open/in_progress/closed/unknown), and returns the
+    open/closed mismatches. Returns None (never []) when the tracker isn't
+    beads or github, or the bulk query itself failed -- distinct from "ran
+    the query and found zero mismatches"."""
+    if tracker not in (TRACKER_BEADS, TRACKER_GH):
+        return None
+
+    bulk_statuses, bulk_error = bulk_tracker_statuses(tracker, cwd)
+    if bulk_error:
+        warnings.append(bulk_error)
+    if bulk_statuses is None:
+        return None
+
+    mismatches: list[dict[str, object]] = []
+    for branch in branches:
+        issue_id = resolve_branch_issue_id(str(branch["name"]), tracker)
+        if issue_id is None:
+            continue
+        status = bulk_statuses.get(issue_id, "unknown")
+        branch["issue_status"] = status
+        if status in ("open", "closed"):
+            mismatches.append(
+                {
+                    "branch": branch["name"],
+                    "issue_id": issue_id,
+                    "issue_status": status,
+                    "suggested_action": suggest_tracker_mismatch_action(tracker, issue_id, status),
+                }
+            )
+    return mismatches
+
+
 def tracker_lookup_for(tracker: str):
     if tracker == TRACKER_BEADS:
         return lookup_beads_status
@@ -1622,17 +1796,22 @@ def main() -> int:
 
             enriched_worktrees.append(wt_entry)
 
+        resolved_tracker = args.tracker
+        if resolved_tracker == "auto":
+            resolved_tracker = detect_tracker(repo_root)
+
         if args.correlate_branches:
-            tracker = args.tracker
-            if tracker == "auto":
-                tracker = detect_tracker(repo_root)
-            issue_pattern = args.issue_pattern or default_issue_pattern(tracker)
+            issue_pattern = args.issue_pattern or default_issue_pattern(resolved_tracker)
             for branch in branches:
                 if branch["classification"] != "review_required":
                     continue
                 branch["correlation"] = correlate_branch(
-                    branch, primary_branch, tracker, issue_pattern, repo_root,
+                    branch, primary_branch, resolved_tracker, issue_pattern, repo_root,
                 )
+
+        tracker_mismatch = annotate_branches_with_tracker_mismatch(
+            branches, resolved_tracker, repo_root, warnings,
+        )
 
         untracked_debris = (
             None
@@ -1689,6 +1868,7 @@ def main() -> int:
             "stashes": stashes,
             "local_branches": branches,
             "untracked_debris": untracked_debris,
+            "tracker_mismatch": tracker_mismatch,
             "summary": summary,
             "apply_mode": args.apply,
             "applied_actions": applied_actions,

@@ -190,6 +190,60 @@ gitignore`, since the helper cannot tell intentional in-progress work from
 abandoned debris by size or age alone. Override the thresholds with
 `--debris-min-size-mb` and `--debris-min-age-days`.
 
+## Tracker Mismatch (`tracker_mismatch`)
+
+Always runs (regardless of `--correlate-branches`) whenever the resolved
+tracker is `beads` or `gh`; `null` when the tracker is `jira`, `none`, or the
+bulk query itself failed (a warning is added to `warnings` in that case) --
+distinct from an empty list, which means the query ran and found no
+mismatches. Unlike `correlation` (one tracker call per `review_required`
+branch, opt-in), this does exactly one bulk call regardless of branch count
+(`bd list --all --json`, or `gh issue list --state all --json
+number,state`), so it costs nothing extra to leave on.
+
+Every local branch whose name resolves to a tracker issue id (beads: the
+same `<prefix>-<id>` shape with dotted-subissue reconstruction that
+`launch-work-bootstrap.py --claim auto` and `land-work-verify-landing.py
+--issue auto` use, e.g. `bento-rdtn-8-slug` -> `bento-rdtn.8`; other trackers:
+the tracker's own `DEFAULT_PATTERNS`) gets an `issue_status` field on its
+`local_branches` record: `open`, `in_progress`, `closed`, or `unknown` (the
+tracker doesn't recognize the extracted id). A branch whose name doesn't
+resolve to any id gets no `issue_status` field at all.
+
+`tracker_mismatch` lists only the `open` and `closed` branches -- the ones
+worth a second look, since `in_progress` is the expected state for a live
+branch and `unknown` is usually name-regex noise, not a real mismatch:
+
+```json
+"tracker_mismatch": [
+  {
+    "branch": "proj-1-unclaimed",
+    "issue_id": "proj-1",
+    "issue_status": "open",
+    "suggested_action": "issue proj-1 is open (never claimed) -- bd update proj-1 --claim, or delete this branch if abandoned"
+  }
+]
+```
+
+Report only -- no `--apply` mode reads `issue_status` or `tracker_mismatch`.
+Claiming, closing, or deleting is a human/agent call, same as `correlation`.
+
+The id extracted from a branch name for a non-beads tracker is searched only
+within the leading `<prefix>-<id>` token, not the whole branch name (a bare
+`re.search` for digits anywhere in the name would also match an unrelated
+date or version number past where a real id would appear). A branch that
+happens to follow the `<prefix>-<number>-...` shape for an unrelated reason
+(e.g. `hotfix-42-notes` when 42 isn't actually an issue number) can still
+coincidentally collide with a real tracker id — this is an inherent
+limitation of guessing an id from a branch name, shared with `--claim auto`
+and `--issue auto` elsewhere in bento; always review before acting.
+`bd list --all --json`/`gh issue list` failing, or `bd`/`gh` missing from
+`PATH`, is reported as a `warnings` entry and yields `tracker_mismatch: null`
+(and no `issue_status` field on any branch) rather than a crash. A `gh`
+result at the `--limit` cap (`GH_BULK_ISSUE_LIST_LIMIT`, 1000) also adds a
+truncation warning, since older/lower-numbered issues may be missing from a
+repo with more issues than that.
+
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware
