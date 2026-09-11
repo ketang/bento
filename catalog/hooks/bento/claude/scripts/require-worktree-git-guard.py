@@ -148,9 +148,14 @@ def _find_git_segments(command: str) -> list[str]:
 
 
 def _hook_bypass_reason(git_tokens: list[str]) -> str | None:
+    subcommand, rest, configs = _parse_git_invocation(git_tokens)
     if "--no-verify" in git_tokens:
         return "'--no-verify' skips git hooks"
-    _subcommand, _rest, configs = _parse_git_invocation(git_tokens)
+    # '-n' is the documented short alias for --no-verify, but only for
+    # 'commit' -- git overloads -n for other meanings elsewhere (e.g. 'git
+    # log -n 5', 'git branch -n'), so this must not fire for those.
+    if subcommand == "commit" and "-n" in rest:
+        return "'-n' (short for --no-verify) skips git hooks"
     for value in configs:
         if value.split("=", 1)[0].strip() == "core.hooksPath":
             return f"'-c {value}' overrides core.hooksPath, skipping git hooks"
@@ -163,14 +168,23 @@ def _mutation_reason(git_tokens: list[str], primary_branch: str | None) -> str |
         return None
     if subcommand in _MUTATING_SUBCOMMANDS:
         return f"'git {subcommand}' mutates the checkout"
-    if subcommand == "checkout" and primary_branch and primary_branch in rest:
-        return f"'git checkout {primary_branch}' switches the primary checkout's own branch"
+    if subcommand == "checkout" and primary_branch:
+        # 'git checkout [<tree-ish>] -- <pathspec>...' restores files from a
+        # ref (or the index); it does not switch the current branch. The
+        # presence of '--' anywhere marks this form, regardless of whether
+        # the ref name appears before it -- 'git checkout main -- file.txt'
+        # uses "main" as the source tree-ish, not as a branch to switch to.
+        if "--" not in rest and primary_branch in rest:
+            return f"'git checkout {primary_branch}' switches the primary checkout's own branch"
     if subcommand == "branch" and primary_branch and primary_branch in rest and (
         "-D" in rest or "--delete" in rest or "-d" in rest
     ):
         return f"'git branch -D {primary_branch}' deletes the primary branch"
-    if subcommand == "push" and any(arg == "--force" or arg == "-f" or arg.startswith("--force") for arg in rest):
-        return "'git push --force*' force-pushes"
+    if subcommand == "push" and any(
+        arg == "--force" or arg == "-f" or arg.startswith("--force") or arg.startswith("+")
+        for arg in rest
+    ):
+        return "'git push --force*' (or a leading '+' force-push refspec) force-pushes"
     return None
 
 
@@ -193,6 +207,14 @@ def main() -> int:
         if LAND_WORK_MARKER in command:
             return 0
 
+        # Cheap, git-free check first: most Bash calls in a repo aren't git
+        # invocations at all, and every git call below costs a subprocess --
+        # skip all of them (repo-root resolution included) unless this
+        # command actually contains one.
+        git_segments = _find_git_segments(command)
+        if not git_segments:
+            return 0
+
         repo_root = _repo_root(cwd) if cwd else None
         if repo_root is None:
             return 0
@@ -201,7 +223,7 @@ def main() -> int:
         is_primary = _is_primary_checkout(repo_root)
         primary_branch = _detect_primary_branch(repo_root) if is_primary else None
 
-        for git_tokens in _find_git_segments(command):
+        for git_tokens in git_segments:
             bypass_reason = _hook_bypass_reason(git_tokens)
             if bypass_reason and agent_mode.get("hook_bypass") != "allow":
                 print(

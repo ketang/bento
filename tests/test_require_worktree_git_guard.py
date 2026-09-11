@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -201,6 +202,53 @@ class RequireWorktreeGitGuardTest(unittest.TestCase):
         repo = self._init_primary_repo()
         result = self.run_hook("echo hi && git merge feature", repo)
         self.assertEqual(result.returncode, 2)
+
+    def test_checkout_restoring_a_file_from_primary_branch_is_allowed(self) -> None:
+        # Code review: 'git checkout main -- file.txt' restores a file from
+        # the primary branch's tree; it does not switch the current branch,
+        # and must not be blocked as a branch switch.
+        repo = self._init_primary_repo()
+        result = self.run_hook("git checkout main -- README.md", repo)
+        self.assertEqual(result.returncode, 0)
+
+    def test_commit_short_no_verify_flag_is_denied(self) -> None:
+        # Code review: '-n' is the documented short alias for --no-verify on
+        # git commit specifically.
+        repo = self._init_primary_repo()
+        result = self.run_hook("git commit -n -m x", repo)
+        self.assertEqual(result.returncode, 2)
+
+    def test_short_no_verify_flag_on_unrelated_subcommand_is_not_misread(self) -> None:
+        # '-n' means something else entirely for other subcommands (e.g.
+        # 'git log -n 5' limits output) and must not be misread as
+        # --no-verify there.
+        repo = self._init_primary_repo()
+        result = self.run_hook("git log -n 5", repo)
+        self.assertEqual(result.returncode, 0)
+
+    def test_plus_refspec_force_push_is_denied(self) -> None:
+        # Code review: 'git push origin +feature:main' force-pushes via the
+        # leading '+' refspec marker, without any --force flag.
+        repo = self._init_primary_repo()
+        result = self.run_hook("git push origin +feature:main", repo)
+        self.assertEqual(result.returncode, 2)
+
+    def test_non_git_command_never_shells_out_to_git(self) -> None:
+        # Code review: a non-git command must skip repo/git resolution
+        # entirely (no subprocess git calls at all), not just skip the block
+        # decision. Prove it with a fake `git` on PATH that leaves a marker
+        # file if invoked, ahead of the real git in PATH.
+        repo = self._init_primary_repo()
+        marker = self.root / "git-was-called"
+        fake_bin = self.root / "fakebin"
+        fake_bin.mkdir()
+        fake_git = fake_bin / "git"
+        fake_git.write_text(f"#!/bin/sh\ntouch '{marker}'\nexit 1\n", encoding="utf-8")
+        fake_git.chmod(0o755)
+        env = {**os.environ, "PATH": f"{fake_bin}{os.pathsep}{os.environ.get('PATH', '')}"}
+        payload = json.dumps({"tool_name": "Bash", "cwd": str(repo), "tool_input": {"command": "ls -la"}})
+        subprocess.run([str(HOOK_SCRIPT)], input=payload, cwd=repo, capture_output=True, text=True, env=env)
+        self.assertFalse(marker.exists(), "the guard shelled out to git for a non-git command")
 
     def test_git_merge_as_a_branch_name_substring_is_not_falsely_matched(self) -> None:
         # A branch literally named "merge-tool" must not trip the checkout
