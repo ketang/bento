@@ -217,6 +217,27 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
         self.assertFalse(detector("/home/u/projects/codex-related/plugin"))
         self.assertFalse(detector("/home/u/.claude-codex/plugin"))
 
+    def _git_guard_symlink_path(self) -> Path:
+        return self._stable_symlink_dir() / "require-worktree-git-guard.py"
+
+    def test_registers_git_guard_under_bash_matcher(self) -> None:
+        self.assertEqual(self._run(), 0)
+
+        settings = self._read_settings()
+        pre_tool_use = settings["hooks"]["PreToolUse"]
+        bash_entries = [entry for entry in pre_tool_use if entry.get("matcher") == "Bash"]
+        commands = [hook["command"] for entry in bash_entries for hook in entry["hooks"]]
+        self.assertIn(str(self._git_guard_symlink_path()), commands)
+
+    def test_git_guard_symlink_created_on_first_run(self) -> None:
+        self.assertEqual(self._run(), 0)
+        stable = self._git_guard_symlink_path()
+        self.assertTrue(stable.is_symlink(), f"Expected symlink at {stable}")
+        self.assertEqual(
+            Path(os.readlink(stable)),
+            self.plugin_root / "hooks" / "scripts" / "require-worktree-git-guard.py",
+        )
+
     def test_malformed_settings_is_silent_no_op(self) -> None:
         path = self._settings_path()
         path.parent.mkdir(parents=True, exist_ok=True)

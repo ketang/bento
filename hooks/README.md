@@ -28,8 +28,9 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
 ## Available catalog hooks
 
 - `bento` — Bash auto-approval (`PreToolUse`), worktree-permission seeding, the
-  `require-worktree` registration hook, and the `agent-env-doctor`
-  (`SessionStart`). The doctor is advisory and non-blocking: on session start it
+  `require-worktree` registration hook (which also registers a `require-
+  worktree-git-guard` `PreToolUse`/`Bash` hook — see below), and the
+  `agent-env-doctor` (`SessionStart`). The doctor is advisory and non-blocking: on session start it
   scans the repo for agent wiring that is silently broken — dangling/empty
   `@import`s in `CLAUDE.md`/`AGENTS.md`/`GEMINI.md`, registered hook commands
   whose binary is missing, dormant installed plugins, unrecognized
@@ -55,6 +56,30 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
   `--dangerously-skip-permissions` / `--dangerously-bypass-approvals-and-sandbox`
   at process launch, outside of any hook). The doctor recognizes both
   grammars in the same file and only flags lines that match neither.
+
+  `require-worktree-git-guard` (registered by the same `register-require-
+  worktree-hook.py` SessionStart hook, under `PreToolUse`/`Bash`) is a
+  mechanical backstop for the "never mutate outside land-work" doctrine
+  (bento-rdtn.15): it blocks (exit 2) `git merge`/`rebase`/`reset`/`clean`,
+  `git checkout <primary-branch>`, `git branch -D <primary-branch>`, and
+  `git push --force*` whenever the Bash command's cwd resolves to the
+  **primary checkout** (never a linked worktree) — so this doesn't depend on
+  the Bash permission allowlist, which is friction control, not policy.
+  Independently of checkout, it also blocks `--no-verify` and a `-c
+  core.hooksPath=...`/`--config core.hooksPath=...` override on any git
+  invocation, since both silently skip hooks. A command containing the
+  literal marker `BENTO_LAND_WORK=1` is treated as an authorized land-work/
+  launch-work operation and skipped entirely — `land-work/scripts/land.py`
+  and the individual `land-work-*.py` scripts never need it themselves (their
+  git mutations run as internal subprocess calls, never as a separate Bash
+  tool call), so this is only for a raw git command that genuinely must run
+  outside those scripts. Add `require_worktree=false` to `.agent-mode.local`
+  to disable the primary-checkout mutation rule for a repo (the same switch
+  `require-worktree.sh` uses); add `hook_bypass=allow` to disable the
+  `--no-verify`/`core.hooksPath` rule specifically. Like `require-
+  worktree.sh`, this is a regex/token-level guard over the command string,
+  not a full shell parser — it fails open (never blocks) on any git or parse
+  error.
 - `session-id` — persists the Claude Code session id and a per-session scratch
   directory (`SessionStart`).
 - `telemetry` — opt-in Bash telemetry capture.

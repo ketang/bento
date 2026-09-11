@@ -64,3 +64,12 @@ one `key=value` pair per line, with `#` comments ignored. If the file is absent
 or does not contain `require_worktree=false`, the guard enforces the default.
 The hook does not modify `.gitignore`; projects that use the opt-out should
 ignore `.agent-mode.local` themselves if they do not want it committed.
+
+The same `require_worktree=false` opt-out also covers the sibling
+`require-worktree-git-guard` `PreToolUse`/`Bash` hook (bento-rdtn.15), which
+blocks branch-mutating git commands (`merge`, `rebase`, `reset`, `clean`,
+`checkout <primary-branch>`, `branch -D <primary-branch>`, `push --force*`)
+run directly in the primary checkout, and separately blocks `--no-verify`/
+`-c core.hooksPath=...` on any git invocation (opt out of that one with
+`hook_bypass=allow`) — see `hooks/README.md` for the full contract and the
+`BENTO_LAND_WORK=1` escape hatch.
