@@ -99,6 +99,8 @@ class Driver:
         if "cached" in entry:
             line += " [cached]" if entry["cached"] else " [executed]"
         print(line, file=sys.stderr)
+        if entry.get("warning"):
+            print(f"  warning: {entry['warning']}", file=sys.stderr)
 
     def _run_script(self, step: str, script: Path, args: list[str]) -> dict:
         start = time.monotonic()
@@ -146,18 +148,42 @@ class Driver:
             subprocess.run(["git", "merge", "--abort"], cwd=self.primary_root, capture_output=True, check=False)
 
     # -- the merge+push step ------------------------------------------------ #
+    #
+    # Each route returns (merge_sha, merge_tree, verify_ref, warning):
+    #   verify_ref   the ref verify_landing should check (None = its default,
+    #                the local primary branch ref)
+    #   warning      a non-fatal problem to surface even though the landing
+    #                itself succeeded (None = no warning)
 
     def _merge_and_push(
         self, primary_root: Path, primary_branch: str, feature_branch: str,
-        primary_local_vs_remote: str | None, preview_tree: str,
-    ) -> tuple[str, str]:
+        primary_local_vs_remote: str | None, preview_tree: str, leased_sha: str,
+    ) -> tuple[str, str, str | None, str | None]:
         if primary_local_vs_remote in _PUSH_FROM_PREVIEW_STATUSES:
             return self._push_from_preview(primary_root, primary_branch, feature_branch)
-        return self._merge_in_primary(primary_root, primary_branch, feature_branch, preview_tree)
+        return self._merge_in_primary(primary_root, primary_branch, feature_branch, preview_tree, leased_sha)
 
     def _merge_in_primary(
-        self, primary_root: Path, primary_branch: str, feature_branch: str, preview_tree: str,
-    ) -> tuple[str, str]:
+        self, primary_root: Path, primary_branch: str, feature_branch: str,
+        preview_tree: str, leased_sha: str,
+    ) -> tuple[str, str, str | None, str | None]:
+        # The preview was built by merging feature onto leased_sha (bento-
+        # rdtn.5's compare-and-set base), not onto whatever the primary
+        # checkout's local branch currently points at. "behind" means those
+        # differ -- fast-forward the primary to leased_sha first, or the
+        # merge here reproduces a different (stale) tree than the verified
+        # preview. "equal"/None already coincide with leased_sha by
+        # construction, so this is a no-op for them.
+        if rev_parse("HEAD", primary_root) != leased_sha:
+            git("fetch", "origin", cwd=primary_root, check=False)
+            sync = git("merge", "--ff-only", leased_sha, cwd=primary_root, check=False)
+            if sync.returncode != 0:
+                raise StepFailure(
+                    "merge_push",
+                    "could not fast-forward the primary checkout to the leased base "
+                    f"{leased_sha} before merging: {sync.stderr.strip()}",
+                )
+
         # Test-only seam: lets the test suite deterministically position a
         # SIGINT mid-merge instead of racing real git timing. Never set in
         # production use.
@@ -185,29 +211,62 @@ class Driver:
         push = git("push", "origin", primary_branch, cwd=primary_root, check=False)
         if push.returncode != 0:
             raise StepFailure("merge_push", push.stderr.strip() or "git push failed")
-        return rev_parse("HEAD", primary_root), merged_tree
+        return rev_parse("HEAD", primary_root), merged_tree, None, None
 
     def _push_from_preview(
         self, primary_root: Path, primary_branch: str, feature_branch: str,
-    ) -> tuple[str, str]:
+    ) -> tuple[str, str, str | None, str | None]:
         assert self.preview_dir is not None
         commit = git(
             "commit", "-m", f"Merge branch '{feature_branch}'", cwd=self.preview_dir, check=False,
         )
         if commit.returncode != 0:
             raise StepFailure("merge_push", commit.stderr.strip() or "git commit failed in the preview worktree")
+        # Resolved from the preview itself, before push: this is the
+        # authoritative landed commit regardless of whether the primary
+        # checkout's local sync below succeeds.
+        merge_sha = rev_parse("HEAD", self.preview_dir)
+        merge_tree = tree_for_ref("HEAD", self.preview_dir)
+
         push = git(
             "push", "origin", f"HEAD:refs/heads/{primary_branch}", cwd=self.preview_dir, check=False,
         )
         if push.returncode != 0:
             raise StepFailure("merge_push", push.stderr.strip() or "git push (from preview) failed")
+
+        # The landing itself is now complete (origin has the new commit).
+        # Syncing the primary checkout's local branch to match is a
+        # best-effort convenience, not part of the landing: the primary may
+        # have gained a local-only commit unrelated to this feature branch
+        # (e.g. a race between this driver's own prepare step and this point),
+        # in which case --ff-only legitimately can't fast-forward even
+        # though the push already succeeded. Never force-reset here -- that
+        # could discard real local work -- just warn and leave it for the
+        # operator to reconcile by hand.
+
+        # Test-only seam: lets the test suite deterministically inject a
+        # primary-checkout commit in the window between push and this sync,
+        # instead of racing real git/filesystem timing. Never set in
+        # production use.
+        delay = os.environ.get("BENTO_LAND_TEST_DELAY_PRIMARY_SYNC")
+        if delay:
+            time.sleep(float(delay))
+
         fetch = git("fetch", "origin", cwd=primary_root, check=False)
-        if fetch.returncode != 0:
-            raise StepFailure("merge_push", fetch.stderr.strip() or "git fetch failed in the primary checkout")
-        ff = git("merge", "--ff-only", f"origin/{primary_branch}", cwd=primary_root, check=False)
+        ff = (
+            git("merge", "--ff-only", f"origin/{primary_branch}", cwd=primary_root, check=False)
+            if fetch.returncode == 0 else fetch
+        )
         if ff.returncode != 0:
-            raise StepFailure("merge_push", ff.stderr.strip() or "git merge --ff-only failed in the primary checkout")
-        return rev_parse("HEAD", primary_root), tree_for_ref("HEAD", primary_root)
+            warning = (
+                f"pushed {merge_sha} to origin/{primary_branch}, but could not "
+                f"fast-forward the primary checkout's local branch to match "
+                f"({ff.stderr.strip()}); it likely has an unrelated local-only "
+                f"commit -- reconcile it by hand (fetch + rebase or merge), do not "
+                "force-reset it"
+            )
+            return merge_sha, merge_tree, f"refs/remotes/origin/{primary_branch}", warning
+        return merge_sha, merge_tree, None, None
 
     # -- the full sequence --------------------------------------------------- #
 
@@ -248,20 +307,27 @@ class Driver:
         self._run_script("lease_check", VERIFY_LEASE, ["--expected-sha", leased_sha])
 
         start = time.monotonic()
-        merge_sha, merge_tree = self._merge_and_push(
-            primary_root, primary_branch, feature_branch, primary_local_vs_remote, preview_tree,
+        merge_sha, merge_tree, verify_ref, merge_warning = self._merge_and_push(
+            primary_root, primary_branch, feature_branch, primary_local_vs_remote, preview_tree, leased_sha,
         )
-        self._record("merge_push", "passed", start)
+        self._record("merge_push", "passed", start, {"warning": merge_warning} if merge_warning else None)
 
         # bento-rdtn.3: cleanup before verify-landing, so a skipped cleanup
-        # fails verify-landing instead of leaking a preview worktree.
-        preview_dir_for_verify = str(self.preview_dir)
+        # fails verify-landing instead of leaking a preview worktree -- but
+        # only for a scratch preview. A persistent landing.integration_worktree
+        # is never removed (create-preview.py's --cleanup is a documented
+        # no-op against it), so passing --preview-dir here would always fail
+        # verify-landing for repos configured that way.
+        persistent_worktree = bool(preview.get("persistent_worktree"))
+        preview_dir_for_verify = None if persistent_worktree else str(self.preview_dir)
         self.cleanup_preview()
 
-        self._run_script(
-            "verify_landing", VERIFY_LANDING,
-            ["--expected-tree", merge_tree, "--preview-dir", preview_dir_for_verify],
-        )
+        verify_args = ["--expected-tree", merge_tree]
+        if preview_dir_for_verify:
+            verify_args += ["--preview-dir", preview_dir_for_verify]
+        if verify_ref:
+            verify_args += ["--ref", verify_ref]
+        self._run_script("verify_landing", VERIFY_LANDING, verify_args)
 
         return {
             "ok": True,
@@ -270,6 +336,7 @@ class Driver:
             "error": None,
             "merge_sha": merge_sha,
             "primary_branch": primary_branch,
+            "warning": merge_warning,
         }
 
 

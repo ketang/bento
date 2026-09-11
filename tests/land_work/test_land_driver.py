@@ -178,6 +178,169 @@ class PushFromPreviewRouteTest(LandDriverTestBase):
         self.assertEqual(remote_main, primary_main)
         self.assertEqual(self.registered_preview_worktrees(), [])
 
+    def test_sync_failure_after_successful_push_is_a_warning_not_a_failure(self) -> None:
+        # Code review (bento-rdtn.14): if the primary checkout gains an
+        # incompatible local commit in the window between push-from-preview's
+        # push and its best-effort primary sync (a race, not something
+        # --require-up-to-date at prepare time could have caught), the
+        # landing itself already succeeded on origin -- ff-only failing to
+        # sync the primary's local branch afterward must be a warning, not a
+        # reported failure, and must never force-reset the primary.
+        (self.repo / "extra.txt").write_text("more\n", encoding="utf-8")
+        git(self.repo, "add", "extra.txt")
+        git(self.repo, "commit", "-m", "local-only commit on primary")
+        git(self.worktree, "rebase", "main")
+        # This is now an "ahead" primary compatible with feature (as in the
+        # test above) -- inject a SECOND, incompatible local commit during
+        # the driver's own primary-sync window so ff-only cannot succeed.
+        env = {"BENTO_LAND_TEST_DELAY_PRIMARY_SYNC": "1.0"}
+
+        def _inject_incompatible_commit() -> None:
+            time.sleep(0.4)
+            (self.repo / "race.txt").write_text("race\n", encoding="utf-8")
+            git(self.repo, "add", "race.txt")
+            git(self.repo, "commit", "-m", "incompatible race commit on primary")
+
+        threading.Thread(target=_inject_incompatible_commit).start()
+        result = self.run_driver(env=env)
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload.get("warning"))
+        self.assertIn("fast-forward", payload["warning"])
+
+        # The landing itself succeeded on origin regardless of the local
+        # primary sync outcome.
+        remote_main = subprocess.run(
+            ["git", "rev-parse", "refs/heads/main"], cwd=self.remote, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        remote_tree = subprocess.run(
+            ["git", "log", "-1", "--format=%T", remote_main], cwd=self.remote, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        self.assertIn("feature.txt", subprocess.run(
+            ["git", "ls-tree", "-r", "--name-only", remote_tree], cwd=self.remote, capture_output=True, text=True, check=True,
+        ).stdout)
+
+        # The primary's local race commit was never force-reset or discarded.
+        self.assertIn("race commit", git(self.repo, "log", "-1", "--format=%s").stdout)
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+
+class BehindPrimaryTest(LandDriverTestBase):
+    def test_behind_primary_syncs_to_leased_base_before_merging(self) -> None:
+        # Code review (bento-rdtn.14): the preview is built from the leased
+        # origin ref, not from whatever the primary checkout's local branch
+        # currently points at. Simulate the primary's local main lagging
+        # origin (another session pushed directly) -- the normal route must
+        # fast-forward the primary to the leased base before merging, or the
+        # resulting tree diverges from the verified preview.
+        other_clone = Path(self.temp_dir.name) / "other-clone"
+        subprocess.run(
+            ["git", "clone", str(self.remote), str(other_clone)], check=True, capture_output=True, text=True,
+        )
+        git(other_clone, "config", "user.name", "Other Session")
+        git(other_clone, "config", "user.email", "other@example.com")
+        (other_clone / "upstream-only.txt").write_text("upstream\n", encoding="utf-8")
+        git(other_clone, "add", "upstream-only.txt")
+        git(other_clone, "commit", "-m", "pushed directly by another session")
+        git(other_clone, "push", "origin", "main")
+        # The primary checkout's local main deliberately does NOT fetch this
+        # -- it is now "behind" origin/main.
+
+        # Rebase the feature branch onto the new origin/main so the feature
+        # branch itself is not behind (an orthogonal --require-up-to-date
+        # check); the primary checkout's local main is still stale.
+        git(self.worktree, "fetch", "origin")
+        git(self.worktree, "rebase", "origin/main")
+
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["ok"])
+        # Both the other session's upstream commit and the feature content
+        # must be present -- a stale-base merge would have silently dropped
+        # the upstream-only commit's ancestry.
+        self.assertTrue((self.repo / "upstream-only.txt").exists())
+        self.assertTrue((self.repo / "feature.txt").exists())
+        remote_main = subprocess.run(
+            ["git", "rev-parse", "refs/heads/main"], cwd=self.remote, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+        primary_main = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        self.assertEqual(remote_main, primary_main)
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+
+class IntegrationWorktreeLandingTest(unittest.TestCase):
+    """Code review (bento-rdtn.14): land.py must not pass --preview-dir to
+    verify-landing for a persistent landing.integration_worktree, since
+    create-preview.py's --cleanup is a documented no-op against it (it's
+    meant to persist across landings) -- passing --preview-dir there would
+    always fail verify-landing because the worktree is still registered."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        base = Path(self.temp_dir.name)
+        self.remote = base / "remote.git"
+        self.repo = base / "repo"
+        self.worktree = base / "feature-worktree"
+        self.integration_worktree = base / "integration"
+        self.verifier_path = base / "verify.sh"
+
+        subprocess.run(
+            ["git", "init", "--bare", "-b", "main", str(self.remote)],
+            check=True, capture_output=True, text=True,
+        )
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Integration Worktree Test")
+        git(self.repo, "config", "user.email", "integration@example.com")
+        (self.repo / "README.md").write_text("root\n", encoding="utf-8")
+        (self.repo / "swarm-config.json").write_text(
+            json.dumps({"landing": {"integration_worktree": str(self.integration_worktree)}}),
+            encoding="utf-8",
+        )
+        self.verifier_path.write_text(PASS_VERIFIER, encoding="utf-8")
+        self.verifier_path.chmod(0o755)
+        manifest_path = self.repo / ".agent-plugins/bento/bento/land-work/verifier.json"
+        manifest_path.parent.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps({"schema_version": 1, "command": [str(self.verifier_path)], "verified_noop": []}),
+            encoding="utf-8",
+        )
+        git(self.repo, "add", "README.md", "swarm-config.json", str(manifest_path.relative_to(self.repo)))
+        git(self.repo, "commit", "-m", "initial commit")
+        git(self.repo, "remote", "add", "origin", str(self.remote))
+        git(self.repo, "push", "-u", "origin", "main")
+
+        git(self.repo, "worktree", "add", "-b", "feature/test", str(self.worktree), "main")
+        (self.worktree / "feature.txt").write_text("feature\n", encoding="utf-8")
+        git(self.worktree, "add", "feature.txt")
+        git(self.worktree, "commit", "-m", "feature change")
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def test_lands_against_a_persistent_integration_worktree(self) -> None:
+        run_env = dict(os.environ)
+        result = subprocess.run(
+            [str(LAND_SCRIPT)], cwd=self.worktree, capture_output=True, text=True, env=run_env, check=False,
+        )
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["ok"])
+        step_names = [s["step"] for s in payload["steps"]]
+        # cleanup still runs (a documented no-op against the persistent
+        # worktree) but verify_landing must not be passed --preview-dir.
+        self.assertIn("verify_landing", step_names)
+        self.assertTrue((self.repo / "feature.txt").exists())
+        # The persistent integration worktree is still registered afterward
+        # -- it is meant to survive across landings, not be removed.
+        listing = git(self.repo, "worktree", "list", "--porcelain").stdout
+        self.assertIn(str(self.integration_worktree.resolve()), listing)
+
 
 class VerifierFailureTest(LandDriverTestBase):
     def test_verifier_failure_leaves_no_preview_and_does_not_land(self) -> None:
