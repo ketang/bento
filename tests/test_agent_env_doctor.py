@@ -1,3 +1,4 @@
+import datetime
 import importlib.machinery
 import importlib.util
 import json
@@ -64,7 +65,7 @@ class AgentEnvDoctorTest(unittest.TestCase):
         payload.update(overrides)
         return payload
 
-    def _evaluate(self, env=None, tmp_root=None, now=None, **overrides):
+    def _evaluate(self, env=None, tmp_root=None, now=None, today=None, **overrides):
         return self.mod.evaluate(
             self._hook_input(**overrides),
             home=self.home,
@@ -72,6 +73,7 @@ class AgentEnvDoctorTest(unittest.TestCase):
             plugins_file=self.plugins_file,
             tmp_root=tmp_root if tmp_root is not None else self.tmp_root,
             now=now,
+            today=today,
         )
 
     def _context(self, decision) -> str:
@@ -229,6 +231,133 @@ class AgentEnvDoctorTest(unittest.TestCase):
     def test_uninstalled_plugin_never_nudges(self) -> None:
         # storystore not installed => no nudge even though docs/stories absent.
         self.assertIsNone(self._evaluate())
+
+    # -- bento-rdtn.2: dormant-plugin decision path ---------------------------
+
+    def test_first_sighting_shows_full_nudge_with_three_options(self) -> None:
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        context = self._context(self._evaluate())
+        self.assertIn("storystore", context)
+        self.assertIn("dormant", context)
+        self.assertIn("wire it now", context)
+        self.assertIn("agent_env_doctor_skip_plugin=storystore", context)
+        self.assertIn("agent_env_doctor_remind_after=storystore:<YYYY-MM-DD>", context)
+
+    def test_first_sighting_records_seen_in_agent_mode_local(self) -> None:
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        self._evaluate()
+        text = (self.repo / ".agent-mode.local").read_text(encoding="utf-8")
+        self.assertIn("agent_env_doctor_seen=storystore", text)
+
+    def test_second_sighting_collapses_to_one_line(self) -> None:
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        self._evaluate()  # first sighting: records "seen"
+        context = self._context(self._evaluate())
+        self.assertIn("storystore dormant — decision pending, see .agent-mode.local", context)
+        self.assertNotIn("wire it now", context)
+
+    def test_seen_marker_set_directly_also_collapses(self) -> None:
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_seen=storystore\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("storystore dormant — decision pending", context)
+        self.assertNotIn("wire it now", context)
+
+    def test_skip_plugin_still_fully_silences_even_if_seen(self) -> None:
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_seen=storystore\n"
+            "agent_env_doctor_skip_plugin=storystore\n",
+            encoding="utf-8",
+        )
+        self.assertIsNone(self._evaluate())
+
+    def test_remind_after_future_date_fully_suppresses(self) -> None:
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=storystore:2999-01-01\n", encoding="utf-8"
+        )
+        self.assertIsNone(self._evaluate(today=datetime.date(2026, 1, 1)))
+
+    def test_remind_after_past_date_shows_full_nudge_once(self) -> None:
+
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=storystore:2026-01-01\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate(today=datetime.date(2026, 6, 1)))
+        self.assertIn("wire it now", context)
+
+    def test_remind_after_expiry_clears_the_entry_and_marks_seen(self) -> None:
+
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=storystore:2026-01-01\n", encoding="utf-8"
+        )
+        self._evaluate(today=datetime.date(2026, 6, 1))
+        text = (self.repo / ".agent-mode.local").read_text(encoding="utf-8")
+        self.assertIn("agent_env_doctor_seen=storystore", text)
+        self.assertNotIn("agent_env_doctor_remind_after", text)
+
+        # Next session collapses to the short form.
+        context = self._context(self._evaluate(today=datetime.date(2026, 6, 2)))
+        self.assertIn("storystore dormant — decision pending", context)
+        self.assertNotIn("wire it now", context)
+
+    def test_remind_after_preserves_other_plugins_entries(self) -> None:
+
+        self._write_installed(
+            {"storystore@bento": [{"version": "1.0.0"}], "bugshot@bento": [{"version": "1.0.0"}]}
+        )
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=storystore:2026-01-01,bugshot:2999-01-01\n",
+            encoding="utf-8",
+        )
+        self._evaluate(today=datetime.date(2026, 6, 1))
+        text = (self.repo / ".agent-mode.local").read_text(encoding="utf-8")
+        self.assertIn("agent_env_doctor_seen=storystore", text)
+        self.assertIn("agent_env_doctor_remind_after=bugshot:2999-01-01", text)
+        self.assertNotIn("storystore:2026-01-01", text)
+
+    def test_remind_after_malformed_date_fails_safe_to_full_nudge(self) -> None:
+        self._write_installed({"storystore@bento": [{"version": "1.0.0"}]})
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=storystore:not-a-date\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("wire it now", context)
+
+    def test_remind_after_unknown_plugin_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=nope:2026-01-01\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("nope", context)
+
+    def test_remind_after_malformed_entry_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=storystore\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("not <plugin>:<date>", context)
+
+    def test_remind_after_bad_date_format_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_remind_after=storystore:01/01/2026\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("not a YYYY-MM-DD date", context)
+
+    def test_seen_key_with_unknown_plugin_flagged(self) -> None:
+        (self.repo / ".agent-mode.local").write_text(
+            "agent_env_doctor_seen=nope\n", encoding="utf-8"
+        )
+        context = self._context(self._evaluate())
+        self.assertIn("unknown plugin", context)
+        self.assertIn("nope", context)
 
     def test_bugshot_dormant_uses_capture_command_precondition(self) -> None:
         self._write_installed({"bugshot@bento": [{"version": "1.0.0"}]})

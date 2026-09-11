@@ -45,7 +45,20 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
   inapplicable plugin without disabling any other check, add
   `agent_env_doctor_skip_plugin=<name>[,<name>...]` instead; the stale-preview
   threshold (default 24h) is overridable with
-  `agent_env_doctor_preview_max_age_hours=<hours>`. A Codex peer runs every
+  `agent_env_doctor_preview_max_age_hours=<hours>`.
+
+  The dormant-plugin nudge has a decision path instead of repeating in full
+  every session (bento-rdtn.2): the first sighting of a given dormant plugin
+  in a repo prints the full nudge plus three options (wire it now, skip
+  permanently, or remind later), and writes `agent_env_doctor_seen=<plugin>
+  [,<plugin>...]` to `.agent-mode.local`. Every later session then collapses
+  that plugin's nudge to one line — `<plugin> dormant — decision pending, see
+  .agent-mode.local` — until an actual decision (`agent_env_doctor_skip_plugin`
+  or `agent_env_doctor_remind_after`) is recorded. `agent_env_doctor_remind_after=
+  <plugin>:<YYYY-MM-DD>[,<plugin>:<YYYY-MM-DD>...]` fully suppresses that
+  plugin's nudge until the given date, then shows the full form once more
+  (and clears the entry, folding the plugin into `agent_env_doctor_seen` so
+  it collapses again afterward) rather than repeating forever. A Codex peer runs every
   check except the hook-binary and dormant-plugin checks, which are
   Claude-only (they read `.claude/settings.json` and the Claude plugin
   registry, which Codex has neither of).
