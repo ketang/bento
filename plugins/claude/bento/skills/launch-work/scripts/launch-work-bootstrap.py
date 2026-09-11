@@ -23,8 +23,16 @@ from git_state import (
 UNTRACKED_ADVISORY_LIMIT = 10
 
 # Leading <prefix>-<id> token of a branch name, e.g. "str-25kcm" out of
-# "str-25kcm-fix-thing" or "bento-rdtn.7-foo" out of "bento-rdtn.7-foo-bar".
+# "str-25kcm-fix-thing", or "bento-rdtn.7" out of "bento-rdtn.7-foo-bar" (a
+# literal dot in the branch name, stopping before the next hyphen).
 _CLAIM_ID_RE = re.compile(r"^([a-z]+-[a-z0-9.]+)")
+
+# A purely numeric segment immediately following the prefix match, e.g. the
+# "-7" in "bento-rdtn-7-bootstrap-claim". bento's own branch-naming
+# convention renders a dotted sub-issue id ("bento-rdtn.7") with a hyphen
+# instead of a literal dot, so this reconstructs the dot rather than
+# resolving to just the epic id.
+_CLAIM_SUBISSUE_RE = re.compile(r"^-(\d+)(?:-|$)")
 
 
 def parse_args() -> argparse.Namespace:
@@ -47,7 +55,14 @@ def _resolve_claim_id(claim_arg: str, branch: str) -> str | None:
     if claim_arg != "auto":
         return claim_arg
     match = _CLAIM_ID_RE.match(branch)
-    return match.group(1) if match else None
+    if not match:
+        return None
+    claim_id = match.group(1)
+    remainder = branch[match.end():]
+    sub_match = _CLAIM_SUBISSUE_RE.match(remainder)
+    if sub_match:
+        claim_id = f"{claim_id}.{sub_match.group(1)}"
+    return claim_id
 
 
 def _detect_tracker(checkout_root: Path, primary_root: Path) -> str | None:

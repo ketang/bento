@@ -330,6 +330,28 @@ class LaunchWorkScriptsTest(unittest.TestCase):
         self.assertEqual(payload["claim"]["id"], "str-25kcm")
         self.assertEqual(log_path.read_text().strip(), "update str-25kcm --claim")
 
+    def test_claim_auto_reconstructs_dotted_subissue_id_from_hyphenated_branch(self) -> None:
+        # bento's own branch-naming convention renders a dotted sub-issue id
+        # ("bento-rdtn.7") with a hyphen instead of a literal dot
+        # ("bento-rdtn-7-slug") -- auto must resolve the real sub-issue, not
+        # just truncate to the epic id "bento-rdtn".
+        (self.repo / ".beads").mkdir()
+        bin_dir = self._fake_bin(
+            "bd", '#!/bin/sh\necho "$@" > "$FAKE_BD_LOG"\nexit 0\n'
+        )
+        log_path = Path(self.temp_dir.name) / "bd.log"
+        target_worktree = Path(self.temp_dir.name) / "bento-rdtn-7-bootstrap-claim"
+        env = self._env_with_path(bin_dir)
+        env["FAKE_BD_LOG"] = str(log_path)
+        result = self.run_bootstrap_env(
+            "--branch", "bento-rdtn-7-bootstrap-claim", "--worktree", str(target_worktree),
+            "--apply", "--claim", "auto", env=env,
+        )
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload["claim"]["status"], "claimed")
+        self.assertEqual(payload["claim"]["id"], "bento-rdtn.7")
+        self.assertEqual(log_path.read_text().strip(), "update bento-rdtn.7 --claim")
+
     def test_claim_explicit_id_with_beads_tracker(self) -> None:
         (self.repo / ".beads").mkdir()
         bin_dir = self._fake_bin("bd", "#!/bin/sh\nexit 0\n")
