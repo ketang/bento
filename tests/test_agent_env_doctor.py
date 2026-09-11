@@ -1131,6 +1131,14 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertNotIn("superpowers is also installed", second_context)
         self.assertIn("storystore dormant — decision pending", second_context)
 
+    def test_no_agent_mode_local_file_gets_no_spurious_leading_blank_line(self) -> None:
+        # Code review: writing the first-ever key into an absent
+        # .agent-mode.local must not leave an empty first line ahead of it.
+        self._write_installed({"superpowers@anthropic": [{"version": "1.0.0"}]})
+        self._evaluate()
+        text = (self.repo / ".agent-mode.local").read_text(encoding="utf-8")
+        self.assertEqual(text, "agent_env_doctor_superpowers_pointer_seen=true\n")
+
 
 if __name__ == "__main__":
     unittest.main()

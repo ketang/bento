@@ -1037,33 +1037,46 @@ def _superpowers_pointer_seen(root: Path) -> bool:
     return False
 
 
-def _record_superpowers_pointer_seen(root: Path) -> None:
-    """After showing the coexistence pointer once, record that in
-    .agent-mode.local so later sessions stay silent. Never raises: a write
-    failure here must not block session start, matching every other check's
+def _rewrite_agent_mode_keys(root: Path, updates: dict[str, str | None]) -> None:
+    """Atomically rewrite .agent-mode.local, replacing each key in `updates`
+    with its mapped full line text (or dropping the key's line entirely when
+    the mapped value is None), and passing every other line through
+    unmodified. A single shared writer for every "seen"-style flag this
+    doctor records, so recording several flags from one evaluate() call is
+    one read-modify-write instead of several stacked ones (each of which
+    reopens the same race window against a concurrent SessionStart hook in
+    another process/session).
+
+    CRLF-preserving: reads via _read_agent_mode_text (matching
+    check_agent_mode's own semantics), so an unrelated "dangerous\\r\\n" line
+    (inert to the launcher's exact bash `case` match, which never sees a
+    match against "dangerous\\r") is never silently normalized into an
+    active "dangerous" line by this rewrite. Never raises: a write failure
+    here must not block session start, matching every other check's
     contract."""
+    if not updates:
+        return
     config = root / ".agent-mode.local"
     try:
-        # CRLF-preserving read/rewrite, same rationale as
-        # _record_dormant_plugin_decisions: an unrelated "dangerous\r\n"
-        # line must survive this rewrite byte-for-byte.
         text = _read_agent_mode_text(config) or ""
-        lines = text.split("\n")
+        lines = text.split("\n") if text else []
         if text.endswith("\n") and lines and lines[-1] == "":
             lines = lines[:-1]
         new_lines: list[str] = []
-        written = False
+        written: set[str] = set()
         for line in lines:
             stripped = line.strip()
             key = stripped.partition("=")[0].strip() if "=" in stripped else None
-            if key == "agent_env_doctor_superpowers_pointer_seen":
-                if not written:
-                    new_lines.append("agent_env_doctor_superpowers_pointer_seen=true")
-                    written = True
+            if key in updates:
+                replacement = updates[key]
+                if replacement is not None and key not in written:
+                    new_lines.append(replacement)
+                    written.add(key)
                 continue
             new_lines.append(line)
-        if not written:
-            new_lines.append("agent_env_doctor_superpowers_pointer_seen=true")
+        for key, replacement in updates.items():
+            if replacement is not None and key not in written:
+                new_lines.append(replacement)
 
         new_text = "\n".join(new_lines)
         if new_text and not new_text.endswith("\n"):
@@ -1075,72 +1088,40 @@ def _record_superpowers_pointer_seen(root: Path) -> None:
         pass
 
 
-def _record_dormant_plugin_decisions(root: Path, decisions: list[dict]) -> None:
+def _superpowers_pointer_updates(shown: bool) -> dict[str, str | None]:
+    """After showing the coexistence pointer once, record that so later
+    sessions stay silent."""
+    if not shown:
+        return {}
+    return {"agent_env_doctor_superpowers_pointer_seen": "agent_env_doctor_superpowers_pointer_seen=true"}
+
+
+def _dormant_plugin_decision_updates(root: Path, decisions: list[dict]) -> dict[str, str | None]:
     """After showing the full nudge for a plugin (first sighting, or a
-    remind_after date that has now passed), record that in .agent-mode.local:
-    add the plugin to agent_env_doctor_seen and drop it from
-    agent_env_doctor_remind_after, so later sessions collapse to the short
-    form instead of re-showing the full nudge every time. Never raises: a
-    write failure here must not block session start, matching every other
-    check's contract."""
+    remind_after date that has now passed), add it to agent_env_doctor_seen
+    and drop it from agent_env_doctor_remind_after, so later sessions
+    collapse to the short form instead of re-showing the full nudge every
+    time."""
     newly_full = [d["plugin"] for d in decisions if d["display"] == "full"]
     if not newly_full:
-        return
+        return {}
 
-    config = root / ".agent-mode.local"
-    try:
-        seen = set(_seen_plugins(root)) | set(newly_full)
-        remind_after = _remind_after_dates(root)
-        for plugin in newly_full:
-            remind_after.pop(plugin, None)
+    seen = set(_seen_plugins(root)) | set(newly_full)
+    remind_after = _remind_after_dates(root)
+    for plugin in newly_full:
+        remind_after.pop(plugin, None)
 
-        # CRLF-preserving read, matching check_agent_mode's own semantics: a
-        # broken "dangerous\r\n" line (inert to the launcher's exact bash
-        # `case` match, which never sees a match against "dangerous\r") must
-        # not be silently normalized to an active "dangerous" line by this
-        # rewrite. Unmodified lines are passed through as their raw,
-        # unstripped selves; only our own newly written lines use a plain
-        # "\n" terminator.
-        text = _read_agent_mode_text(config) or ""
-        lines = text.split("\n")
-        if text.endswith("\n") and lines and lines[-1] == "":
-            lines = lines[:-1]
-        new_lines: list[str] = []
-        seen_written = False
-        remind_written = False
-        for line in lines:
-            stripped = line.strip()
-            key = stripped.partition("=")[0].strip() if "=" in stripped else None
-            if key == "agent_env_doctor_seen":
-                if seen and not seen_written:
-                    new_lines.append(f"agent_env_doctor_seen={','.join(sorted(seen))}")
-                    seen_written = True
-                continue
-            if key == "agent_env_doctor_remind_after":
-                if remind_after and not remind_written:
-                    new_lines.append(
-                        "agent_env_doctor_remind_after="
-                        + ",".join(f"{p}:{d}" for p, d in sorted(remind_after.items()))
-                    )
-                    remind_written = True
-                continue
-            new_lines.append(line)
-        if seen and not seen_written:
-            new_lines.append(f"agent_env_doctor_seen={','.join(sorted(seen))}")
-        if remind_after and not remind_written:
-            new_lines.append(
-                "agent_env_doctor_remind_after="
-                + ",".join(f"{p}:{d}" for p, d in sorted(remind_after.items()))
-            )
-
-        new_text = "\n".join(new_lines)
-        if new_text and not new_text.endswith("\n"):
-            new_text += "\n"
-        tmp = config.with_name(config.name + ".tmp")
-        tmp.write_text(new_text, encoding="utf-8")
-        tmp.replace(config)
-    except OSError:
-        pass
+    return {
+        "agent_env_doctor_seen": (
+            f"agent_env_doctor_seen={','.join(sorted(seen))}" if seen else None
+        ),
+        "agent_env_doctor_remind_after": (
+            "agent_env_doctor_remind_after="
+            + ",".join(f"{p}:{d}" for p, d in sorted(remind_after.items()))
+            if remind_after
+            else None
+        ),
+    }
 
 
 def collect_warnings(
@@ -1244,11 +1225,14 @@ def evaluate(
     )
 
     # Record dormant-plugin decisions (first sighting or remind-after
-    # expiry) so later sessions collapse the nudge, regardless of whether
-    # any *other* check also warned this session.
-    _record_dormant_plugin_decisions(root, dormant_decisions)
-    if superpowers_warnings and not superpowers_pointer_already_seen:
-        _record_superpowers_pointer_seen(root)
+    # expiry) and the superpowers pointer (first sighting) in one combined
+    # rewrite, regardless of whether any *other* check also warned this
+    # session -- one read-modify-write instead of two stacked ones, halving
+    # the race window against a concurrent SessionStart hook in another
+    # process/session touching the same .agent-mode.local.
+    agent_mode_updates = _dormant_plugin_decision_updates(root, dormant_decisions)
+    agent_mode_updates.update(_superpowers_pointer_updates(bool(superpowers_warnings)))
+    _rewrite_agent_mode_keys(root, agent_mode_updates)
 
     if not warnings:
         return None
