@@ -41,7 +41,9 @@ This skill includes helper scripts under `launch-work/scripts/` for the parts
 of launching work that benefit from repeatable checks:
 
 - `launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path>`
-  to preview or apply branch and linked-worktree creation
+  to preview or apply branch and linked-worktree creation; add
+  `--claim <id|auto>` on the `--apply` run to claim the tracker issue right
+  after the worktree exists (beads or GitHub Issues, auto-detected)
 - `launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
   to verify the current checkout is the intended linked worktree on the intended
   branch
@@ -78,7 +80,17 @@ target branch and worktree path are confirmed correct.
 3. If the current task is only to create, inspect, claim, update, or close a
    tracker item, follow the tracker skill directly and do not create a branch
    or linked worktree unless the repo explicitly requires that workflow.
-4. If the repo requires claiming active work, inspect and claim it before
+4. If the repo requires claiming active work, inspect it, then pass
+   `--claim <id>` (or `--claim auto` to take the leading `<prefix>-<id>`
+   token of the branch name, e.g. `str-25kcm` out of
+   `str-25kcm-fix-thing`) on step 7's `--apply` invocation below, so the
+   bootstrap helper claims the issue itself right after the worktree exists —
+   beads via `bd update <id> --claim`, GitHub Issues via
+   `gh issue edit <id> --add-assignee @me`. Do not claim it separately by
+   hand first; the helper records the outcome
+   (`{"claim": {"tracker", "id", "status": "claimed"|"failed"|"skipped"}}`)
+   in its own JSON. A failed or skipped claim is reported as a warning, never
+   a crash — if it fails, claim it manually via the tracker skill before
    implementation begins.
 5. Determine the target branch name and linked-worktree path from repo docs.
    Follow `launch-work/references/worktree-location.md` for the default root,
@@ -92,8 +104,10 @@ launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path>
 7. If the preview is correct, create the linked worktree with:
 
 ```bash
-launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path> --apply
+launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path> --apply --claim <id|auto>
 ```
+
+   Omit `--claim` entirely for work that is not tracker-backed.
 
 8. Enter the linked worktree and verify both location and branch:
 
