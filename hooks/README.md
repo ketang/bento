@@ -93,6 +93,15 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
   worktree.sh`, this is a regex/token-level guard over the command string,
   not a full shell parser — it fails open (never blocks) on any git or parse
   error.
+
+  `check-unpushed` (`Stop`) blocks (exit 2) ending a turn with a dirty tree
+  or unpushed commits, naming the exact problem and branch; suppress with
+  `require_pushed=false`. A clean, fully-pushed feature branch that is not
+  yet landed (not the primary branch, not an ancestor of `origin/<primary>`)
+  instead gets a non-blocking advisory line on stderr pointing at
+  `land-work`/`closure` (bento-rdtn.11) — throttled to once per session per
+  branch via a marker under `$XDG_RUNTIME_DIR` (or `/tmp`), and suppressed
+  independently with `require_landed=false`.
 - `session-id` — persists the Claude Code session id and a per-session scratch
   directory (`SessionStart`).
 - `telemetry` — opt-in Bash telemetry capture.

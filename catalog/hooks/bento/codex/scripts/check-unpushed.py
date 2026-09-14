@@ -25,6 +25,20 @@ branches), and a worktree with an in-progress rebase/merge/cherry-pick (its
 detached HEAD and staged files are normal mid-operation state, not abandoned
 work).
 
+When none of the above apply and the branch is clean and fully pushed (the
+case that otherwise passes in total silence), a second, non-blocking check
+(bento-rdtn.11) looks for a branch that is pushed but never landed: not the
+primary branch, has an upstream with zero unpushed commits, and is not yet
+an ancestor of origin/<primary>. That prints one advisory line to stderr and
+still exits 0 — it never blocks. Suppressed by ``require_landed=false`` in
+``.agent-mode.local`` (independent of ``require_pushed``), and by every
+worktree-kind exemption above. Never fires on the primary branch or a
+detached HEAD. Throttled to once per Claude/Codex session per (repo, branch)
+pair via a small marker file under ``$XDG_RUNTIME_DIR`` (or ``/tmp`` when
+unset), keyed on the hook payload's ``session_id`` — Stop fires at the end
+of every turn, not only at session exit, so an unthrottled advisory would
+repeat identically after every subsequent turn in the same session.
+
 Claude Code runs hook processes from $HOME, not the project root, so the
 session directory is read from the stdin JSON payload's ``cwd`` field, never
 from $PWD or the process CWD.
@@ -421,9 +435,154 @@ def block_reason(hook_input: dict) -> str | None:
     joined = " and ".join(problems)
     return (
         f"Session end blocked: branch '{branch}' has {joined}.\n"
-        "Commit and push your work before ending the session. "
+        "Commit and push your work before ending the session. Note: Stop fires "
+        "at the end of every turn, not only when the session truly ends, so "
+        "this can block mid-session too. "
         "To suppress this check for this repo, add 'require_pushed=false' to "
         ".agent-mode.local.\n"
+    )
+
+
+# --- pushed-but-not-landed advisory (bento-rdtn.11) -------------------------
+
+
+def is_landed_check_suppressed(root: str) -> bool:
+    """True when .agent-mode.local sets require_landed=false. Independent of
+    require_pushed=false, which suppresses the (separate) blocking check
+    above."""
+    config = Path(root) / ".agent-mode.local"
+    try:
+        lines = config.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return False
+    for line in lines:
+        line = line.strip()
+        if not line or line.startswith("#"):
+            continue
+        key, _, value = line.partition("=")
+        if key.strip() == "require_landed" and value.strip() == "false":
+            return True
+    return False
+
+
+def detect_primary_branch(root: str) -> str:
+    """Best-effort primary branch name, mirroring land-work's git_state.py
+    detect_primary_branch(): origin/HEAD's symref, else a local or
+    remote-tracking main/master ref, else the current branch itself -- so an
+    unconventional repo with neither never has its only branch treated as
+    "not landed" against itself."""
+    result = _git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    origin_head = result.stdout.strip()
+    if result.returncode == 0 and origin_head:
+        return origin_head.removeprefix("origin/")
+    for candidate in ("main", "master"):
+        if (
+            _git(root, "show-ref", "--verify", "--quiet", f"refs/heads/{candidate}").returncode == 0
+            or _git(
+                root, "show-ref", "--verify", "--quiet", f"refs/remotes/origin/{candidate}"
+            ).returncode
+            == 0
+        ):
+            return candidate
+    return current_branch(root)
+
+
+def pushed_but_unlanded_primary(root: str, branch: str) -> str | None:
+    """Return the detected primary branch name when `branch` is clean (the
+    caller checks this), has an upstream with zero unpushed commits, is not
+    the primary branch, and is not yet an ancestor of origin/<primary> --
+    i.e. genuinely parked, pushed work. Returns None otherwise, including
+    detached HEAD (branch == "") and when origin/<primary> cannot be
+    resolved locally (fail toward silence, not a guess)."""
+    if not branch or not has_upstream(root) or ahead_count(root) > 0:
+        return None
+    primary = detect_primary_branch(root)
+    if branch == primary:
+        return None
+    remote_primary_ref = f"refs/remotes/origin/{primary}"
+    if _git(root, "rev-parse", "--verify", "--quiet", remote_primary_ref).returncode != 0:
+        return None
+    if _git(root, "merge-base", "--is-ancestor", "HEAD", f"origin/{primary}").returncode == 0:
+        return None  # already landed
+    return primary
+
+
+def _throttle_state_path(session_id: str) -> Path:
+    base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
+    return Path(base) / f"bento-check-unpushed-{session_id}.json"
+
+
+def _read_throttle_state(session_id: str) -> set:
+    try:
+        data = json.loads(_throttle_state_path(session_id).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return set()
+    advised = data.get("advised") if isinstance(data, dict) else None
+    return set(advised) if isinstance(advised, list) else set()
+
+
+def already_advised_this_session(session_id: str, root: str, branch: str) -> bool:
+    """No session_id (an unexpected payload shape) fails toward showing the
+    advisory rather than silently throttling forever."""
+    if not session_id:
+        return False
+    return f"{root}:{branch}" in _read_throttle_state(session_id)
+
+
+def record_advised_this_session(session_id: str, root: str, branch: str) -> None:
+    if not session_id:
+        return
+    try:
+        advised = _read_throttle_state(session_id) | {f"{root}:{branch}"}
+        path = _throttle_state_path(session_id)
+        path.write_text(json.dumps({"advised": sorted(advised)}), encoding="utf-8")
+    except OSError:
+        pass
+
+
+def advisory_message(hook_input: dict) -> str | None:
+    """Return a non-blocking advisory stderr message, or None to stay
+    silent. Never raises: callers must still treat any exception as silence,
+    matching block_reason()'s own contract."""
+    if hook_input.get("stop_hook_active"):
+        return None
+
+    cwd = hook_input.get("cwd") or ""
+    if not cwd or not os.path.isdir(cwd):
+        return None
+
+    root = repo_root(cwd)
+    if root is None:
+        return None
+
+    if is_landed_check_suppressed(root):
+        return None
+
+    if is_land_work_preview(root):
+        return None
+
+    if is_land_work_integration_worktree(root):
+        return None
+
+    if has_in_progress_operation(root):
+        return None
+
+    if is_dirty(root):
+        return None  # the blocking check above already covers a dirty tree
+
+    branch = current_branch(root)
+    primary = pushed_but_unlanded_primary(root, branch)
+    if primary is None:
+        return None
+
+    session_id = hook_input.get("session_id") or ""
+    if already_advised_this_session(session_id, root, branch):
+        return None
+    record_advised_this_session(session_id, root, branch)
+
+    return (
+        f"'{branch}' is pushed but not landed on '{primary}' — run "
+        "bento:land-work (or bento:closure for abandoned work).\n"
     )
 
 
@@ -444,6 +603,13 @@ def main() -> int:
         # failure and lets the stop proceed, so the hook must use 2 to block.
         sys.stderr.write(reason)
         return 2
+    try:
+        advisory = advisory_message(hook_input)
+    except Exception:
+        # Never break session stop on an unexpected git/filesystem error.
+        return 0
+    if advisory:
+        sys.stderr.write(advisory)
     return 0
 
 
