@@ -291,3 +291,48 @@ Worked example:
 - Verification: run `bd dep list bento-ui` and confirm `bento-auth` is a
   dependency; run `bd dep list bento-auth --direction=up` and confirm
   `bento-ui` is a dependent.
+
+## CLI Shapes
+
+Each shape below is verified against `metadata.json`'s pinned
+`verified_bd_version`. Re-run `scripts/bd-shape-check.py` and bump the pin
+after confirming a `bd` upgrade still matches (see that script's docstring).
+These are the flag/output surprises agents have actually guessed wrong.
+
+- **`bd show <id> --json` returns a one-element list, not an object.**
+  `json.loads(...)[0]` is required; indexing the parsed value directly as a
+  dict raises `TypeError`.
+- **`bd list --json` and `bd ready --json` both return a bare list**, not
+  `{"issues": [...]}` or similar.
+- **`bd ready --json --limit <n>` prints a "Showing N of M ready issues..."
+  truncation notice to *stderr*, not stdout**, whenever `<n>` truncates the
+  result below the total ready count — stdout alone still parses as clean
+  JSON. Only a caller that merges the streams before parsing (a shell
+  `2>&1 | ...` pipeline, or any subprocess call that combines
+  stdout+stderr into one buffer) sees `JSONDecodeError: Extra data`; capture
+  stdout separately (e.g. `subprocess.run(..., capture_output=True)`, never
+  `stderr=subprocess.STDOUT`) and this is a non-issue.
+- **`bd search <query> --json` exists** and also returns a bare list
+  (excludes closed issues by default; `--status all` includes them). A
+  fallback of `bd list --json | jq` is unnecessary — use `bd search` for a
+  keyword lookup.
+- **`bd create` has no `--issue-type`, `--note`, or `--comment` flag.** Use
+  `-t`/`--type` (bug|feature|task|epic|chore|decision), `--notes` for a
+  free-text note, and `--description`/`-d` for the body. Other accepted
+  flags agents commonly guess at: `-p`/`--priority`, `-l`/`--labels`,
+  `--parent`, `--acceptance`, `--waits-for`, `--deps` (`'type:id'` or bare
+  `'id'`, comma-separated).
+- **`bd update` has no `--reason`, `-m`, or `--message` flag** (see
+  Closure above for the full detail — `--reason` exists only on `bd close`).
+  `--notes` (replace) and `--append-notes` (append) are the message-bearing
+  flags on `update`.
+- **`bd close <id> --reason "..."` is the only place `--reason`/`-r`
+  exists.** With multiple issue IDs, `--reason` maps positionally to the IDs
+  in the order given on the command line, regardless of flag placement.
+- **`bd dep add <blocked-id> <blocker-id>` exists** and is exactly
+  equivalent to the preferred `bd dep <blocker-id> --blocks <blocked-id>`
+  form above — same easy-to-invert risk `bd dep add` already carries (the
+  arguments are `blocked` then `blocker`, the reverse of the
+  `--blocks` form's `blocker` then `blocked`), which is why `--blocks` stays
+  the recommended form; `bd dep add` is documented here only so an agent
+  that reaches for it anyway gets the argument order right.
