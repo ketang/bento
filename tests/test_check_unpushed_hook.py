@@ -1,4 +1,5 @@
 import json
+import os
 import subprocess
 import tempfile
 import unittest
@@ -76,6 +77,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
         cwd: Path | None = None,
         stop_hook_active: bool = False,
         include_cwd: bool = True,
+        session_id: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if cwd is None:
             cwd = self.hook_cwd
@@ -84,18 +86,32 @@ class CheckUnpushedHookTest(unittest.TestCase):
             payload["cwd"] = str(payload_cwd)
         if stop_hook_active:
             payload["stop_hook_active"] = True
+        if session_id is not None:
+            payload["session_id"] = session_id
         stdin = json.dumps(payload) + "\n"
-        results = [
-            subprocess.run(
-                [str(script)],
-                input=stdin,
-                cwd=cwd,
-                capture_output=True,
-                text=True,
-                check=False,
+        results = []
+        for script in HOOK_SCRIPTS:
+            # Each peer script (claude/codex) gets its own throttle-marker
+            # directory, keyed by its own parent dir name -- otherwise the
+            # first script's write would silently suppress the second
+            # script's advisory within the same _run() call and break the
+            # cross-peer equality assertion below, even though the two
+            # scripts are independently correct.
+            runtime_dir = self.root / "runtime" / script.parent.parent.name
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            env = os.environ.copy()
+            env["XDG_RUNTIME_DIR"] = str(runtime_dir)
+            results.append(
+                subprocess.run(
+                    [str(script)],
+                    input=stdin,
+                    cwd=cwd,
+                    capture_output=True,
+                    text=True,
+                    check=False,
+                    env=env,
+                )
             )
-            for script in HOOK_SCRIPTS
-        ]
         reference = results[0]
         for script, result in zip(HOOK_SCRIPTS[1:], results[1:]):
             self.assertEqual(result.returncode, reference.returncode, script)
@@ -573,6 +589,174 @@ class CheckUnpushedHookTest(unittest.TestCase):
         result = self._run(payload_cwd=repo, cwd=self.hook_cwd)
 
         self.assertEqual(result.returncode, 2, msg=result.stderr)
+
+    def test_block_message_explains_stop_fires_every_turn(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertIn("end of every turn", result.stderr)
+
+    # --- Advisory: pushed but not landed (bento-rdtn.11), exit 0 always ---
+
+    def _pushed_unlanded_feature_branch(self) -> Path:
+        """A clean, fully-pushed feature branch checked out from main, ahead
+        of origin/main by one unmerged commit -- the exact "parked" shape the
+        advisory targets."""
+        repo = self._init_repo(branch="main")
+        self._add_remote(repo, branch="main")
+        self._git(repo, "checkout", "-b", "feature-y")
+        (repo / "feature.txt").write_text("feature\n", encoding="utf-8")
+        self._git(repo, "add", "feature.txt")
+        self._git(repo, "commit", "-qm", "feature work")
+        self._git(repo, "push", "-q", "-u", "origin", "feature-y")
+        return repo
+
+    def test_advises_pushed_but_unlanded_branch(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("'feature-y' is pushed but not landed on 'main'", result.stderr)
+        self.assertIn("bento:land-work", result.stderr)
+        self.assertIn("bento:closure", result.stderr)
+
+    def test_never_advises_on_primary_branch(self) -> None:
+        repo = self._init_repo(branch="main")
+        self._add_remote(repo, branch="main")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_never_advises_on_detached_head(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+        self._git(repo, "checkout", "--detach", "HEAD")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_never_advises_when_unpushed_commits_present(self) -> None:
+        # The blocking case (unpushed commits) already covers this branch;
+        # the advisory is for the fully-pushed, otherwise-silent case only.
+        repo = self._pushed_unlanded_feature_branch()
+        (repo / "feature.txt").write_text("more\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "unpushed follow-up")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("unpushed", result.stderr)
+        self.assertNotIn("pushed but not landed", result.stderr)
+
+    def test_never_advises_when_dirty(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+        (repo / "feature.txt").write_text("dirty\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertNotIn("pushed but not landed", result.stderr)
+
+    def test_never_advises_once_landed(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+        self._git(repo, "checkout", "main")
+        self._git(repo, "merge", "--no-ff", "-q", "-m", "merge feature-y", "feature-y")
+        self._git(repo, "push", "-q")
+        self._git(repo, "checkout", "feature-y")
+        self._git(repo, "fetch", "-q", "origin")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_never_advises_after_squash_merge(self) -> None:
+        # Code review: a squash merge (e.g. GitHub's default "Squash and
+        # merge") lands the branch's content under a brand-new commit SHA on
+        # primary, so HEAD is never an ancestor of origin/main even though
+        # the work is genuinely landed. `git merge-base --is-ancestor` alone
+        # would misreport this as still-unlanded forever.
+        repo = self._pushed_unlanded_feature_branch()
+        self._git(repo, "checkout", "main")
+        self._git(repo, "merge", "--squash", "-q", "feature-y")
+        self._git(repo, "commit", "-qm", "squash-merge feature-y")
+        self._git(repo, "push", "-q")
+        self._git(repo, "checkout", "feature-y")
+        self._git(repo, "fetch", "-q", "origin")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_advisory_suppressed_by_require_landed_false(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+        (repo / ".agent-mode.local").write_text("require_landed=false\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_advisory_throttled_to_once_per_session(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+
+        first = self._run(payload_cwd=repo, session_id="sess-throttle")
+        second = self._run(payload_cwd=repo, session_id="sess-throttle")
+
+        self.assertIn("pushed but not landed", first.stderr)
+        self.assertEqual(second.returncode, 0, msg=second.stderr)
+        self.assertEqual(second.stderr, "")
+
+    def test_advisory_repeats_in_a_fresh_session(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+
+        self._run(payload_cwd=repo, session_id="sess-a")
+        second = self._run(payload_cwd=repo, session_id="sess-b")
+
+        self.assertIn("pushed but not landed", second.stderr)
+
+    def test_advisory_not_throttled_across_different_branches(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+        self._git(repo, "checkout", "main")
+        self._git(repo, "checkout", "-b", "feature-z")
+        (repo / "other.txt").write_text("other\n", encoding="utf-8")
+        self._git(repo, "add", "other.txt")
+        self._git(repo, "commit", "-qm", "other feature work")
+        self._git(repo, "push", "-q", "-u", "origin", "feature-z")
+
+        self._git(repo, "checkout", "feature-y")
+        first = self._run(payload_cwd=repo, session_id="sess-multi")
+        self._git(repo, "checkout", "feature-z")
+        second = self._run(payload_cwd=repo, session_id="sess-multi")
+
+        self.assertIn("pushed but not landed", first.stderr)
+        self.assertIn("pushed but not landed", second.stderr)
+
+    def test_never_advises_no_upstream_feature_branch(self) -> None:
+        repo = self._init_repo(branch="feature-x")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_never_advises_land_work_preview_worktree(self) -> None:
+        repo = self._pushed_unlanded_feature_branch()
+        preview_dir = self.root / "land-work-preview-abc123"
+        self._git(repo, "worktree", "add", "--detach", str(preview_dir), "feature-y")
+
+        result = self._run(payload_cwd=preview_dir, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
 
 
 if __name__ == "__main__":
