@@ -15,6 +15,7 @@ Exit 0 on success (including an all-skip run); exit 1 if any shape failed.
 from __future__ import annotations
 
 import json
+import re
 import shutil
 import subprocess
 import sys
@@ -121,10 +122,23 @@ def check_create_flags(r: Reporter) -> None:
         r.fail(name, f"absent_ok={absent} present_ok={present}")
 
 
+def _has_flag_shorthand(help_text: str, shorthand: str) -> bool:
+    """True when help_text declares a flag whose short form is exactly
+    ``-<shorthand>`` (cobra's own "-x, --longflag" line convention, line-
+    anchored so this can't match "-m" appearing mid-sentence in a
+    description -- more robust than a bare substring search against a
+    reformatted or reflowed --help output)."""
+    return bool(re.search(rf"(?m)^\s*-{re.escape(shorthand)},\s+--", help_text))
+
+
 def check_update_flags(r: Reporter) -> None:
     name = "bd update flag surface (--notes/--append-notes; no --reason/-m/--message)"
     help_text = _run("update", "--help").stdout
-    absent = all(flag not in help_text for flag in ("--reason", " -m,", "--message"))
+    absent = (
+        "--reason" not in help_text
+        and not _has_flag_shorthand(help_text, "m")
+        and "--message" not in help_text
+    )
     present = "--notes" in help_text and "--append-notes" in help_text
     if absent and present:
         r.ok(name)
@@ -141,13 +155,22 @@ def check_close_reason_flag(r: Reporter) -> None:
         r.fail(name, "-r, --reason not found in bd close --help")
 
 
-def check_dep_add_exists(r: Reporter) -> None:
-    name = "bd dep add subcommand exists"
+def check_dep_add_arg_order(r: Reporter) -> None:
+    """Verifies the documented (blocked-id, blocker-id) argument order for
+    `bd dep add`, not merely that the subcommand exists -- bd's own --help
+    states this equivalence to the recommended --blocks form verbatim, so
+    matching that exact line ties the check to the order itself, the actual
+    error-prone claim SKILL.md makes."""
+    name = "bd dep add <blocked-id> <blocker-id> argument order (equivalence to the --blocks form)"
     help_text = _run("dep", "--help").stdout
-    if "\n  add " in help_text:
+    if "bd dep add <blocked-id> <blocker-id>" in help_text:
         r.ok(name)
     else:
-        r.fail(name, "'add' subcommand not found in bd dep --help")
+        r.fail(
+            name,
+            "expected equivalence line 'bd dep add <blocked-id> <blocker-id>' not found in "
+            "bd dep --help -- the argument order (or its documentation) may have changed",
+        )
 
 
 def main() -> int:
@@ -164,7 +187,7 @@ def main() -> int:
     check_create_flags(r)
     check_update_flags(r)
     check_close_reason_flag(r)
-    check_dep_add_exists(r)
+    check_dep_add_arg_order(r)
 
     return 1 if r.failed else 0
 
