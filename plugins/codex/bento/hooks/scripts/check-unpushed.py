@@ -44,6 +44,7 @@ session directory is read from the stdin JSON payload's ``cwd`` field, never
 from $PWD or the process CWD.
 """
 
+import fcntl
 import json
 import os
 import subprocess
@@ -77,8 +78,8 @@ def repo_root(cwd: str) -> str | None:
     return root if result.returncode == 0 and root else None
 
 
-def is_suppressed(root: str) -> bool:
-    """True when .agent-mode.local sets require_pushed=false."""
+def _agent_mode_flag_is_false(root: str, flag: str) -> bool:
+    """True when .agent-mode.local sets ``<flag>=false``."""
     config = Path(root) / ".agent-mode.local"
     try:
         lines = config.read_text(encoding="utf-8").splitlines()
@@ -89,9 +90,14 @@ def is_suppressed(root: str) -> bool:
         if not line or line.startswith("#"):
             continue
         key, _, value = line.partition("=")
-        if key.strip() == "require_pushed" and value.strip() == "false":
+        if key.strip() == flag and value.strip() == "false":
             return True
     return False
+
+
+def is_suppressed(root: str) -> bool:
+    """True when .agent-mode.local sets require_pushed=false."""
+    return _agent_mode_flag_is_false(root, "require_pushed")
 
 
 def current_branch(root: str) -> str:
@@ -390,33 +396,10 @@ def has_only_operational_beads_commits(root: str) -> bool:
     return True
 
 
-def block_reason(hook_input: dict) -> str | None:
-    """Return a blocking stderr message, or None to allow the stop."""
-    if hook_input.get("stop_hook_active"):
-        return None
-
-    cwd = hook_input.get("cwd") or ""
-    if not cwd or not os.path.isdir(cwd):
-        return None
-
-    root = repo_root(cwd)
-    if root is None:
-        return None
-
-    if is_suppressed(root):
-        return None
-
-    if is_land_work_preview(root):
-        return None
-
-    if is_land_work_integration_worktree(root):
-        return None
-
-    if has_in_progress_operation(root):
-        return None
-
+def _block_message(root: str, dirty: bool) -> str | None:
+    """Blocking message for a dirty tree or unpushed commits, or None."""
     problems: list[str] = []
-    if is_dirty(root) and not has_only_operational_beads_changes(root):
+    if dirty and not has_only_operational_beads_changes(root):
         problems.append("uncommitted changes")
 
     # A missing upstream is a warning, not a block, so worktree flows that have
@@ -450,19 +433,26 @@ def is_landed_check_suppressed(root: str) -> bool:
     """True when .agent-mode.local sets require_landed=false. Independent of
     require_pushed=false, which suppresses the (separate) blocking check
     above."""
-    config = Path(root) / ".agent-mode.local"
-    try:
-        lines = config.read_text(encoding="utf-8").splitlines()
-    except OSError:
+    return _agent_mode_flag_is_false(root, "require_landed")
+
+
+def is_landed_on_primary(root: str, primary: str) -> bool:
+    """True when HEAD's content is already on origin/<primary> -- either as
+    a real ancestor (a merge commit or fast-forward), or patch-equivalent
+    (every commit shows as "-" in `git cherry`: same diff, different SHA).
+    The ancestor check alone is not enough: a squash-merge or rebase-merge
+    (e.g. GitHub's default "Squash and merge") lands the branch's content
+    without HEAD ever becoming an ancestor of the target, which would
+    otherwise make a genuinely landed branch look permanently unlanded.
+    Mirrors closure-scan.py's own unique_patch_count == 0 patch-equivalence
+    check for the identical reason."""
+    if _git(root, "merge-base", "--is-ancestor", "HEAD", f"origin/{primary}").returncode == 0:
+        return True
+    cherry = _git(root, "cherry", f"origin/{primary}", "HEAD")
+    if cherry.returncode != 0:
         return False
-    for line in lines:
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        key, _, value = line.partition("=")
-        if key.strip() == "require_landed" and value.strip() == "false":
-            return True
-    return False
+    lines = [line for line in cherry.stdout.splitlines() if line.strip()]
+    return all(line.startswith("-") for line in lines)
 
 
 def detect_primary_branch(root: str) -> str:
@@ -502,8 +492,8 @@ def pushed_but_unlanded_primary(root: str, branch: str) -> str | None:
     remote_primary_ref = f"refs/remotes/origin/{primary}"
     if _git(root, "rev-parse", "--verify", "--quiet", remote_primary_ref).returncode != 0:
         return None
-    if _git(root, "merge-base", "--is-ancestor", "HEAD", f"origin/{primary}").returncode == 0:
-        return None  # already landed
+    if is_landed_on_primary(root, primary):
+        return None
     return primary
 
 
@@ -512,75 +502,96 @@ def _throttle_state_path(session_id: str) -> Path:
     return Path(base) / f"bento-check-unpushed-{session_id}.json"
 
 
-def _read_throttle_state(session_id: str) -> set:
+def already_advised_this_session(session_id: str, root: str, branch: str) -> bool:
+    """No session_id (an unexpected payload shape) fails toward showing the
+    advisory rather than silently throttling forever. Lock-free read: a read
+    racing a concurrent locked write (below) can at worst see stale state and
+    fail toward showing the advisory again, never toward wrongly suppressing
+    a real one."""
+    if not session_id:
+        return False
     try:
         data = json.loads(_throttle_state_path(session_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return set()
-    advised = data.get("advised") if isinstance(data, dict) else None
-    return set(advised) if isinstance(advised, list) else set()
-
-
-def already_advised_this_session(session_id: str, root: str, branch: str) -> bool:
-    """No session_id (an unexpected payload shape) fails toward showing the
-    advisory rather than silently throttling forever."""
-    if not session_id:
         return False
-    return f"{root}:{branch}" in _read_throttle_state(session_id)
+    advised = data.get("advised") if isinstance(data, dict) else None
+    return isinstance(advised, list) and f"{root}:{branch}" in advised
 
 
 def record_advised_this_session(session_id: str, root: str, branch: str) -> None:
+    """Locked read-modify-write: two Stop invocations for the same session
+    firing close together must not race and drop one's entry (a plain
+    read-then-write, each on its own copy of the pre-update state, could
+    otherwise let a third invocation see neither and re-show the advisory)."""
     if not session_id:
         return
+    path = _throttle_state_path(session_id)
     try:
-        advised = _read_throttle_state(session_id) | {f"{root}:{branch}"}
-        path = _throttle_state_path(session_id)
-        path.write_text(json.dumps({"advised": sorted(advised)}), encoding="utf-8")
+        with open(path, "a+", encoding="utf-8") as handle:
+            fcntl.flock(handle, fcntl.LOCK_EX)
+            handle.seek(0)
+            try:
+                data = json.loads(handle.read() or "{}")
+            except ValueError:
+                data = {}
+            advised = set(data.get("advised", [])) if isinstance(data, dict) else set()
+            advised.add(f"{root}:{branch}")
+            handle.seek(0)
+            handle.truncate()
+            handle.write(json.dumps({"advised": sorted(advised)}))
     except OSError:
         pass
 
 
-def advisory_message(hook_input: dict) -> str | None:
-    """Return a non-blocking advisory stderr message, or None to stay
-    silent. Never raises: callers must still treat any exception as silence,
-    matching block_reason()'s own contract."""
+def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
+    """Return (block_reason, advisory_message) -- at most one is non-None.
+    Shares the root resolution and worktree-kind/in-progress-operation
+    exemptions between the two checks instead of recomputing them twice per
+    Stop invocation (they read from the same repo state either way)."""
     if hook_input.get("stop_hook_active"):
-        return None
+        return None, None
 
     cwd = hook_input.get("cwd") or ""
     if not cwd or not os.path.isdir(cwd):
-        return None
+        return None, None
 
     root = repo_root(cwd)
     if root is None:
-        return None
-
-    if is_landed_check_suppressed(root):
-        return None
+        return None, None
 
     if is_land_work_preview(root):
-        return None
+        return None, None
 
     if is_land_work_integration_worktree(root):
-        return None
+        return None, None
 
     if has_in_progress_operation(root):
-        return None
+        return None, None
 
-    if is_dirty(root):
-        return None  # the blocking check above already covers a dirty tree
+    dirty = is_dirty(root)
+
+    if not is_suppressed(root):
+        block = _block_message(root, dirty)
+        if block:
+            return block, None
+
+    if is_landed_check_suppressed(root):
+        return None, None
+
+    if dirty:
+        return None, None  # the blocking check above already covers a dirty tree
 
     branch = current_branch(root)
     primary = pushed_but_unlanded_primary(root, branch)
     if primary is None:
-        return None
+        return None, None
 
     session_id = hook_input.get("session_id") or ""
     if already_advised_this_session(session_id, root, branch):
-        return None
+        return None, None
     record_advised_this_session(session_id, root, branch)
 
-    return (
+    return None, (
         f"'{branch}' is pushed but not landed on '{primary}' — run "
         "bento:land-work (or bento:closure for abandoned work).\n"
     )
@@ -593,7 +604,7 @@ def main() -> int:
         # Never break session stop on a malformed payload.
         return 0
     try:
-        reason = block_reason(hook_input)
+        reason, advisory = evaluate(hook_input)
     except Exception:
         # Never break session stop on an unexpected git/filesystem error.
         return 0
@@ -603,11 +614,6 @@ def main() -> int:
         # failure and lets the stop proceed, so the hook must use 2 to block.
         sys.stderr.write(reason)
         return 2
-    try:
-        advisory = advisory_message(hook_input)
-    except Exception:
-        # Never break session stop on an unexpected git/filesystem error.
-        return 0
     if advisory:
         sys.stderr.write(advisory)
     return 0

@@ -677,6 +677,25 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_never_advises_after_squash_merge(self) -> None:
+        # Code review: a squash merge (e.g. GitHub's default "Squash and
+        # merge") lands the branch's content under a brand-new commit SHA on
+        # primary, so HEAD is never an ancestor of origin/main even though
+        # the work is genuinely landed. `git merge-base --is-ancestor` alone
+        # would misreport this as still-unlanded forever.
+        repo = self._pushed_unlanded_feature_branch()
+        self._git(repo, "checkout", "main")
+        self._git(repo, "merge", "--squash", "-q", "feature-y")
+        self._git(repo, "commit", "-qm", "squash-merge feature-y")
+        self._git(repo, "push", "-q")
+        self._git(repo, "checkout", "feature-y")
+        self._git(repo, "fetch", "-q", "origin")
+
+        result = self._run(payload_cwd=repo, session_id="sess-1")
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
     def test_advisory_suppressed_by_require_landed_false(self) -> None:
         repo = self._pushed_unlanded_feature_branch()
         (repo / ".agent-mode.local").write_text("require_landed=false\n", encoding="utf-8")
