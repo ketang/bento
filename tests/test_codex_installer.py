@@ -192,6 +192,21 @@ class CodexInstallerTest(unittest.TestCase):
         self.assertEqual(len(bento_cache_versions), 1)
         self.assertTrue((bento_cache_versions[0] / ".codex-plugin" / "plugin.json").exists())
 
+    def test_home_install_preserves_recent_cache_generations(self) -> None:
+        install_root = self.root / "home-retained-cache"
+        cache_generation = (
+            install_root / ".codex" / "plugins" / "cache" / "bento" / "bento" / "previous"
+        )
+        cache_generation.mkdir(parents=True)
+        (cache_generation / "marker.txt").write_text("keep\n", encoding="utf-8")
+
+        _plugin_root, _marketplace_path, codex_cache_root, _config, _result = self.run_installer(
+            "home", install_root, enable_codex=True
+        )
+
+        self.assertEqual((cache_generation / "marker.txt").read_text(encoding="utf-8"), "keep\n")
+        self.assertGreater(len(list((codex_cache_root / "bento").iterdir())), 1)
+
     def test_installer_manifest_matches_built_codex_plugin_dirs(self) -> None:
         # The installer derives its plugin list from plugins/codex/plugin-names.txt.
         # That manifest must list exactly the built codex plugin dirs, so a newly

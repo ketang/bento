@@ -145,6 +145,14 @@ if [[ -n "$CODEX_PLUGIN_CACHE_ROOT" && "${#CODEX_ENABLED_PLUGINS[@]}" -gt 0 ]]; 
       echo "missing installed plugin bundle for Codex cache: ${plugin}" >&2
       exit 1
     fi
+    if [[ -e "${src}/.claude-plugin" ]]; then
+      echo "refusing non-Codex plugin bundle in Codex cache: ${plugin}" >&2
+      exit 1
+    fi
+    if [[ -f "${src}/hooks/hooks.json" ]] && grep -Fq '${CLAUDE_PLUGIN_ROOT}' "${src}/hooks/hooks.json"; then
+      echo "refusing Claude hook root in Codex plugin bundle: ${plugin}" >&2
+      exit 1
+    fi
 
     cache_key="$(python3 - "$src" <<'PY'
 import hashlib
@@ -162,12 +170,21 @@ PY
     staging="${CODEX_PLUGIN_CACHE_ROOT}/.${plugin}.tmp"
 
     mkdir -p "$CODEX_PLUGIN_CACHE_ROOT"
+    # A manifest at the plugin-cache root identifies the pre-keyed legacy
+    # layout, not a generation directory. It cannot be retained safely.
+    if [[ -e "${plugin_cache_dir}/.codex-plugin" ]]; then
+      rm -rf "$plugin_cache_dir"
+    fi
     rm -rf "$staging"
     mkdir -p "$staging"
     cp -R "${src}/." "$staging/"
-    rm -rf "$plugin_cache_dir"
     mkdir -p "$plugin_cache_dir"
+    rm -rf "$dest"
     mv "$staging" "$dest"
+    # Retain recent generations for active and resumed sessions whose hooks
+    # still refer to an absolute cache path. Hidden staging entries are not
+    # generations and are deliberately excluded.
+    find "$plugin_cache_dir" -mindepth 1 -maxdepth 1 -type d ! -name '.*' ! -path "$dest" -mtime +30 -exec rm -rf {} +
     CODEX_CACHE_KEYS["$plugin"]="$cache_key"
   done
 fi
