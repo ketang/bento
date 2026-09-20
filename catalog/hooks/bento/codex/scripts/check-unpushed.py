@@ -62,6 +62,8 @@ OPERATIONAL_BEADS_PATHS = frozenset(
     }
 )
 
+TURN_HOLD_PREFIX = "bento-check-unpushed-hold-"
+
 
 def _git(root: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(
@@ -98,6 +100,44 @@ def _agent_mode_flag_is_false(root: str, flag: str) -> bool:
 def is_suppressed(root: str) -> bool:
     """True when .agent-mode.local sets require_pushed=false."""
     return _agent_mode_flag_is_false(root, "require_pushed")
+
+
+def _runtime_dir() -> Path:
+    """Return an absolute runtime directory, falling back safely to /tmp."""
+    configured = os.environ.get("XDG_RUNTIME_DIR")
+    if configured:
+        candidate = Path(configured)
+        if candidate.is_absolute() and candidate.is_dir():
+            return candidate
+    return Path("/tmp")
+
+
+def _turn_hold_path(session_id: str) -> Path | None:
+    """Return the one-turn hold marker for a safe runtime session ID.
+
+    The marker is deliberately outside the repository so a teammate can honor
+    a coordinating lead's temporary hold without changing shared project
+    configuration or making the worktree dirtier. This is cooperative, not a
+    trusted authorization mechanism. Session IDs are runtime input, so reject
+    path-shaped values before incorporating one into a filename.
+    """
+    if not session_id or set(session_id) <= {"."}:
+        return None
+    if any(not (character.isalnum() or character in "._-") for character in session_id):
+        return None
+    return _runtime_dir() / f"{TURN_HOLD_PREFIX}{session_id}"
+
+
+def consume_turn_hold(session_id: str) -> bool:
+    """Consume a cooperative, session-scoped hold for one Stop boundary."""
+    path = _turn_hold_path(session_id)
+    if path is None:
+        return False
+    try:
+        path.unlink()
+    except OSError:
+        return False
+    return True
 
 
 def current_branch(root: str) -> str:
@@ -396,7 +436,7 @@ def has_only_operational_beads_commits(root: str) -> bool:
     return True
 
 
-def _block_message(root: str, dirty: bool) -> str | None:
+def _block_message(root: str, dirty: bool, session_id: str) -> str | None:
     """Blocking message for a dirty tree or unpushed commits, or None."""
     problems: list[str] = []
     if dirty and not has_only_operational_beads_changes(root):
@@ -416,7 +456,7 @@ def _block_message(root: str, dirty: bool) -> str | None:
 
     branch = current_branch(root) or "(detached HEAD)"
     joined = " and ".join(problems)
-    return (
+    message = (
         f"Session end blocked: branch '{branch}' has {joined}.\n"
         "Commit and push your work before ending the session. Note: Stop fires "
         "at the end of every turn, not only when the session truly ends, so "
@@ -424,6 +464,15 @@ def _block_message(root: str, dirty: bool) -> str | None:
         "To suppress this check for this repo, add 'require_pushed=false' to "
         ".agent-mode.local.\n"
     )
+    if _turn_hold_path(session_id) is not None:
+        marker_name = f"{TURN_HOLD_PREFIX}{session_id}"
+        message += (
+            "If your coordinating lead explicitly instructed you to hold work "
+            "open, create the session marker "
+            f"'{marker_name}' under $XDG_RUNTIME_DIR (or /tmp) before yielding. "
+            "It permits exactly one Stop boundary and is then consumed.\n"
+        )
+    return message
 
 
 # --- pushed-but-not-landed advisory (bento-rdtn.11) -------------------------
@@ -498,8 +547,7 @@ def pushed_but_unlanded_primary(root: str, branch: str) -> str | None:
 
 
 def _throttle_state_path(session_id: str) -> Path:
-    base = os.environ.get("XDG_RUNTIME_DIR") or "/tmp"
-    return Path(base) / f"bento-check-unpushed-{session_id}.json"
+    return _runtime_dir() / f"bento-check-unpushed-{session_id}.json"
 
 
 def already_advised_this_session(session_id: str, root: str, branch: str) -> bool:
@@ -571,8 +619,10 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
     dirty = is_dirty(root)
 
     if not is_suppressed(root):
-        block = _block_message(root, dirty)
+        block = _block_message(root, dirty, hook_input.get("session_id") or "")
         if block:
+            if consume_turn_hold(hook_input.get("session_id") or ""):
+                return None, None
             return block, None
 
     if is_landed_check_suppressed(root):

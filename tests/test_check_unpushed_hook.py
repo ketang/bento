@@ -78,6 +78,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
         stop_hook_active: bool = False,
         include_cwd: bool = True,
         session_id: str | None = None,
+        runtime_base: Path | str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if cwd is None:
             cwd = self.hook_cwd
@@ -97,7 +98,11 @@ class CheckUnpushedHookTest(unittest.TestCase):
             # script's advisory within the same _run() call and break the
             # cross-peer equality assertion below, even though the two
             # scripts are independently correct.
-            runtime_dir = self.root / "runtime" / script.parent.parent.name
+            runtime_dir = (
+                Path(runtime_base)
+                if runtime_base is not None
+                else self.root / "runtime" / script.parent.parent.name
+            )
             runtime_dir.mkdir(parents=True, exist_ok=True)
             env = os.environ.copy()
             env["XDG_RUNTIME_DIR"] = str(runtime_dir)
@@ -118,6 +123,13 @@ class CheckUnpushedHookTest(unittest.TestCase):
             self.assertEqual(result.stderr, reference.stderr, script)
         return reference
 
+    def _grant_one_turn_hold(self, session_id: str) -> None:
+        """Allow exactly one Stop boundary for each peer hook runtime."""
+        for script in HOOK_SCRIPTS:
+            runtime_dir = self.root / "runtime" / script.parent.parent.name
+            runtime_dir.mkdir(parents=True, exist_ok=True)
+            (runtime_dir / f"bento-check-unpushed-hold-{session_id}").touch()
+
     # --- Blocking cases: exit exactly 2 (not 1 — exit 1 is non-blocking) ---
 
     def test_blocks_dirty_tree(self) -> None:
@@ -136,6 +148,37 @@ class CheckUnpushedHookTest(unittest.TestCase):
         )
         self.assertIn("uncommitted changes", result.stderr)
         self.assertIn("main", result.stderr)
+
+    def test_allows_one_turn_hold_for_coordinating_subagent(self) -> None:
+        # A lead can direct one teammate to create this session-scoped marker
+        # before it yields, preserving an explicit temporary hold without
+        # disabling the protection for other worktrees or later turns.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("held for lead decision\n", encoding="utf-8")
+        session_id = "subagent-hold-1"
+        self._grant_one_turn_hold(session_id)
+
+        first = self._run(payload_cwd=repo, session_id=session_id)
+        second = self._run(payload_cwd=repo, session_id=session_id)
+
+        self.assertEqual(first.returncode, 0, msg=first.stderr)
+        self.assertEqual(first.stderr, "")
+        self.assertEqual(second.returncode, 2, msg=second.stderr)
+        self.assertIn("uncommitted changes", second.stderr)
+
+    def test_relative_runtime_dir_cannot_place_hold_marker_in_process_cwd(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        session_id = "relative-runtime-1"
+        marker = self.hook_cwd / f"bento-check-unpushed-hold-{session_id}"
+        marker.touch()
+
+        result = self._run(payload_cwd=repo, session_id=session_id, runtime_base=".")
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertTrue(marker.exists())
 
     def test_blocks_untracked_file(self) -> None:
         repo = self._init_repo()
