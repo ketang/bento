@@ -96,7 +96,13 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
 
   `check-unpushed` (`Stop`) blocks (exit 2) ending a turn with a dirty tree
   or unpushed commits, naming the exact problem and branch; suppress with
-  `require_pushed=false`. A clean, fully-pushed feature branch that is not
+  `require_pushed=false`. For a cooperative coordination hold, a teammate can
+  create the session-scoped marker named in the block message under
+  `$XDG_RUNTIME_DIR` (or `/tmp`); it allows exactly one Stop boundary and
+  consumes the marker, without disabling the check for later turns. This is
+  an operational escape hatch, not trusted authorization against a rogue
+  agent. A clean,
+  fully-pushed feature branch that is not
   yet landed (not the primary branch, not an ancestor of `origin/<primary>`)
   instead gets a non-blocking advisory line on stderr pointing at
   `land-work`/`closure` (bento-rdtn.11) — throttled to once per session per
