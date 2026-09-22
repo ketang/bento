@@ -38,11 +38,13 @@ IDENTICAL_GROUPS = [
         ],
     ),
     (
-        "_agent_plugins_bootstrap.py (agent_plugins_resolver sys.path bootstrap)",
+        "_agent_plugins_bootstrap.py (launch-work/scripts sys.path bootstrap)",
         [
             "catalog/skills/cross-check/scripts/_agent_plugins_bootstrap.py",
             "catalog/skills/handoff/scripts/_agent_plugins_bootstrap.py",
+            "catalog/skills/land-work/scripts/_agent_plugins_bootstrap.py",
             "catalog/skills/swarm/scripts/_agent_plugins_bootstrap.py",
+            "catalog/skills/wire-land-verifier/scripts/_agent_plugins_bootstrap.py",
         ],
     ),
     (
