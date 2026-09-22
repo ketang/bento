@@ -75,6 +75,14 @@ _PATH_CWD_TARGETS = {"pathlib.Path.cwd"}
 _ENVIRON_PWD_SUBSCRIPT_TARGETS = {"os.environ"}
 _ENVIRON_PWD_GET_TARGETS = {"os.environ.get"}
 
+# Modules whose star import (`from os import *`) can smuggle in a
+# process-CWD primitive (os.getcwd, os.environ, pathlib.Path) under a bare
+# name that `_collect_import_aliases` cannot enumerate ahead of time --
+# star imports pull in whatever the module's `__all__` happens to export.
+# Rather than guess at every such name, a star import from one of these
+# modules is flagged as its own violation in hook scripts.
+_CWD_RELEVANT_STAR_MODULES = {"os", "os.path", "pathlib"}
+
 # `os.environ` bases recognized as decoys by `_decoy_dependencies` -- shared
 # by both callers so they can't drift on which environ spellings count.
 _ENVIRON_CWD_TARGETS = _ENVIRON_PWD_SUBSCRIPT_TARGETS | _ENVIRON_PWD_GET_TARGETS
@@ -149,6 +157,22 @@ def _collect_import_aliases(tree: ast.AST) -> dict[str, str]:
                 local = alias.asname or alias.name
                 aliases[local] = f"{node.module}.{alias.name}"
     return aliases
+
+
+def _star_import_violations(tree: ast.AST) -> list[tuple[int, str]]:
+    """Return (lineno, module) for each `from <module> import *` where
+    <module> is one that could smuggle a process-CWD primitive (os.getcwd,
+    os.environ, pathlib.Path) into scope under a name `_collect_import_aliases`
+    has no way to predict -- star imports bind whatever the module exports,
+    so they are flagged as a violation in their own right rather than guessed
+    at."""
+    found: list[tuple[int, str]] = []
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom) and node.module in _CWD_RELEVANT_STAR_MODULES:
+            for alias in node.names:
+                if alias.name == "*":
+                    found.append((node.lineno, node.module))
+    return found
 
 
 def _resolve_dotted(node: ast.AST, aliases: dict[str, str]) -> str | None:
@@ -585,6 +609,19 @@ def check_python_source(text: str, path: Path) -> list[Finding]:
         tree = ast.parse(text)
     except SyntaxError as exc:  # pragma: no cover - defensive
         return [Finding(path, exc.lineno or 1, f"could not parse: {exc.msg}")]
+
+    for lineno, module in _star_import_violations(tree):
+        if not _is_exempt(lineno, lines, exempt):
+            findings.append(
+                Finding(
+                    path,
+                    lineno,
+                    f"star-imports from `{module}`, which can hide a process-CWD "
+                    "primitive (os.getcwd, os.environ, pathlib.Path) from this "
+                    "lint under an unpredictable name; use explicit imports "
+                    "instead",
+                )
+            )
 
     calls = _python_primitive_calls(tree)
     for lineno, label in calls:
