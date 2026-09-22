@@ -25,6 +25,19 @@ branches), and a worktree with an in-progress rebase/merge/cherry-pick (its
 detached HEAD and staged files are normal mid-operation state, not abandoned
 work).
 
+A block that repeats with the exact same problem kinds (still dirty, still
+unpushed) within the same session is condensed to a one-line reminder instead
+of re-emitting the full explanatory text every turn (bento-neng) -- Stop fires
+at the end of every turn, so a long unpushed work session would otherwise see
+the identical full message dozens of times in a row. The full message returns
+whenever the problem kinds change (e.g. a clean-but-unpushed branch goes
+dirty) or in a fresh session. This never changes whether the hook blocks --
+exit 2 fires every time there is a real problem, regardless of whether the
+message is full or condensed; only the verbosity is throttled, using the same
+session-scoped runtime-dir marker mechanism as the advisory throttle below.
+Without a session_id there is nowhere safe to persist "already shown," so the
+full message is always shown in that case.
+
 When none of the above apply and the branch is clean and fully pushed (the
 case that otherwise passes in total silence), a second, non-blocking check
 (bento-rdtn.11) looks for a branch that is pushed but never landed: not the
@@ -436,11 +449,17 @@ def has_only_operational_beads_commits(root: str) -> bool:
     return True
 
 
-def _block_message(root: str, dirty: bool, session_id: str) -> str | None:
-    """Blocking message for a dirty tree or unpushed commits, or None."""
-    problems: list[str] = []
+def _classify_problems(root: str, dirty: bool) -> list[tuple[str, str]]:
+    """Return (kind, human-readable text) pairs for each active problem.
+
+    ``kind`` is a stable category ("dirty", "unpushed") used to detect
+    whether the *shape* of the problem changed between turns, independent of
+    the exact count in the text (which is expected to keep changing, e.g. as
+    unpushed commits accumulate).
+    """
+    problems: list[tuple[str, str]] = []
     if dirty and not has_only_operational_beads_changes(root):
-        problems.append("uncommitted changes")
+        problems.append(("dirty", "uncommitted changes"))
 
     # A missing upstream is a warning, not a block, so worktree flows that have
     # not pushed a first commit are not trapped. Only count ahead commits when
@@ -449,13 +468,16 @@ def _block_message(root: str, dirty: bool, session_id: str) -> str | None:
         ahead = ahead_count(root)
         if ahead > 0 and not has_only_operational_beads_commits(root):
             noun = "commit" if ahead == 1 else "commits"
-            problems.append(f"{ahead} unpushed {noun}")
+            problems.append(("unpushed", f"{ahead} unpushed {noun}"))
 
-    if not problems:
-        return None
+    return problems
 
+
+def _render_full_block_message(
+    root: str, problems: list[tuple[str, str]], session_id: str
+) -> str:
     branch = current_branch(root) or "(detached HEAD)"
-    joined = " and ".join(problems)
+    joined = " and ".join(text for _, text in problems)
     message = (
         f"Session end blocked: branch '{branch}' has {joined}.\n"
         "Commit and push your work before ending the session. Note: Stop fires "
@@ -473,6 +495,16 @@ def _block_message(root: str, dirty: bool, session_id: str) -> str | None:
             "It permits exactly one Stop boundary and is then consumed.\n"
         )
     return message
+
+
+def _render_condensed_block_message(root: str, problems: list[tuple[str, str]]) -> str:
+    branch = current_branch(root) or "(detached HEAD)"
+    joined = " and ".join(text for _, text in problems)
+    return (
+        f"Session end still blocked: branch '{branch}' has {joined} "
+        "(unchanged in kind since an earlier turn this session -- see that "
+        "message for remediation).\n"
+    )
 
 
 # --- pushed-but-not-landed advisory (bento-rdtn.11) -------------------------
@@ -550,27 +582,24 @@ def _throttle_state_path(session_id: str) -> Path:
     return _runtime_dir() / f"bento-check-unpushed-{session_id}.json"
 
 
-def already_advised_this_session(session_id: str, root: str, branch: str) -> bool:
-    """No session_id (an unexpected payload shape) fails toward showing the
-    advisory rather than silently throttling forever. Lock-free read: a read
-    racing a concurrent locked write (below) can at worst see stale state and
-    fail toward showing the advisory again, never toward wrongly suppressing
-    a real one."""
+def _read_session_state(session_id: str) -> dict:
+    """Lock-free read of the whole per-session state file. A read racing a
+    concurrent locked write (below) can at worst see stale state, which fails
+    toward showing a message again, never toward wrongly suppressing one."""
     if not session_id:
-        return False
+        return {}
     try:
         data = json.loads(_throttle_state_path(session_id).read_text(encoding="utf-8"))
     except (OSError, ValueError):
-        return False
-    advised = data.get("advised") if isinstance(data, dict) else None
-    return isinstance(advised, list) and f"{root}:{branch}" in advised
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
-def record_advised_this_session(session_id: str, root: str, branch: str) -> None:
-    """Locked read-modify-write: two Stop invocations for the same session
-    firing close together must not race and drop one's entry (a plain
-    read-then-write, each on its own copy of the pre-update state, could
-    otherwise let a third invocation see neither and re-show the advisory)."""
+def _update_session_state(session_id: str, mutate) -> None:
+    """Locked read-modify-write of the whole per-session state file. Two Stop
+    invocations for the same session firing close together must not race and
+    drop one's update (a plain read-then-write, each on its own copy of the
+    pre-update state, could otherwise let a third invocation see neither)."""
     if not session_id:
         return
     path = _throttle_state_path(session_id)
@@ -582,13 +611,54 @@ def record_advised_this_session(session_id: str, root: str, branch: str) -> None
                 data = json.loads(handle.read() or "{}")
             except ValueError:
                 data = {}
-            advised = set(data.get("advised", [])) if isinstance(data, dict) else set()
-            advised.add(f"{root}:{branch}")
+            if not isinstance(data, dict):
+                data = {}
+            mutate(data)
             handle.seek(0)
             handle.truncate()
-            handle.write(json.dumps({"advised": sorted(advised)}))
+            handle.write(json.dumps(data))
     except OSError:
         pass
+
+
+def already_advised_this_session(session_id: str, root: str, branch: str) -> bool:
+    """No session_id (an unexpected payload shape) fails toward showing the
+    advisory rather than silently throttling forever."""
+    advised = _read_session_state(session_id).get("advised")
+    return isinstance(advised, list) and f"{root}:{branch}" in advised
+
+
+def record_advised_this_session(session_id: str, root: str, branch: str) -> None:
+    def mutate(data: dict) -> None:
+        advised = set(data.get("advised", [])) if isinstance(data.get("advised"), list) else set()
+        advised.add(f"{root}:{branch}")
+        data["advised"] = sorted(advised)
+
+    _update_session_state(session_id, mutate)
+
+
+def previous_block_kinds(session_id: str, root: str, branch: str) -> frozenset[str] | None:
+    """The set of problem kinds ("dirty", "unpushed") blocked last time in
+    this session for this (root, branch), or None if nothing was recorded yet
+    (including when there is no session_id to key on)."""
+    blocked = _read_session_state(session_id).get("blocked_kinds")
+    if not isinstance(blocked, dict):
+        return None
+    kinds = blocked.get(f"{root}:{branch}")
+    if not isinstance(kinds, list):
+        return None
+    return frozenset(kinds)
+
+
+def record_block_kinds(session_id: str, root: str, branch: str, kinds: frozenset[str]) -> None:
+    def mutate(data: dict) -> None:
+        blocked = data.get("blocked_kinds")
+        if not isinstance(blocked, dict):
+            blocked = {}
+        blocked[f"{root}:{branch}"] = sorted(kinds)
+        data["blocked_kinds"] = blocked
+
+    _update_session_state(session_id, mutate)
 
 
 def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
@@ -617,13 +687,20 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
         return None, None
 
     dirty = is_dirty(root)
+    session_id = hook_input.get("session_id") or ""
 
     if not is_suppressed(root):
-        block = _block_message(root, dirty, hook_input.get("session_id") or "")
-        if block:
-            if consume_turn_hold(hook_input.get("session_id") or ""):
+        problems = _classify_problems(root, dirty)
+        if problems:
+            if consume_turn_hold(session_id):
                 return None, None
-            return block, None
+            branch = current_branch(root)
+            kinds = frozenset(kind for kind, _ in problems)
+            previous_kinds = previous_block_kinds(session_id, root, branch)
+            record_block_kinds(session_id, root, branch, kinds)
+            if previous_kinds == kinds:
+                return _render_condensed_block_message(root, problems), None
+            return _render_full_block_message(root, problems, session_id), None
 
     if is_landed_check_suppressed(root):
         return None, None
@@ -636,7 +713,6 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
     if primary is None:
         return None, None
 
-    session_id = hook_input.get("session_id") or ""
     if already_advised_this_session(session_id, root, branch):
         return None, None
     record_advised_this_session(session_id, root, branch)

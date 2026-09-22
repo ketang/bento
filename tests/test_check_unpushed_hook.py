@@ -171,14 +171,33 @@ class CheckUnpushedHookTest(unittest.TestCase):
         repo = self._init_repo()
         self._add_remote(repo)
         (repo / "README.md").write_text("dirty\n", encoding="utf-8")
-        session_id = "relative-runtime-1"
-        marker = self.hook_cwd / f"bento-check-unpushed-hold-{session_id}"
-        marker.touch()
+        # A distinct session_id per peer script, not the shared cross-peer
+        # `_run()` helper: with runtime_base="." forcing a relative
+        # XDG_RUNTIME_DIR, _runtime_dir() rejects it and both scripts fall
+        # back to the same /tmp regardless of runtime_base. A shared
+        # session_id would then let the first script's block-state write
+        # (bento-neng) be observed by the second script's read, which is a
+        # sequencing artifact of this test (two subprocess calls sharing one
+        # fallback directory), not a real claude/codex behavioral difference
+        # -- both scripts are byte-identical files.
+        for index, script in enumerate(HOOK_SCRIPTS):
+            session_id = f"relative-runtime-1-{index}"
+            marker = self.hook_cwd / f"bento-check-unpushed-hold-{session_id}"
+            marker.touch()
+            env = os.environ.copy()
+            env["XDG_RUNTIME_DIR"] = "."
+            result = subprocess.run(
+                [str(script)],
+                input=json.dumps({"cwd": str(repo), "session_id": session_id}) + "\n",
+                cwd=self.hook_cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+                env=env,
+            )
 
-        result = self._run(payload_cwd=repo, session_id=session_id, runtime_base=".")
-
-        self.assertEqual(result.returncode, 2, msg=result.stderr)
-        self.assertTrue(marker.exists())
+            self.assertEqual(result.returncode, 2, msg=(script, result.stderr))
+            self.assertTrue(marker.exists(), script)
 
     def test_blocks_untracked_file(self) -> None:
         repo = self._init_repo()
@@ -641,6 +660,115 @@ class CheckUnpushedHookTest(unittest.TestCase):
         result = self._run(payload_cwd=repo)
 
         self.assertIn("end of every turn", result.stderr)
+
+    # --- Block-message throttling (bento-neng): condense identical repeats ---
+
+    def test_block_message_condensed_on_repeated_identical_state(self) -> None:
+        # Same session, same dirty state, two consecutive Stop fires: the
+        # second must still block (exit 2) but must not repeat the full
+        # explanatory text -- that's the "nags every turn" complaint.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+        first = self._run(payload_cwd=repo, session_id="sess-condense-1")
+        second = self._run(payload_cwd=repo, session_id="sess-condense-1")
+
+        self.assertEqual(first.returncode, 2, msg=first.stderr)
+        self.assertIn("end of every turn", first.stderr)
+        self.assertEqual(second.returncode, 2, msg=second.stderr)
+        self.assertIn("uncommitted changes", second.stderr)
+        self.assertNotIn("end of every turn", second.stderr)
+
+    def test_block_message_condensed_persists_as_unpushed_count_climbs(self) -> None:
+        # The real-world case (bento-neng): the agent keeps committing without
+        # pushing, so the unpushed count changes every turn even though the
+        # *kind* of problem (still unpushed, nothing new) has not. That must
+        # still condense rather than re-emitting the full message solely
+        # because the count ticked up.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("v2\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "second")
+
+        first = self._run(payload_cwd=repo, session_id="sess-climb-1")
+
+        (repo / "README.md").write_text("v3\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "third")
+
+        second = self._run(payload_cwd=repo, session_id="sess-climb-1")
+
+        self.assertEqual(first.returncode, 2, msg=first.stderr)
+        self.assertIn("1 unpushed commit", first.stderr)
+        self.assertIn("end of every turn", first.stderr)
+
+        self.assertEqual(second.returncode, 2, msg=second.stderr)
+        self.assertIn("2 unpushed commits", second.stderr)
+        self.assertNotIn("end of every turn", second.stderr)
+
+    def test_block_message_full_again_when_problem_kind_changes(self) -> None:
+        # First turn: only unpushed commits. Second turn: the tree also goes
+        # dirty. The problem shape changed, so the full message must return
+        # rather than staying condensed.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("v2\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "second")
+
+        first = self._run(payload_cwd=repo, session_id="sess-kind-change-1")
+
+        (repo / "README.md").write_text("uncommitted\n", encoding="utf-8")
+
+        second = self._run(payload_cwd=repo, session_id="sess-kind-change-1")
+
+        self.assertEqual(first.returncode, 2, msg=first.stderr)
+        self.assertEqual(second.returncode, 2, msg=second.stderr)
+        self.assertIn("uncommitted changes", second.stderr)
+        self.assertIn("end of every turn", second.stderr)
+
+    def test_block_message_never_condensed_without_session_id(self) -> None:
+        # Without a session_id there is nowhere safe to persist "already
+        # shown this state" -- fail toward always showing the full message
+        # rather than silently condensing forever.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+        first = self._run(payload_cwd=repo)
+        second = self._run(payload_cwd=repo)
+
+        self.assertEqual(first.returncode, 2, msg=first.stderr)
+        self.assertEqual(second.returncode, 2, msg=second.stderr)
+        self.assertIn("end of every turn", first.stderr)
+        self.assertIn("end of every turn", second.stderr)
+
+    def test_block_message_full_again_in_a_fresh_session(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+        self._run(payload_cwd=repo, session_id="sess-fresh-a")
+        second = self._run(payload_cwd=repo, session_id="sess-fresh-b")
+
+        self.assertEqual(second.returncode, 2, msg=second.stderr)
+        self.assertIn("end of every turn", second.stderr)
+
+    def test_block_message_condensed_held_turn_does_not_count_as_shown(self) -> None:
+        # A one-turn hold suppresses the block entirely (exit 0). That turn
+        # must not be recorded as "the full message was already shown" --
+        # the next real block afterward must still be the full message.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+        session_id = "sess-hold-then-block"
+        self._grant_one_turn_hold(session_id)
+
+        held = self._run(payload_cwd=repo, session_id=session_id)
+        after_hold = self._run(payload_cwd=repo, session_id=session_id)
+
+        self.assertEqual(held.returncode, 0, msg=held.stderr)
+        self.assertEqual(after_hold.returncode, 2, msg=after_hold.stderr)
+        self.assertIn("end of every turn", after_hold.stderr)
 
     # --- Advisory: pushed but not landed (bento-rdtn.11), exit 0 always ---
 
