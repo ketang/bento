@@ -25,8 +25,11 @@ facts before the model starts judging quality:
 - interface, schema, config, workflow, and demo surfaces
 - disabled-test signals, risk hotspots, and static-analysis tool detection
 
-Invoke by script path so approvals stay scoped. The `audit/` prefix resolves
-relative to this skill's own directory, not the repo root or process cwd.
+Invoke by script path so approvals stay scoped. Resolve `audit/scripts/audit-
+discover.py` relative to the skills root — the parent directory that contains
+this skill's own `audit` folder (where this SKILL.md lives) — not the repo
+root, not the process cwd, and not this skill's own directory (that would
+double the `audit` prefix and produce a nonexistent, doubled path).
 
 ```bash
 audit/scripts/audit-discover.py
