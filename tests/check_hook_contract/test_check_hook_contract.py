@@ -209,6 +209,14 @@ class PythonCheckTest(unittest.TestCase):
         findings = checker.check_python_source(src, FAKE)
         self.assertFalse(any("star-imports" in f.message for f in findings))
 
+    def test_star_import_from_os_path_is_not_flagged(self) -> None:
+        """os.path's own exports (join, dirname, exists, ...) never include
+        getcwd/environ/Path, so a star import from it cannot smuggle in a
+        process-CWD primitive -- flagging it would be a false positive."""
+        src = "from os.path import *\n\n\ndef f():\n    return join('a', 'b')\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertFalse(any("star-imports" in f.message for f in findings))
+
     def test_literal_dict_cwd_read_does_not_satisfy_payload_check(self) -> None:
         """bento-5ea5: check B was object-blind — it accepted ANY .get("cwd")
         anywhere in the file, even against a hardcoded literal that can't be
