@@ -301,8 +301,29 @@ def main() -> int:
     if not rev_exists(feature_ref, checkout_root):
         errors.append(f"feature revision does not exist: {feature_ref}")
 
-    base_sha = rev_parse(base_ref, checkout_root) if not errors else None
-    feature_sha = rev_parse(feature_ref, checkout_root) if not errors else None
+    base_sha: str | None = None
+    feature_sha: str | None = None
+    if not errors:
+        # base_ref/feature_ref were confirmed resolvable by rev_exists() above,
+        # but that is a separate git call: either can stop resolving between
+        # the two calls (concurrent lease refresh, branch cleanup sweep,
+        # another swarm agent). Survive that race the same way
+        # land-work-batch-assemble.py's equivalent rev_parse call does.
+        try:
+            base_sha = rev_parse(base_ref, checkout_root)
+        except subprocess.CalledProcessError as exc:
+            errors.append(
+                f"base revision {base_ref!r} stopped resolving before creating preview "
+                f"(`git rev-parse` failed: {(exc.stderr or '').strip() or exc})"
+            )
+        if not errors:
+            try:
+                feature_sha = rev_parse(feature_ref, checkout_root)
+            except subprocess.CalledProcessError as exc:
+                errors.append(
+                    f"feature revision {feature_ref!r} stopped resolving before creating preview "
+                    f"(`git rev-parse` failed: {(exc.stderr or '').strip() or exc})"
+                )
 
     if not errors and persistent_worktree and preview_dir.exists():
         reason = integration_worktree_unusable_reason(preview_dir, checkout_root)
