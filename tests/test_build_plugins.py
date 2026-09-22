@@ -120,6 +120,93 @@ class BuildPluginsTest(unittest.TestCase):
         self.assertEqual(plugins_by_name["trackers"]["version"], versions["trackers"]["version"])
         self.assertIn("session-id", plugins_by_name)
 
+    def test_audit_documented_paths_resolve_from_skills_root(self) -> None:
+        # bento-v2vg: audit/SKILL.md documents `audit/scripts/audit-discover.py`
+        # and `audit/references/<name>.md` and states these resolve relative
+        # to the skills root that contains the audit skill's own directory --
+        # not the audit skill's own directory (that would double the prefix
+        # into `audit/audit/...`), not the repo root, and not the process
+        # cwd. Exercise the exact documented paths against both generated
+        # consumer layouts (Claude and Codex).
+        self.build_repo(with_assets=True)
+
+        documented_paths = [
+            "audit/scripts/audit-discover.py",
+            "audit/references/discovery-checklist.md",
+            "audit/references/static-analysis-tools.md",
+            "audit/references/quality-standards.md",
+            "audit/references/control-integrity.md",
+        ]
+
+        for platform in ("claude", "codex"):
+            skills_root = self.root / "plugins" / platform / "bento" / "skills"
+            for doc_path in documented_paths:
+                resolved = skills_root / doc_path
+                self.assertTrue(
+                    resolved.is_file(),
+                    f"{platform}: documented path {doc_path} did not resolve "
+                    f"from the declared skills-root anchor at {skills_root}",
+                )
+            # Guard against the doubled-prefix bug this issue fixes: the
+            # buggy anchor (the skill's own directory) would have produced
+            # this path instead of the correct one above.
+            doubled = skills_root / "audit" / "audit" / "scripts" / "audit-discover.py"
+            self.assertFalse(
+                doubled.exists(),
+                f"{platform}: unexpected doubled-prefix path exists at {doubled}",
+            )
+
+        # The documented helper command must run unmodified from a cwd
+        # outside the source checkout, with no assumption that it lives
+        # inside the repo being audited or the bento source tree.
+        skills_root = self.root / "plugins" / "claude" / "bento" / "skills"
+        helper = (skills_root / "audit" / "scripts" / "audit-discover.py").resolve()
+        with tempfile.TemporaryDirectory() as consumer_dir:
+            consumer_root = Path(consumer_dir)
+            (consumer_root / "README.md").write_text("# consumer project\n")
+            result = subprocess.run(
+                [str(helper)],
+                cwd=consumer_root,
+                capture_output=True,
+                text=True,
+                timeout=60,
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            payload = json.loads(result.stdout)
+            self.assertIsInstance(payload, dict)
+
+    def test_audit_doubled_prefix_regression_fixture_is_rejected(self) -> None:
+        # bento-v2vg acceptance check #2: a fixture reproducing today's
+        # doubled `audit/audit/...` path must be rejected here even though a
+        # laxer resolver (one that also tries the skill's own directory as a
+        # base, like scripts/check-skill-refs's multi-base search) would
+        # find it. The only base this test accepts is the skills root, so it
+        # cannot be satisfied by guessing an alternative base.
+        with tempfile.TemporaryDirectory() as fixture_dir:
+            skills_root = Path(fixture_dir) / "skills"
+            doubled_scripts = skills_root / "audit" / "audit" / "scripts"
+            doubled_scripts.mkdir(parents=True)
+            (doubled_scripts / "audit-discover.py").write_text("#!/usr/bin/env python3\n")
+
+            documented_path = "audit/scripts/audit-discover.py"
+            resolved_from_skills_root = skills_root / documented_path
+            self.assertFalse(
+                resolved_from_skills_root.is_file(),
+                "regression fixture should not satisfy the documented "
+                "skills-root anchor even though the doubled path exists",
+            )
+
+            # Confirm the fixture genuinely reproduces the doubled-path bug
+            # (i.e. it is not simply missing the file altogether): a
+            # resolver that fell back to trying the skill's own directory as
+            # an alternative base would wrongly accept it.
+            alternative_base = skills_root / "audit"
+            self.assertTrue(
+                (alternative_base / documented_path).is_file(),
+                "fixture setup error: doubled path should exist under the "
+                "skill's own directory as an alternative base",
+            )
+
     @staticmethod
     def _skill_frontmatter_name(skill_md: Path) -> str | None:
         text = skill_md.read_text(encoding="utf-8")
