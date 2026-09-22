@@ -1,6 +1,9 @@
+import contextlib
+import io
 import json
 import os
 import subprocess
+import sys
 import tempfile
 import unittest
 import unittest.mock
@@ -367,6 +370,78 @@ class LandWorkScriptsTest(unittest.TestCase):
             leftovers, warns = module.leftover_preview_worktrees(self.repo)
         self.assertEqual(leftovers, [])
         self.assertTrue(any("git worktree list" in w for w in warns))
+
+    def test_base_ref_that_stops_resolving_before_preview_is_a_structured_error(self) -> None:
+        # Regression (bento-lkkc): rev_exists(base_ref) and rev_parse(base_ref)
+        # are two separate git calls, the same TOCTOU shape bento-yank fixed
+        # in land-work-batch-assemble.py's equivalent rev_parse call. If
+        # base_ref (a branch, not a bare SHA) stops resolving between them
+        # (concurrent lease refresh, branch cleanup sweep, another swarm
+        # agent), rev_parse must not crash main() with an unhandled
+        # CalledProcessError -- it must degrade to the same
+        # {ok: false, errors: [...]} JSON contract every other failure path
+        # here maintains. Real concurrency is impractical to reproduce
+        # deterministically, so mock rev_parse to simulate the second call
+        # losing the race.
+        module = load_preview_module()
+        preview_dir = Path(self.temp_dir.name) / "preview-base-race"
+        argv = [str(PREVIEW_SCRIPT), "--preview-dir", str(preview_dir)]
+        stdout = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", argv), unittest.mock.patch.object(
+            module,
+            "rev_parse",
+            side_effect=subprocess.CalledProcessError(128, ["git", "rev-parse", "main"], stderr="unknown revision"),
+        ), contextlib.redirect_stdout(stdout):
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(self.worktree)
+                exit_code = module.main()
+            finally:
+                os.chdir(original_cwd)
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertNotEqual(exit_code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any("base revision" in e and "stopped resolving" in e for e in payload["errors"])
+        )
+        self.assertFalse(preview_dir.exists())
+
+    def test_feature_ref_that_stops_resolving_before_preview_is_a_structured_error(self) -> None:
+        # Same race as above, but for the second rev_parse call
+        # (feature_ref): base_ref still resolves, but feature_ref (the
+        # current branch, refreshed elsewhere) stops resolving before its
+        # own rev_parse runs.
+        module = load_preview_module()
+        preview_dir = Path(self.temp_dir.name) / "preview-feature-race"
+        argv = [str(PREVIEW_SCRIPT), "--preview-dir", str(preview_dir)]
+        real_rev_parse = module.rev_parse
+
+        def fake_rev_parse(ref: str, cwd: Path) -> str:
+            if ref == "feature/test":
+                raise subprocess.CalledProcessError(128, ["git", "rev-parse", ref], stderr="unknown revision")
+            return real_rev_parse(ref, cwd)
+
+        stdout = io.StringIO()
+        with unittest.mock.patch.object(sys, "argv", argv), unittest.mock.patch.object(
+            module, "rev_parse", side_effect=fake_rev_parse
+        ), contextlib.redirect_stdout(stdout):
+            original_cwd = Path.cwd()
+            try:
+                os.chdir(self.worktree)
+                exit_code = module.main()
+            finally:
+                os.chdir(original_cwd)
+
+        payload = json.loads(stdout.getvalue())
+
+        self.assertNotEqual(exit_code, 0)
+        self.assertFalse(payload["ok"])
+        self.assertTrue(
+            any("feature revision" in e and "stopped resolving" in e for e in payload["errors"])
+        )
+        self.assertFalse(preview_dir.exists())
 
     def test_preview_explicit_dir_not_flagged_as_leftover(self) -> None:
         # Custom-named preview dirs (e.g. from other test fixtures or a
