@@ -181,6 +181,42 @@ class PythonCheckTest(unittest.TestCase):
         findings = checker.check_python_source(src, FAKE)
         self.assertTrue(any("os.getcwd()" in f.message for f in findings))
 
+    def test_flags_star_import_from_os(self) -> None:
+        """bento-hrid: `from os import *` binds names (getcwd, environ, ...)
+        that `_collect_import_aliases` cannot enumerate, so a bare
+        `getcwd()` after a star import would otherwise evade detection. The
+        star import itself must be flagged."""
+        src = "from os import *\n\n\ndef f(payload):\n    return payload.get('cwd') or getcwd()\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("star-imports from `os`" in f.message for f in findings))
+
+    def test_flags_star_import_from_pathlib(self) -> None:
+        src = "from pathlib import *\n\n\ndef f(payload):\n    return payload.get('cwd') or Path.cwd()\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertTrue(any("star-imports from `pathlib`" in f.message for f in findings))
+
+    def test_star_import_violation_respects_exempt_annotation(self) -> None:
+        src = (
+            "# hook-cwd-exempt: reviewed, no cwd primitives actually used\n"
+            "from os import *\n\n\n"
+            "def f():\n    return path.sep\n"
+        )
+        findings = checker.check_python_source(src, FAKE)
+        self.assertFalse(any("star-imports" in f.message for f in findings))
+
+    def test_star_import_from_unrelated_module_is_not_flagged(self) -> None:
+        src = "from itertools import *\n\n\ndef f():\n    return list(chain([1], [2]))\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertFalse(any("star-imports" in f.message for f in findings))
+
+    def test_star_import_from_os_path_is_not_flagged(self) -> None:
+        """os.path's own exports (join, dirname, exists, ...) never include
+        getcwd/environ/Path, so a star import from it cannot smuggle in a
+        process-CWD primitive -- flagging it would be a false positive."""
+        src = "from os.path import *\n\n\ndef f():\n    return join('a', 'b')\n"
+        findings = checker.check_python_source(src, FAKE)
+        self.assertFalse(any("star-imports" in f.message for f in findings))
+
     def test_literal_dict_cwd_read_does_not_satisfy_payload_check(self) -> None:
         """bento-5ea5: check B was object-blind — it accepted ANY .get("cwd")
         anywhere in the file, even against a hardcoded literal that can't be
