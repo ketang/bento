@@ -661,6 +661,23 @@ def record_block_kinds(session_id: str, root: str, branch: str, kinds: frozenset
     _update_session_state(session_id, mutate)
 
 
+def clear_block_kinds(session_id: str, root: str, branch: str) -> None:
+    """Forget a recorded block for this (root, branch) once it resolves.
+
+    Without this, an unrelated *later* recurrence of the same problem kind
+    (e.g. the branch goes clean, then goes dirty again for a different
+    reason) would be wrongly condensed as "unchanged since an earlier turn,"
+    even though the earlier full message already scrolled out of view and
+    this is a fresh occurrence, not a repeat.
+    """
+    def mutate(data: dict) -> None:
+        blocked = data.get("blocked_kinds")
+        if isinstance(blocked, dict):
+            blocked.pop(f"{root}:{branch}", None)
+
+    _update_session_state(session_id, mutate)
+
+
 def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
     """Return (block_reason, advisory_message) -- at most one is non-None.
     Shares the root resolution and worktree-kind/in-progress-operation
@@ -688,19 +705,23 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
 
     dirty = is_dirty(root)
     session_id = hook_input.get("session_id") or ""
+    branch = current_branch(root)
+    problems = _classify_problems(root, dirty)
 
-    if not is_suppressed(root):
-        problems = _classify_problems(root, dirty)
-        if problems:
-            if consume_turn_hold(session_id):
-                return None, None
-            branch = current_branch(root)
-            kinds = frozenset(kind for kind, _ in problems)
-            previous_kinds = previous_block_kinds(session_id, root, branch)
-            record_block_kinds(session_id, root, branch, kinds)
-            if previous_kinds == kinds:
-                return _render_condensed_block_message(root, problems), None
-            return _render_full_block_message(root, problems, session_id), None
+    if not is_suppressed(root) and problems:
+        if consume_turn_hold(session_id):
+            return None, None
+        kinds = frozenset(kind for kind, _ in problems)
+        previous_kinds = previous_block_kinds(session_id, root, branch)
+        if previous_kinds == kinds:
+            return _render_condensed_block_message(root, problems), None
+        record_block_kinds(session_id, root, branch, kinds)
+        return _render_full_block_message(root, problems, session_id), None
+
+    # No active block this turn: forget any prior recorded state so a later,
+    # unrelated recurrence of the same problem kind is treated as fresh
+    # rather than wrongly condensed as "unchanged since an earlier turn."
+    clear_block_kinds(session_id, root, branch)
 
     if is_landed_check_suppressed(root):
         return None, None
@@ -708,7 +729,6 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
     if dirty:
         return None, None  # the blocking check above already covers a dirty tree
 
-    branch = current_branch(root)
     primary = pushed_but_unlanded_primary(root, branch)
     if primary is None:
         return None, None

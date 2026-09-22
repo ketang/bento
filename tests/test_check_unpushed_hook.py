@@ -770,6 +770,33 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(after_hold.returncode, 2, msg=after_hold.stderr)
         self.assertIn("end of every turn", after_hold.stderr)
 
+    def test_block_message_full_again_after_resolving_and_recurring(self) -> None:
+        # Code review (bento-neng): a resolved-then-recurring problem must not
+        # be conflated with the earlier, already-resolved occurrence just
+        # because the recorded kind set happens to match again.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        session_id = "sess-resolve-then-recur"
+        (repo / "README.md").write_text("dirty\n", encoding="utf-8")
+
+        first = self._run(payload_cwd=repo, session_id=session_id)
+
+        self._git(repo, "commit", "-aqm", "resolve")
+        self._git(repo, "push", "-q")
+        clean = self._run(payload_cwd=repo, session_id=session_id)
+
+        (repo / "README.md").write_text("dirty-again\n", encoding="utf-8")
+        recurred = self._run(payload_cwd=repo, session_id=session_id)
+
+        self.assertEqual(first.returncode, 2, msg=first.stderr)
+        self.assertIn("end of every turn", first.stderr)
+
+        self.assertEqual(clean.returncode, 0, msg=clean.stderr)
+        self.assertEqual(clean.stderr, "")
+
+        self.assertEqual(recurred.returncode, 2, msg=recurred.stderr)
+        self.assertIn("end of every turn", recurred.stderr)
+
     # --- Advisory: pushed but not landed (bento-rdtn.11), exit 0 always ---
 
     def _pushed_unlanded_feature_branch(self) -> Path:
