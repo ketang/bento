@@ -25,6 +25,11 @@ Do not file a normal issue until this skill returns `ready: yes`. If the issue
 is only suitable for triage, file it only with the repo's documented triage
 marker and copy the unresolved questions into the issue body.
 
+This precheck covers pre-*filing* readiness only. The matching pre-*closing*
+checklist (wiring proof, docs sync, plan hygiene) lives in the tracker flow
+skills — see `beads-issue-flow`'s or `github-issue-flow`'s "Closure Checklist"
+section. Drafters should know both ends of the lifecycle up front.
+
 ## Fresh Reviewer Requirement
 
 The fresh reviewer is a required part of this precheck. Use a fresh reviewer
