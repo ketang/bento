@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import secrets
 import subprocess
 import sys
@@ -75,6 +76,61 @@ def extract_verdict(current_runtime: str, *, stdout: str, last_message_file: str
     # A null or non-string result must behave like empty output (→ fallback),
     # not crash on .strip() downstream.
     return result if isinstance(result, str) else ""
+
+
+# Cap on the stdout-derived diagnostic summary appended to the fallback
+# message on a nonzero Claude exit. This is runtime diagnostics only, never a
+# reviewer verdict -- keep it small so it cannot masquerade as review output.
+MAX_CLAUDE_ERROR_SUMMARY_CHARS = 4096
+_CLAUDE_ERROR_TRUNCATION_MARKER = "\n...[truncated]"
+
+# Strip ASCII control characters (except newline/tab) so a hostile or buggy
+# JSON payload cannot inject terminal escapes into the printed diagnostic.
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
+
+
+def _cap_diagnostic_summary(text: str, limit: int = MAX_CLAUDE_ERROR_SUMMARY_CHARS) -> str:
+    if len(text) <= limit:
+        return text
+    keep = max(limit - len(_CLAUDE_ERROR_TRUNCATION_MARKER), 0)
+    return text[:keep] + _CLAUDE_ERROR_TRUNCATION_MARKER
+
+
+def extract_claude_error_summary(stdout: str) -> str:
+    """Best-effort diagnostic summary from a failed Claude counterpart's JSON
+    stdout: nonempty string `result`, string entries of `errors`, and a
+    string `subtype` as context. Unrelated fields are ignored. Malformed
+    JSON, non-dict payloads, or wrong field types yield "" so the caller
+    falls back to the generic message -- never a traceback or raw dump.
+
+    This is runtime diagnostics only, never a reviewer verdict."""
+    try:
+        data = json.loads(stdout)
+    except (json.JSONDecodeError, TypeError, ValueError):
+        return ""
+    if not isinstance(data, dict):
+        return ""
+
+    parts: list[str] = []
+    subtype = data.get("subtype")
+    if isinstance(subtype, str) and subtype.strip():
+        parts.append(f"subtype: {subtype.strip()}")
+
+    result = data.get("result")
+    if isinstance(result, str) and result.strip():
+        parts.append(result.strip())
+
+    errors = data.get("errors")
+    if isinstance(errors, list):
+        for entry in errors:
+            if isinstance(entry, str) and entry.strip():
+                parts.append(entry.strip())
+
+    if not parts:
+        return ""
+
+    summary = _CONTROL_CHAR_RE.sub("", "\n".join(parts))
+    return _cap_diagnostic_summary(summary)
 
 
 def run_cross(
@@ -158,10 +214,18 @@ def run_cross(
             )
 
         if proc.returncode != 0:
-            return EXIT_FALLBACK_REQUIRED, (
+            message = (
                 f"cross-check: {counterpart} exited {proc.returncode}; use the "
                 f"same-runtime fallback.\n{proc.stderr.strip()}"
             )
+            if counterpart == "claude":
+                # The Claude counterpart's error, if any, arrives as JSON on
+                # stdout rather than stderr. Surface it as diagnostics --
+                # distinct from review output, never a verdict.
+                summary = extract_claude_error_summary(proc.stdout)
+                if summary:
+                    message += f"\ncross-check: claude diagnostics (stdout): {summary}"
+            return EXIT_FALLBACK_REQUIRED, message
 
         verdict = extract_verdict(
             current_runtime, stdout=proc.stdout, last_message_file=last_file

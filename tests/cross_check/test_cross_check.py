@@ -451,6 +451,95 @@ class WriteReviewCollisionTest(unittest.TestCase):
         )
 
 
+class ExtractClaudeErrorSummaryTest(unittest.TestCase):
+    """Unit coverage for run.extract_claude_error_summary (bento-3bmi)."""
+
+    def test_extracts_result_string(self) -> None:
+        summary = run.extract_claude_error_summary(
+            '{"type": "result", "is_error": true, "result": "network unavailable"}'
+        )
+        self.assertEqual(summary, "network unavailable")
+
+    def test_extracts_errors_list_and_subtype(self) -> None:
+        summary = run.extract_claude_error_summary(
+            '{"subtype": "error_during_execution", "errors": ["dns timeout"]}'
+        )
+        self.assertIn("dns timeout", summary)
+        self.assertIn("error_during_execution", summary)
+
+    def test_ignores_unrelated_fields(self) -> None:
+        summary = run.extract_claude_error_summary(
+            '{"result": "network unavailable", "session_id": "SENTINEL"}'
+        )
+        self.assertIn("network unavailable", summary)
+        self.assertNotIn("SENTINEL", summary)
+
+    def test_malformed_json_returns_empty(self) -> None:
+        self.assertEqual(run.extract_claude_error_summary("not json"), "")
+
+    def test_empty_stdout_returns_empty(self) -> None:
+        self.assertEqual(run.extract_claude_error_summary(""), "")
+
+    def test_non_dict_json_returns_empty(self) -> None:
+        self.assertEqual(run.extract_claude_error_summary("[1, 2, 3]"), "")
+
+    def test_wrong_field_types_ignored(self) -> None:
+        summary = run.extract_claude_error_summary(
+            '{"result": 123, "errors": "not-a-list", "subtype": null}'
+        )
+        self.assertEqual(summary, "")
+
+    def test_non_string_error_entries_skipped(self) -> None:
+        summary = run.extract_claude_error_summary(
+            '{"errors": ["good one", 42, null, "also good"]}'
+        )
+        self.assertIn("good one", summary)
+        self.assertIn("also good", summary)
+        self.assertNotIn("42", summary)
+
+    def test_blank_result_and_subtype_ignored(self) -> None:
+        self.assertEqual(
+            run.extract_claude_error_summary('{"result": "   ", "subtype": ""}'), ""
+        )
+
+    def test_control_characters_stripped(self) -> None:
+        summary = run.extract_claude_error_summary(
+            '{"result": "bad\\u0007bell and \\u001bescape"}'
+        )
+        self.assertNotIn("\x07", summary)
+        self.assertNotIn("\x1b", summary)
+        self.assertIn("bad", summary)
+        self.assertIn("escape", summary)
+
+    def test_newline_and_tab_preserved(self) -> None:
+        summary = run.extract_claude_error_summary('{"result": "line1\\nline2\\ttab"}')
+        self.assertIn("\n", summary)
+        self.assertIn("\t", summary)
+
+    def test_carriage_return_stripped(self) -> None:
+        """A bare \\r can overwrite terminal output up to the prior newline,
+        letting injected text visually replace the real diagnostic -- must be
+        stripped like any other control character, not preserved like \\n/\\t."""
+        summary = run.extract_claude_error_summary(
+            '{"result": "real error\\rALL CLEAR - NO ISSUES FOUND"}'
+        )
+        self.assertNotIn("\r", summary)
+        self.assertIn("real error", summary)
+        self.assertIn("ALL CLEAR", summary)
+
+    def test_oversized_summary_truncated_with_marker(self) -> None:
+        huge = "x" * 10_000
+        summary = run.extract_claude_error_summary(f'{{"result": "{huge}"}}')
+        self.assertLessEqual(len(summary), run.MAX_CLAUDE_ERROR_SUMMARY_CHARS)
+        self.assertIn("truncated", summary)
+
+    def test_under_cap_summary_not_truncated(self) -> None:
+        text = "short error"
+        summary = run.extract_claude_error_summary(f'{{"result": "{text}"}}')
+        self.assertEqual(summary, text)
+        self.assertNotIn("truncated", summary)
+
+
 class RunArtifactErrorTest(unittest.TestCase):
     def _run(self, *extra: str) -> subprocess.CompletedProcess[str]:
         return subprocess.run(
@@ -626,6 +715,102 @@ class RunCrossIntegrationTest(unittest.TestCase):
         proc = self._run("claude")
         self.assertEqual(proc.returncode, 4)
         self.assertIn("fallback", proc.stderr.lower())
+
+    def test_nonzero_claude_surfaces_result_field_diagnostics(self) -> None:
+        # bento-3bmi: a failing claude counterpart with an empty stderr must
+        # not lose its JSON-stdout error. current=codex -> counterpart=claude.
+        self._install_stub("claude", (
+            "import json, sys\nsys.stdin.read()\n"
+            "print(json.dumps({'type': 'result', 'is_error': True, "
+            "'result': 'fixture network unavailable'}))\n"
+            "sys.exit(1)\n"
+        ))
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("fixture network unavailable", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+        self.assertEqual(list(self.out.glob("cross-check-demo-*.md")), [])
+
+    def test_nonzero_claude_surfaces_errors_list_and_subtype(self) -> None:
+        self._install_stub("claude", (
+            "import json, sys\nsys.stdin.read()\n"
+            "print(json.dumps({'type': 'result', "
+            "'subtype': 'error_during_execution', 'is_error': True, "
+            "'errors': ['fixture network unavailable']}))\n"
+            "sys.exit(1)\n"
+        ))
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("fixture network unavailable", proc.stderr)
+        self.assertIn("error_during_execution", proc.stderr)
+        self.assertEqual(list(self.out.glob("cross-check-demo-*.md")), [])
+
+    def test_nonzero_claude_keeps_stderr_alongside_stdout_diagnostics(self) -> None:
+        self._install_stub("claude", (
+            "import json, sys\nsys.stdin.read()\n"
+            "sys.stderr.write('auth token expired\\n')\n"
+            "print(json.dumps({'result': 'fixture network unavailable'}))\n"
+            "sys.exit(1)\n"
+        ))
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("auth token expired", proc.stderr)
+        self.assertIn("fixture network unavailable", proc.stderr)
+
+    def test_nonzero_claude_malformed_json_falls_back_cleanly(self) -> None:
+        self._install_stub("claude", (
+            "import sys\nsys.stdin.read()\n"
+            "sys.stdout.write('not json at all')\n"
+            "sys.exit(1)\n"
+        ))
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("fallback", proc.stderr.lower())
+        self.assertNotIn("not json at all", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_nonzero_claude_empty_stdout_falls_back_cleanly(self) -> None:
+        self._install_stub("claude", "import sys\nsys.stdin.read()\nsys.exit(1)\n")
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("fallback", proc.stderr.lower())
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_nonzero_claude_wrong_field_types_fall_back_cleanly(self) -> None:
+        self._install_stub("claude", (
+            "import json, sys\nsys.stdin.read()\n"
+            "print(json.dumps({'result': 123, 'errors': 'not-a-list', "
+            "'subtype': None, 'sentinel': 'SHOULD_NOT_APPEAR'}))\n"
+            "sys.exit(1)\n"
+        ))
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertNotIn("SHOULD_NOT_APPEAR", proc.stderr)
+        self.assertNotIn("Traceback", proc.stderr)
+
+    def test_nonzero_claude_unrelated_field_never_printed(self) -> None:
+        self._install_stub("claude", (
+            "import json, sys\nsys.stdin.read()\n"
+            "print(json.dumps({'result': 'fixture network unavailable', "
+            "'session_id': 'SENTINEL_SHOULD_NOT_APPEAR'}))\n"
+            "sys.exit(1)\n"
+        ))
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertIn("fixture network unavailable", proc.stderr)
+        self.assertNotIn("SENTINEL_SHOULD_NOT_APPEAR", proc.stderr)
+
+    def test_nonzero_claude_summary_diagnostics_distinct_from_review(self) -> None:
+        # Diagnostics must never masquerade as a review artifact.
+        self._install_stub("claude", (
+            "import json, sys\nsys.stdin.read()\n"
+            "print(json.dumps({'result': 'fixture network unavailable'}))\n"
+            "sys.exit(1)\n"
+        ))
+        proc = self._run("codex")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertEqual(proc.stdout.strip(), "")
+        self.assertEqual(list(self.out.glob("cross-check-demo-*.md")), [])
 
     def test_empty_verdict_requests_fallback(self) -> None:
         self._install_stub("codex", (
