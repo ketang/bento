@@ -171,6 +171,33 @@ Pushing the integration branch is `land-work`'s responsibility; this rule does
 not push on its behalf. It only refuses to close until that push is confirmed,
 so a landed-but-unpushed branch cannot be marked done.
 
+## Closure Checklist
+
+Beyond the Closure Evidence Rule (landing proof), verify these three before
+`bd close`. They catch "built but not wired," "shipped but undocumented," and
+"plan file rotting in the live directory" — failure modes that landing proof
+alone does not catch.
+
+1. **Wiring proof.** For each new capability the issue added (worker, provider
+   method, config var, endpoint, component), name the production call site or
+   end-to-end path that exercises it. "Tests call it" is not sufficient — a
+   test harness is not a caller in production. Either wire the capability to a
+   real caller in this issue, or file a follow-up issue for the wiring and say
+   so explicitly in the closure note (`bd close <id> --reason "... wiring
+   tracked in <follow-up-id>"`).
+2. **Docs sync.** If the change is user-visible or changes architecture, update
+   the spec/README in the same close. Flip any `planned(<this-issue-id>)`
+   markers referencing this issue to `shipped` (or the repo's equivalent
+   status word). Do not leave a shipped feature documented as planned.
+3. **Plan hygiene.** If the issue had a plan/design file, move it to the
+   repo's archive location at close (e.g. `docs/plans/archive/`, per the
+   repo's documented convention — do not hardcode a path if the repo names a
+   different one). A live plans directory should answer "what's being worked
+   on now," not accumulate closed-issue history.
+
+Skipping a check requires saying why in the closure note (e.g. "no plan file
+existed," "change is internal-only, no docs to sync").
+
 ## Migrating to/from this tracker
 
 When moving a repo off Beads onto another tracker (or onto Beads from one),
