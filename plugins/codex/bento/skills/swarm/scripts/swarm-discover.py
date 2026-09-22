@@ -9,9 +9,9 @@ import sys
 from pathlib import Path
 
 from git_state import NotAWorkTreeError, detect_checkout_root, detect_primary_branch, is_linked_worktree, primary_checkout_root
-from _agent_plugins_bootstrap import ensure_agent_plugins_resolver_importable
+from _agent_plugins_bootstrap import ensure_launch_work_scripts_importable
 
-ensure_agent_plugins_resolver_importable()
+ensure_launch_work_scripts_importable()
 import agent_plugins_resolver  # noqa: E402
 
 

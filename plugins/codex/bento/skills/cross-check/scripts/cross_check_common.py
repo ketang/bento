@@ -17,9 +17,9 @@ from pathlib import Path
 from typing import Mapping
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from _agent_plugins_bootstrap import ensure_agent_plugins_resolver_importable  # noqa: E402
+from _agent_plugins_bootstrap import ensure_launch_work_scripts_importable  # noqa: E402
 
-ensure_agent_plugins_resolver_importable()
+ensure_launch_work_scripts_importable()
 import agent_plugins_resolver  # noqa: E402
 
 

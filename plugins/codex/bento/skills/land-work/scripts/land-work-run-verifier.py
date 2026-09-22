@@ -33,13 +33,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-# lifecycle_extensions and process_group live beside the launch-work scripts;
-# both skills sit under a shared skills/ root in the catalog and in every
-# generated plugin.
-_LAUNCH_SCRIPTS = SCRIPT_DIR.parents[1] / "launch-work" / "scripts"
-sys.path.insert(0, str(_LAUNCH_SCRIPTS))
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from _agent_plugins_bootstrap import ensure_launch_work_scripts_importable  # noqa: E402
 
+ensure_launch_work_scripts_importable()
 import lifecycle_extensions  # type: ignore  # noqa: E402
 import process_group  # type: ignore  # noqa: E402
 
