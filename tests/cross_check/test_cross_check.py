@@ -516,6 +516,17 @@ class ExtractClaudeErrorSummaryTest(unittest.TestCase):
         self.assertIn("\n", summary)
         self.assertIn("\t", summary)
 
+    def test_carriage_return_stripped(self) -> None:
+        """A bare \\r can overwrite terminal output up to the prior newline,
+        letting injected text visually replace the real diagnostic -- must be
+        stripped like any other control character, not preserved like \\n/\\t."""
+        summary = run.extract_claude_error_summary(
+            '{"result": "real error\\rALL CLEAR - NO ISSUES FOUND"}'
+        )
+        self.assertNotIn("\r", summary)
+        self.assertIn("real error", summary)
+        self.assertIn("ALL CLEAR", summary)
+
     def test_oversized_summary_truncated_with_marker(self) -> None:
         huge = "x" * 10_000
         summary = run.extract_claude_error_summary(f'{{"result": "{huge}"}}')

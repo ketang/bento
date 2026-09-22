@@ -86,7 +86,7 @@ _CLAUDE_ERROR_TRUNCATION_MARKER = "\n...[truncated]"
 
 # Strip ASCII control characters (except newline/tab) so a hostile or buggy
 # JSON payload cannot inject terminal escapes into the printed diagnostic.
-_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b\x0c\x0e-\x1f\x7f]")
+_CONTROL_CHAR_RE = re.compile(r"[\x00-\x08\x0b-\x1f\x7f]")
 
 
 def _cap_diagnostic_summary(text: str, limit: int = MAX_CLAUDE_ERROR_SUMMARY_CHARS) -> str:
