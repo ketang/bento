@@ -467,6 +467,142 @@ def make_commands(repo_root: Path) -> dict[str, list[str]]:
     return commands
 
 
+TASKFILE_NAMES = ("Taskfile.yml", "Taskfile.yaml")
+
+# Literal standard task names supported by the static Taskfile collector.
+# Dynamically named tasks, recipes, and non-literal aliases are out of scope
+# for this pass.
+TASKFILE_STANDARD_TASK_NAMES: dict[str, str] = {
+    "build": "build",
+    "compile": "build",
+    "test": "test",
+    "check": "test",
+    "verify": "test",
+    "lint": "lint",
+    "typecheck": "typecheck",
+    "type-check": "typecheck",
+}
+
+_TASKFILE_TASK_NAME_PATTERN = re.compile(r"^([^\s:#][^:]*):\s*(?:#.*)?$")
+_TASKFILE_INTERNAL_PATTERN = re.compile(r"^internal\s*:\s*(true|false)\s*(?:#.*)?$")
+
+
+def _taskfile_indent(line: str) -> int:
+    return len(line) - len(line.lstrip(" "))
+
+
+def parse_taskfile_tasks(content: str) -> tuple[dict[str, bool], list[str]]:
+    """Statically extract top-level `tasks:` entries from a Taskfile.
+
+    Handles only an ordinary flat mapping of task name -> task definition.
+    Never evaluates cmds, shell snippets, or vars. Unsupported constructs
+    (includes, YAML anchors/aliases/merge keys, templated task names) are
+    reported as warnings rather than parsed, since they are outside this
+    pass's static-subset scope.
+
+    Returns (tasks, warnings) where tasks maps task name -> internal flag.
+    """
+    warnings: list[str] = []
+
+    if re.search(r"^\s*includes\s*:", content, re.MULTILINE):
+        warnings.append("includes are not evaluated by static Taskfile discovery")
+    if re.search(r"[&*][A-Za-z_][\w-]*\s*$", content, re.MULTILINE) or "<<:" in content:
+        warnings.append(
+            "YAML anchors/aliases/merge keys are not evaluated by static Taskfile discovery"
+        )
+
+    lines = content.splitlines()
+    tasks: dict[str, bool] = {}
+
+    tasks_line_index: int | None = None
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        if _taskfile_indent(line) == 0 and re.match(r"^tasks\s*:\s*(?:#.*)?$", stripped):
+            tasks_line_index = index
+            break
+    if tasks_line_index is None:
+        return tasks, warnings
+
+    task_name_indent: int | None = None
+    current_task: str | None = None
+    current_task_indent: int | None = None
+    current_task_child_indent: int | None = None
+
+    for line in lines[tasks_line_index + 1 :]:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        indent = _taskfile_indent(line)
+        if indent == 0:
+            break
+
+        if task_name_indent is None:
+            task_name_indent = indent
+
+        if indent == task_name_indent:
+            match = _TASKFILE_TASK_NAME_PATTERN.match(stripped)
+            if not match:
+                current_task = None
+                current_task_child_indent = None
+                continue
+            name = match.group(1).strip()
+            if "{{" in name:
+                warnings.append(
+                    f"dynamic task name '{name}' is not evaluated by static Taskfile discovery"
+                )
+                current_task = None
+                current_task_child_indent = None
+                continue
+            tasks[name] = False
+            current_task = name
+            current_task_indent = indent
+            current_task_child_indent = None
+            continue
+
+        if current_task is not None and current_task_indent is not None and indent > current_task_indent:
+            if current_task_child_indent is None:
+                current_task_child_indent = indent
+            if indent != current_task_child_indent:
+                continue
+            match = _TASKFILE_INTERNAL_PATTERN.match(stripped)
+            if match:
+                tasks[current_task] = match.group(1) == "true"
+
+    return tasks, warnings
+
+
+def taskfile_commands(repo_root: Path, file_set: set[str]) -> tuple[dict[str, list[str]], list[str]]:
+    commands = {"build": [], "test": [], "lint": [], "typecheck": [], "demo": []}
+    warnings: list[str] = []
+
+    present = [name for name in TASKFILE_NAMES if name in file_set]
+    if not present:
+        return commands, warnings
+
+    chosen = present[0]
+    if len(present) > 1:
+        warnings.append(
+            f"multiple root Taskfiles found ({', '.join(sorted(present))}); using {chosen}"
+        )
+
+    content = read_text_if_reasonable(repo_root / chosen)
+    if content is None:
+        return commands, warnings
+
+    tasks, parse_warnings = parse_taskfile_tasks(content)
+    warnings.extend(f"{chosen}: {warning}" for warning in parse_warnings)
+
+    for name, internal in sorted(tasks.items()):
+        if internal:
+            continue
+        category = TASKFILE_STANDARD_TASK_NAMES.get(name)
+        if category is None:
+            continue
+        commands[category].append(f"task --taskfile {chosen} {name}")
+
+    return commands, warnings
+
+
 def unique_sorted(values: list[str]) -> list[str]:
     return sorted({value for value in values if value})
 
@@ -1249,12 +1385,16 @@ def main() -> int:
     manager = package_manager(repo_root, file_set, package_json)
     npm_commands = npm_script_commands(package_json, manager)
     makefile_commands = make_commands(repo_root)
+    taskfile_cmds, taskfile_warnings = taskfile_commands(repo_root, file_set)
+    warnings.extend(taskfile_warnings)
 
-    build_commands = unique_sorted(npm_commands["build"] + makefile_commands["build"])
-    test_commands = unique_sorted(npm_commands["test"] + makefile_commands["test"])
-    lint_commands = unique_sorted(npm_commands["lint"] + makefile_commands["lint"])
-    typecheck_commands = unique_sorted(npm_commands["typecheck"] + makefile_commands["typecheck"])
-    demo_commands = unique_sorted(npm_commands["demo"] + makefile_commands["demo"])
+    build_commands = unique_sorted(npm_commands["build"] + makefile_commands["build"] + taskfile_cmds["build"])
+    test_commands = unique_sorted(npm_commands["test"] + makefile_commands["test"] + taskfile_cmds["test"])
+    lint_commands = unique_sorted(npm_commands["lint"] + makefile_commands["lint"] + taskfile_cmds["lint"])
+    typecheck_commands = unique_sorted(
+        npm_commands["typecheck"] + makefile_commands["typecheck"] + taskfile_cmds["typecheck"]
+    )
+    demo_commands = unique_sorted(npm_commands["demo"] + makefile_commands["demo"] + taskfile_cmds["demo"])
 
     docs = detect_docs(rel_files)
     languages = detect_languages(file_set)
