@@ -1,0 +1,16 @@
+# Bundled default for check-unpushed's dirty-state-exempt-paths lookup.
+#
+# One repo-relative glob pattern per line (matched with Python's fnmatch
+# against git status paths). Blank lines and '#' comments are ignored.
+#
+# Override per repo (may be committed as team policy):
+#   .agent-plugins/bento/bento/check-unpushed/dirty-state-exempt-paths.txt
+# Override per user:
+#   $XDG_CONFIG_HOME/agent-plugins/bento/bento/check-unpushed/dirty-state-exempt-paths.txt
+#
+# The default below exempts Beads' own operational projections, which normal
+# tracker synchronization updates and which do not represent unlanded
+# repository work on their own. A repo using a different tracker should
+# override this file with that tracker's own operational-noise paths.
+.beads/backup/backup_state.json
+.beads/interactions.jsonl

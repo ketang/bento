@@ -96,7 +96,17 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
 
   `check-unpushed` (`Stop`) blocks (exit 2) ending a turn with a dirty tree
   or unpushed commits, naming the exact problem and branch; suppress with
-  `require_pushed=false`. For a cooperative coordination hold, a teammate can
+  `require_pushed=false`. It is tracker-agnostic in code: paths matching a
+  glob pattern (one per line) in the `check-unpushed/dirty-state-exempt-
+  paths.txt` customization file, resolved via the `agent-plugins` convention
+  (marketplace `bento`, plugin `bento` — see `AGENTS.md`), are treated as
+  operational tracker noise rather than unlanded work. Repo scope
+  (`.agent-plugins/bento/bento/check-unpushed/dirty-state-exempt-paths.txt`)
+  overrides home scope, which overrides the hook's bundled default (Beads'
+  `.beads/backup/backup_state.json` and `.beads/interactions.jsonl`). A
+  tracker plugin other than Beads registers its own operational-noise files
+  by overriding that customization file instead of this hook hardcoding any
+  one tracker's file layout. For a cooperative coordination hold, a teammate can
   create the session-scoped marker named in the block message under
   `$XDG_RUNTIME_DIR` (or `/tmp`); it allows exactly one Stop boundary and
   consumes the marker, without disabling the check for later turns. This is

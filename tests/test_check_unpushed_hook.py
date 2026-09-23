@@ -70,6 +70,29 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self._commit_all(repo, "seed beads state")
         self._git(repo, "push", "-q")
 
+    def _write_repo_scope_exempt_paths(self, repo: Path, content: str) -> None:
+        """Write the agent-plugins repo-scope override for check-unpushed's
+        dirty-state-exempt-paths customization file (marketplace/plugin
+        "bento"/"bento")."""
+        path = repo / ".agent-plugins" / "bento" / "bento" / "check-unpushed" / "dirty-state-exempt-paths.txt"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
+    def _write_home_scope_exempt_paths(self, content: str) -> None:
+        """Write the agent-plugins home-scope override, under the same
+        isolated XDG_CONFIG_HOME every _run() call in this test uses."""
+        path = (
+            self.root
+            / "config-home"
+            / "agent-plugins"
+            / "bento"
+            / "bento"
+            / "check-unpushed"
+            / "dirty-state-exempt-paths.txt"
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+
     def _run(
         self,
         *,
@@ -106,6 +129,12 @@ class CheckUnpushedHookTest(unittest.TestCase):
             runtime_dir.mkdir(parents=True, exist_ok=True)
             env = os.environ.copy()
             env["XDG_RUNTIME_DIR"] = str(runtime_dir)
+            # Isolate home-scope agent-plugins lookups from this machine's
+            # real ~/.config, so a stray local override can never leak into
+            # these tests and the "no config anywhere" case is reproducible.
+            config_home = self.root / "config-home"
+            config_home.mkdir(parents=True, exist_ok=True)
+            env["XDG_CONFIG_HOME"] = str(config_home)
             results.append(
                 subprocess.run(
                     [str(script)],
@@ -303,6 +332,100 @@ class CheckUnpushedHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2, msg=result.stderr)
         self.assertIn("2 unpushed commits", result.stderr)
+
+    # --- Generic tracker-exemption mechanism (agent-plugins convention) ---
+    # check-unpushed itself hardcodes no tracker's file layout; exemptions
+    # are resolved via marketplace "bento", plugin "bento", customization
+    # file "check-unpushed/dirty-state-exempt-paths.txt". The Beads paths
+    # above are exercised through this hook's *bundled default* for that
+    # file, not through code specific to Beads.
+
+    def test_allows_repo_scope_custom_exempt_pattern(self) -> None:
+        # Untracked changes fail closed regardless of pattern (same rule the
+        # Beads-specific exemption always enforced), so seed the path as a
+        # tracked file first and then modify it, matching
+        # _seed_beads_operational_paths' shape for its own paths.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._write_repo_scope_exempt_paths(repo, "notes/scratch-*.md\n")
+        (repo / "notes").mkdir()
+        (repo / "notes" / "scratch-1.md").write_text("seed\n", encoding="utf-8")
+        self._commit_all(repo, "add repo-scope exemption config and seed notes")
+        self._git(repo, "push", "-q")
+        (repo / "notes" / "scratch-1.md").write_text("wip\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_repo_scope_override_replaces_bundled_beads_default(self) -> None:
+        # A repo-scope override is a full replacement of the resolved file,
+        # not an addition to the bundled default -- once a repo configures
+        # its own tracker's exemptions, an unrelated tracker's operational
+        # files (here, Beads') are no longer exempt unless also listed.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._seed_beads_operational_paths(repo)
+        self._write_repo_scope_exempt_paths(repo, "notes/*.md\n")
+        self._commit_all(repo, "add repo-scope exemption config")
+        self._git(repo, "push", "-q")
+        self._write_beads_state(repo, ".beads/interactions.jsonl").write_text(
+            "changed\n", encoding="utf-8"
+        )
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_allows_home_scope_custom_exempt_pattern_without_repo_scope(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._write_home_scope_exempt_paths("cache/*.tmp\n")
+        (repo / "cache").mkdir()
+        (repo / "cache" / "x.tmp").write_text("seed\n", encoding="utf-8")
+        self._commit_all(repo, "seed cache")
+        self._git(repo, "push", "-q")
+        (repo / "cache" / "x.tmp").write_text("junk\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_repo_scope_exempt_paths_overrides_home_scope(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._write_home_scope_exempt_paths("home-only/*.tmp\n")
+        self._write_repo_scope_exempt_paths(repo, "repo-only/*.tmp\n")
+        (repo / "home-only").mkdir()
+        (repo / "home-only" / "x.tmp").write_text("seed\n", encoding="utf-8")
+        self._commit_all(repo, "add repo-scope exemption config and seed home-only")
+        self._git(repo, "push", "-q")
+        (repo / "home-only" / "x.tmp").write_text("junk\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        # The home-scope pattern is not in effect: repo scope exists (even
+        # though its own pattern doesn't match this path) and wins outright.
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_allows_ahead_commits_matching_repo_scope_pattern(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._write_repo_scope_exempt_paths(repo, "notes/*.md\n")
+        self._commit_all(repo, "add repo-scope exemption config")
+        self._git(repo, "push", "-q")
+        (repo / "notes").mkdir()
+        (repo / "notes" / "a.md").write_text("wip\n", encoding="utf-8")
+        self._commit_all(repo, "notes: wip")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
 
     def test_blocks_empty_ahead_commit(self) -> None:
         repo = self._init_repo()
