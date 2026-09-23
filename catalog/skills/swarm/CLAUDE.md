@@ -9,5 +9,8 @@ Launch teammates with Claude Code's managed team flow:
   only when the task involves deep architectural judgment, ambiguous scope, or
   cross-cutting design decisions — note the override reason in the triage
   table's risk-notes column (Phase 1, step 4).
+- Disable remote control on every spawned teammate instance. Swarm teammates
+  run unattended; they must not be reachable for remote control from another
+  device.
 
 When the last Claude Code teammate in the batch is done, delete the team.
