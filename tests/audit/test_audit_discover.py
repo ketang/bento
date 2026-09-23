@@ -141,6 +141,28 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertNotIn("task --taskfile Taskfile.yml lint", payload["project_shape"]["commands"]["lint"])
         self.assertFalse(sentinel.exists())
 
+    def test_taskfile_discovery_ignores_nested_internal_key(self) -> None:
+        write(
+            self.repo / "Taskfile.yml",
+            "\n".join(
+                [
+                    "version: '3'",
+                    "",
+                    "tasks:",
+                    "  build:",
+                    "    cmds:",
+                    "      - task: sub",
+                    "        vars:",
+                    "          internal: true",
+                ]
+            )
+            + "\n",
+        )
+
+        payload = self.run_helper()
+
+        self.assertIn("task --taskfile Taskfile.yml build", payload["project_shape"]["commands"]["build"])
+
     def test_taskfile_discovery_warns_on_unsupported_constructs(self) -> None:
         write(
             self.repo / "Taskfile.yml",

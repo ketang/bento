@@ -526,6 +526,7 @@ def parse_taskfile_tasks(content: str) -> tuple[dict[str, bool], list[str]]:
     task_name_indent: int | None = None
     current_task: str | None = None
     current_task_indent: int | None = None
+    current_task_child_indent: int | None = None
 
     for line in lines[tasks_line_index + 1 :]:
         stripped = line.strip()
@@ -542,6 +543,7 @@ def parse_taskfile_tasks(content: str) -> tuple[dict[str, bool], list[str]]:
             match = _TASKFILE_TASK_NAME_PATTERN.match(stripped)
             if not match:
                 current_task = None
+                current_task_child_indent = None
                 continue
             name = match.group(1).strip()
             if "{{" in name:
@@ -549,13 +551,19 @@ def parse_taskfile_tasks(content: str) -> tuple[dict[str, bool], list[str]]:
                     f"dynamic task name '{name}' is not evaluated by static Taskfile discovery"
                 )
                 current_task = None
+                current_task_child_indent = None
                 continue
             tasks[name] = False
             current_task = name
             current_task_indent = indent
+            current_task_child_indent = None
             continue
 
         if current_task is not None and current_task_indent is not None and indent > current_task_indent:
+            if current_task_child_indent is None:
+                current_task_child_indent = indent
+            if indent != current_task_child_indent:
+                continue
             match = _TASKFILE_INTERNAL_PATTERN.match(stripped)
             if match:
                 tasks[current_task] = match.group(1) == "true"
