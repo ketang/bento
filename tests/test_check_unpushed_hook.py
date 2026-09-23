@@ -317,6 +317,25 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_allows_dirty_and_ahead_when_both_touch_only_exempt_paths(self) -> None:
+        # bento-4cyj: patterns are resolved once and shared by the dirty and
+        # ahead-commit checks; both must still honor them in one invocation.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._seed_beads_operational_paths(repo)
+        self._write_beads_state(repo, ".beads/interactions.jsonl").write_text(
+            "changed\n", encoding="utf-8"
+        )
+        self._commit_all(repo, "Beads: sync tracker state")
+        self._write_beads_state(repo, ".beads/backup/backup_state.json").write_text(
+            "changed\n", encoding="utf-8"
+        )
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
     def test_blocks_mixed_ahead_beads_and_source_state(self) -> None:
         repo = self._init_repo()
         self._add_remote(repo)

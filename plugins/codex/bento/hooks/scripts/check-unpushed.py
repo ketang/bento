@@ -471,7 +471,7 @@ def is_dirty(root: str) -> bool:
     return bool(result.stdout.strip())
 
 
-def has_only_exempt_dirty_changes(root: str) -> bool:
+def has_only_exempt_dirty_changes(root: str, patterns: tuple[str, ...]) -> bool:
     """Whether every dirty record matches a configured exempt-path pattern.
 
     Porcelain v1 with ``-z`` puts a rename or copy destination in the first
@@ -479,7 +479,6 @@ def has_only_exempt_dirty_changes(root: str) -> bool:
     changes and an unparseable status fail closed. No configured patterns
     means nothing is exempt.
     """
-    patterns = dirty_state_exempt_patterns(root)
     if not patterns:
         return False
 
@@ -526,14 +525,13 @@ def ahead_count(root: str) -> int:
         return 0
 
 
-def has_only_exempt_ahead_commits(root: str) -> bool:
+def has_only_exempt_ahead_commits(root: str, patterns: tuple[str, ...]) -> bool:
     """Whether every commit ahead of upstream touches only exempt paths.
 
     ``-m`` compares a merge against every parent, so a source change hidden by
     one parent still keeps the Stop hook blocking. Any Git failure fails
     closed. No configured patterns means nothing is exempt.
     """
-    patterns = dirty_state_exempt_patterns(root)
     if not patterns:
         return False
 
@@ -572,15 +570,22 @@ def _classify_problems(root: str, dirty: bool) -> list[tuple[str, str]]:
     unpushed commits accumulate).
     """
     problems: list[tuple[str, str]] = []
-    if dirty and not has_only_exempt_dirty_changes(root):
-        problems.append(("dirty", "uncommitted changes"))
+    # Resolved lazily, at most once: a clean, fully pushed tree (the common
+    # case) never needs the exempt-paths file read at all.
+    patterns: tuple[str, ...] | None = None
+    if dirty:
+        patterns = dirty_state_exempt_patterns(root)
+        if not has_only_exempt_dirty_changes(root, patterns):
+            problems.append(("dirty", "uncommitted changes"))
 
     # A missing upstream is a warning, not a block, so worktree flows that have
     # not pushed a first commit are not trapped. Only count ahead commits when
     # an upstream exists.
     if has_upstream(root):
         ahead = ahead_count(root)
-        if ahead > 0 and not has_only_exempt_ahead_commits(root):
+        if ahead > 0 and patterns is None:
+            patterns = dirty_state_exempt_patterns(root)
+        if ahead > 0 and not has_only_exempt_ahead_commits(root, patterns or ()):
             noun = "commit" if ahead == 1 else "commits"
             problems.append(("unpushed", f"{ahead} unpushed {noun}"))
 
