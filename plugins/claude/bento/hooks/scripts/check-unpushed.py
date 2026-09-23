@@ -3,11 +3,21 @@
 
 Blocks (exit 2) when the session cwd's git repo has a dirty working tree
 (``git status --porcelain`` non-empty) or has local commits ahead of its
-upstream (``git rev-list @{u}..HEAD --count`` > 0). The exception is the two
-Beads operational projections that normal tracker synchronization updates:
-``.beads/backup/backup_state.json`` and ``.beads/interactions.jsonl``. They
-do not represent unlanded repository work on their own. The blocking reason on
-stderr names the branch and the counts so it is actionable.
+upstream (``git rev-list @{u}..HEAD --count`` > 0). The exception is any path
+matching a glob pattern listed in the ``check-unpushed/dirty-state-exempt-
+paths.txt`` customization file, resolved via the agent-plugins convention
+(marketplace ``bento``, plugin ``bento``): repo scope
+(``.agent-plugins/bento/bento/check-unpushed/dirty-state-exempt-paths.txt``)
+overrides home scope, which overrides this hook's bundled default (shipped
+alongside this script as ``dirty-state-exempt-paths.default.txt``, currently
+listing Beads' two operational projections,
+``.beads/backup/backup_state.json`` and ``.beads/interactions.jsonl``). This
+hook itself stays tracker-agnostic -- it does not hardcode any tracker's file
+layout in code; a tracker plugin registers its own operational-noise files by
+shipping or overriding that customization file instead. Paths matching none
+of the resolved patterns still block; with no file resolved, nothing is
+exempt. The blocking reason on stderr names the branch and the counts so it
+is actionable.
 
 A branch with no upstream is treated as a warning, not a block: worktree flows
 that have not pushed a first commit yet must not be trapped, so a clean
@@ -58,6 +68,7 @@ from $PWD or the process CWD.
 """
 
 import fcntl
+import fnmatch
 import json
 import os
 import subprocess
@@ -67,13 +78,6 @@ from pathlib import Path
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
-
-OPERATIONAL_BEADS_PATHS = frozenset(
-    {
-        ".beads/backup/backup_state.json",
-        ".beads/interactions.jsonl",
-    }
-)
 
 TURN_HOLD_PREFIX = "bento-check-unpushed-hold-"
 
@@ -93,26 +97,126 @@ def repo_root(cwd: str) -> str | None:
     return root if result.returncode == 0 and root else None
 
 
-def _agent_mode_flag_is_false(root: str, flag: str) -> bool:
-    """True when .agent-mode.local sets ``<flag>=false``."""
+def _agent_mode_value(root: str, key: str) -> str | None:
+    """The value of ``<key>=...`` in .agent-mode.local, or None if unset.
+
+    A later line for the same key wins, matching normal config-file
+    expectations. Absent file or key is not an error.
+    """
     config = Path(root) / ".agent-mode.local"
     try:
         lines = config.read_text(encoding="utf-8").splitlines()
     except OSError:
-        return False
+        return None
+    value = None
     for line in lines:
         line = line.strip()
         if not line or line.startswith("#"):
             continue
-        key, _, value = line.partition("=")
-        if key.strip() == flag and value.strip() == "false":
-            return True
-    return False
+        line_key, _, line_value = line.partition("=")
+        if line_key.strip() == key:
+            value = line_value.strip()
+    return value
+
+
+def _agent_mode_flag_is_false(root: str, flag: str) -> bool:
+    """True when .agent-mode.local sets ``<flag>=false``."""
+    return _agent_mode_value(root, flag) == "false"
 
 
 def is_suppressed(root: str) -> bool:
     """True when .agent-mode.local sets require_pushed=false."""
     return _agent_mode_flag_is_false(root, "require_pushed")
+
+
+_EXEMPT_PATHS_REL_PATH = "check-unpushed/dirty-state-exempt-paths.txt"
+_BUNDLED_DEFAULT_EXEMPT_PATHS_FILE = SCRIPT_DIR / "dirty-state-exempt-paths.default.txt"
+
+
+def _launch_work_scripts_dir() -> Path | None:
+    """Locate launch-work/scripts/ (home of agent_plugins_resolver.py)
+    relative to this hook's own location.
+
+    Catalog and generated-plugin trees nest hooks/ and skills/ at different
+    relative depths (``catalog/hooks/bento/<agent>/scripts/`` vs
+    ``plugins/<agent>/bento/hooks/scripts/``), so try both candidate depths,
+    mirroring ``_swarm_discover_script`` below.
+    """
+    candidates = (
+        SCRIPT_DIR.parents[3] / "skills" / "launch-work" / "scripts",
+        SCRIPT_DIR.parents[1] / "skills" / "launch-work" / "scripts",
+    )
+    for candidate in candidates:
+        if (candidate / "agent_plugins_resolver.py").is_file():
+            return candidate
+    return None
+
+
+def _agent_plugins_resolver():
+    """Import agent_plugins_resolver.py, or None when it cannot be found.
+
+    Imported lazily (rather than at module load) so a repo without the
+    launch-work skill installed still runs this hook with no exemptions,
+    instead of failing to import at all.
+    """
+    scripts_dir = _launch_work_scripts_dir()
+    if scripts_dir is None:
+        return None
+    path_str = str(scripts_dir)
+    if path_str not in sys.path:
+        sys.path.insert(0, path_str)
+    try:
+        import agent_plugins_resolver  # type: ignore
+    except ImportError:
+        return None
+    return agent_plugins_resolver
+
+
+def dirty_state_exempt_patterns(root: str) -> tuple[str, ...]:
+    """Repo-relative glob patterns exempted from the dirty/unpushed block.
+
+    Resolved via the agent-plugins convention (marketplace "bento", plugin
+    "bento", file "check-unpushed/dirty-state-exempt-paths.txt"): repo scope
+    overrides home scope, which overrides this hook's own bundled default.
+    This is the generic extension point any tracker plugin uses to register
+    its own operational-noise files instead of this tracker-agnostic hygiene
+    hook hardcoding one tracker's file layout in code. One glob pattern per
+    line; blank lines and ``#`` comments are ignored.
+    """
+    resolver = _agent_plugins_resolver()
+    if resolver is None:
+        return ()
+    bundled_default = (
+        _BUNDLED_DEFAULT_EXEMPT_PATHS_FILE
+        if _BUNDLED_DEFAULT_EXEMPT_PATHS_FILE.is_file()
+        else None
+    )
+    try:
+        candidate = resolver.resolve_customization_file(
+            marketplace="bento",
+            plugin="bento",
+            rel_path=_EXEMPT_PATHS_REL_PATH,
+            repo_root=root,
+            bundled_default_path=bundled_default,
+        )
+    except ValueError:
+        return ()
+    if candidate is None:
+        return ()
+    try:
+        lines = candidate.path.read_text(encoding="utf-8").splitlines()
+    except OSError:
+        return ()
+    patterns = []
+    for line in lines:
+        stripped = line.strip()
+        if stripped and not stripped.startswith("#"):
+            patterns.append(stripped)
+    return tuple(patterns)
+
+
+def _path_is_exempt(path: str, patterns: tuple[str, ...]) -> bool:
+    return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
 def _runtime_dir() -> Path:
@@ -367,13 +471,18 @@ def is_dirty(root: str) -> bool:
     return bool(result.stdout.strip())
 
 
-def has_only_operational_beads_changes(root: str) -> bool:
-    """Whether every dirty record is a tracked Beads operational projection.
+def has_only_exempt_dirty_changes(root: str) -> bool:
+    """Whether every dirty record matches a configured exempt-path pattern.
 
     Porcelain v1 with ``-z`` puts a rename or copy destination in the first
-    record and its source in the next one. Both paths must be allowlisted.
-    Untracked changes and an unparseable status fail closed.
+    record and its source in the next one. Both paths must match. Untracked
+    changes and an unparseable status fail closed. No configured patterns
+    means nothing is exempt.
     """
+    patterns = dirty_state_exempt_patterns(root)
+    if not patterns:
+        return False
+
     result = _git(root, "status", "--porcelain=v1", "-z", "--untracked-files=all")
     if result.returncode != 0 or not result.stdout:
         return False
@@ -389,7 +498,7 @@ def has_only_operational_beads_changes(root: str) -> bool:
         if len(record) < 4 or record[2] != " ":
             return False
         status, path = record[:2], record[3:]
-        if status == "??" or path not in OPERATIONAL_BEADS_PATHS:
+        if status == "??" or not _path_is_exempt(path, patterns):
             return False
         saw_change = True
         if "R" in status or "C" in status:
@@ -397,7 +506,7 @@ def has_only_operational_beads_changes(root: str) -> bool:
                 return False
             source_path = records[index]
             index += 1
-            if not source_path or source_path not in OPERATIONAL_BEADS_PATHS:
+            if not source_path or not _path_is_exempt(source_path, patterns):
                 return False
     return saw_change
 
@@ -417,12 +526,17 @@ def ahead_count(root: str) -> int:
         return 0
 
 
-def has_only_operational_beads_commits(root: str) -> bool:
-    """Whether every commit ahead of upstream changes only Beads projections.
+def has_only_exempt_ahead_commits(root: str) -> bool:
+    """Whether every commit ahead of upstream touches only exempt paths.
 
     ``-m`` compares a merge against every parent, so a source change hidden by
-    one parent still keeps the Stop hook blocking. Any Git failure fails closed.
+    one parent still keeps the Stop hook blocking. Any Git failure fails
+    closed. No configured patterns means nothing is exempt.
     """
+    patterns = dirty_state_exempt_patterns(root)
+    if not patterns:
+        return False
+
     commits = _git(root, "rev-list", "@{u}..HEAD")
     if commits.returncode != 0:
         return False
@@ -444,7 +558,7 @@ def has_only_operational_beads_commits(root: str) -> bool:
         if changes.returncode != 0:
             return False
         paths = [path for path in changes.stdout.split("\0") if path]
-        if not paths or any(path not in OPERATIONAL_BEADS_PATHS for path in paths):
+        if not paths or any(not _path_is_exempt(path, patterns) for path in paths):
             return False
     return True
 
@@ -458,7 +572,7 @@ def _classify_problems(root: str, dirty: bool) -> list[tuple[str, str]]:
     unpushed commits accumulate).
     """
     problems: list[tuple[str, str]] = []
-    if dirty and not has_only_operational_beads_changes(root):
+    if dirty and not has_only_exempt_dirty_changes(root):
         problems.append(("dirty", "uncommitted changes"))
 
     # A missing upstream is a warning, not a block, so worktree flows that have
@@ -466,7 +580,7 @@ def _classify_problems(root: str, dirty: bool) -> list[tuple[str, str]]:
     # an upstream exists.
     if has_upstream(root):
         ahead = ahead_count(root)
-        if ahead > 0 and not has_only_operational_beads_commits(root):
+        if ahead > 0 and not has_only_exempt_ahead_commits(root):
             noun = "commit" if ahead == 1 else "commits"
             problems.append(("unpushed", f"{ahead} unpushed {noun}"))
 
