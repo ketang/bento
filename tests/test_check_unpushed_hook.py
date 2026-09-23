@@ -289,6 +289,38 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stderr, "")
 
+    def test_fails_closed_when_agent_plugins_resolver_is_unlocatable(self) -> None:
+        # bento-7u37: a hook shipped without the launch-work skill's scripts/
+        # (or after a relative-layout refactor) cannot import
+        # agent_plugins_resolver.py. It must degrade to "nothing is exempt"
+        # -- Beads-only dirty state then blocks -- rather than crash or
+        # silently exempt everything. Every other test runs the hook from
+        # inside the checkout, where the resolver is always found.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        self._seed_beads_operational_paths(repo)
+        self._write_beads_state(repo, ".beads/interactions.jsonl").write_text(
+            "changed\n", encoding="utf-8"
+        )
+        for script in HOOK_SCRIPTS:
+            isolated = self.root / f"isolated-{script.parent.parent.name}" / "a" / "b" / "c" / "scripts"
+            isolated.mkdir(parents=True)
+            copy = isolated / script.name
+            copy.write_bytes(script.read_bytes())
+            copy.chmod(0o755)
+
+            result = subprocess.run(
+                [str(copy)],
+                input=json.dumps({"cwd": str(repo)}) + "\n",
+                cwd=self.hook_cwd,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+
+            self.assertEqual(result.returncode, 2, msg=(script, result.stderr))
+            self.assertIn("uncommitted changes", result.stderr)
+
     def test_blocks_mixed_dirty_beads_and_source_state(self) -> None:
         repo = self._init_repo()
         self._add_remote(repo)
