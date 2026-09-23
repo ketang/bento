@@ -61,17 +61,6 @@ def resolve_template(
     bundled: Path,
     home: Path | None = None,
 ) -> Path:
-    candidate = agent_plugins_resolver.resolve_customization_file(
-        marketplace=MARKETPLACE,
-        plugin=PLUGIN_NAME,
-        rel_path=TEMPLATE_REL,
-        repo_root=repo_root,
-        bundled_default_path=bundled,
-        env=env,
-        home=home,
-    )
-    if candidate is not None:
-        return candidate.path
     candidates = agent_plugins_resolver.candidate_paths(
         marketplace=MARKETPLACE,
         plugin=PLUGIN_NAME,
@@ -81,6 +70,9 @@ def resolve_template(
         env=env,
         home=home,
     )
+    for candidate in candidates:
+        if candidate.path.is_file():
+            return candidate.path
     raise HandoffError(
         f"no template found at any candidate path: {[c.path for c in candidates]}"
     )

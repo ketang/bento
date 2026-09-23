@@ -191,17 +191,6 @@ def resolve_prompt(
         )
     rel = Path(SKILL_NAME) / "prompts" / f"review-{artifact_type}.md"
     bundled = bundled_dir / f"review-{artifact_type}.md"
-    candidate = agent_plugins_resolver.resolve_customization_file(
-        marketplace=MARKETPLACE,
-        plugin=PLUGIN_NAME,
-        rel_path=rel,
-        repo_root=repo_root,
-        bundled_default_path=bundled,
-        env=env,
-        home=home,
-    )
-    if candidate is not None:
-        return candidate.path
     candidates = agent_plugins_resolver.candidate_paths(
         marketplace=MARKETPLACE,
         plugin=PLUGIN_NAME,
@@ -211,6 +200,9 @@ def resolve_prompt(
         env=env,
         home=home,
     )
+    for candidate in candidates:
+        if candidate.path.is_file():
+            return candidate.path
     raise FileNotFoundError(
         f"no review prompt for {artifact_type!r} at any candidate path: "
         f"{[c.path for c in candidates]}"
