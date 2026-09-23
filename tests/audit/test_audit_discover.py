@@ -110,6 +110,90 @@ class AuditDiscoverTest(unittest.TestCase):
         self.assertIn("make verify", payload["project_shape"]["commands"]["test"])
         self.assertIn("make lint", payload["project_shape"]["commands"]["lint"])
 
+    def test_discovers_taskfile_gate_commands_without_running_them(self) -> None:
+        sentinel = self.repo / "sentinel.txt"
+        write(
+            self.repo / "Taskfile.yml",
+            "\n".join(
+                [
+                    "version: '3'",
+                    "",
+                    "tasks:",
+                    "  build:",
+                    "    cmds:",
+                    "      - go build ./...",
+                    "  check:",
+                    "    cmds:",
+                    "      - touch sentinel.txt",
+                    "  lint:",
+                    "    internal: true",
+                    "    cmds:",
+                    "      - echo lint",
+                ]
+            )
+            + "\n",
+        )
+
+        payload = self.run_helper()
+
+        self.assertIn("task --taskfile Taskfile.yml check", payload["project_shape"]["commands"]["test"])
+        self.assertIn("task --taskfile Taskfile.yml build", payload["project_shape"]["commands"]["build"])
+        self.assertNotIn("task --taskfile Taskfile.yml lint", payload["project_shape"]["commands"]["lint"])
+        self.assertFalse(sentinel.exists())
+
+    def test_taskfile_discovery_warns_on_unsupported_constructs(self) -> None:
+        write(
+            self.repo / "Taskfile.yml",
+            "\n".join(
+                [
+                    "version: '3'",
+                    "",
+                    "includes:",
+                    "  foo: ./foo/Taskfile.yml",
+                    "",
+                    "tasks:",
+                    "  check:",
+                    "    cmds:",
+                    "      - echo check",
+                    "  deploy-{{.ENV}}:",
+                    "    cmds:",
+                    "      - echo deploy",
+                ]
+            )
+            + "\n",
+        )
+
+        payload = self.run_helper()
+
+        warnings = payload["warnings"]
+        self.assertIn(
+            "Taskfile.yml: includes are not evaluated by static Taskfile discovery", warnings
+        )
+        self.assertIn(
+            "Taskfile.yml: dynamic task name 'deploy-{{.ENV}}' is not evaluated by static Taskfile discovery",
+            warnings,
+        )
+        self.assertIn("task --taskfile Taskfile.yml check", payload["project_shape"]["commands"]["test"])
+
+    def test_taskfile_discovery_prefers_yml_and_discloses_choice(self) -> None:
+        write(
+            self.repo / "Taskfile.yml",
+            "tasks:\n  test:\n    cmds:\n      - echo test\n",
+        )
+        write(
+            self.repo / "Taskfile.yaml",
+            "tasks:\n  build:\n    cmds:\n      - echo build\n",
+        )
+
+        payload = self.run_helper()
+
+        self.assertIn(
+            "multiple root Taskfiles found (Taskfile.yaml, Taskfile.yml); using Taskfile.yml",
+            payload["warnings"],
+        )
+        self.assertIn("task --taskfile Taskfile.yml test", payload["project_shape"]["commands"]["test"])
+        self.assertNotIn("task --taskfile Taskfile.yaml build", payload["project_shape"]["commands"]["build"])
+
     def test_extracts_documented_commands_and_matches_repo_commands(self) -> None:
         write(
             self.repo / "README.md",
