@@ -104,8 +104,10 @@ helper — creates task and experiment branches/worktrees; `launch-work`
 defaults to the primary branch and does not know about the expedition base or
 landing lease. `start-task` requires the current directory to be the
 expedition base worktree (`discover`'s `base_worktree` field) — `cd` there
-first if you are not already; it hard-fails from anywhere else, including the
-primary checkout. After `start-task`, verify with
+first if you are not already; `--apply` exits nonzero from anywhere else, and
+preview mode (no `--apply`) reports the same failure in its JSON `ok`/`errors`
+without a nonzero exit, so check `ok` there too, not just the exit code.
+After `start-task`, verify with
 `expedition/scripts/expedition.py verify --expedition <name> --require-active-task`
 in place of `launch-work`'s own worktree-verify step — this is not optional, it is the
 same hard gate `launch-work` requires before any edit, just the
