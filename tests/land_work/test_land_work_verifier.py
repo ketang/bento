@@ -775,5 +775,170 @@ class LandWorkVerifierTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0, result.stdout)
 
 
+class VerifierTreeReuseTest(unittest.TestCase):
+    """bento-c96u.2: green records keyed by candidate tree + manifest digest.
+
+    Borrows LandWorkVerifierTest's fixtures without inheriting (and so
+    re-running) its tests."""
+
+    _fixture_setup = LandWorkVerifierTest.setUp
+    tearDown = LandWorkVerifierTest.tearDown
+    verifier_path = LandWorkVerifierTest.verifier_path
+    write_manifest = LandWorkVerifierTest.write_manifest
+    install_verifier = LandWorkVerifierTest.install_verifier
+    run_verifier = LandWorkVerifierTest.run_verifier
+
+    def setUp(self) -> None:
+        self._fixture_setup()
+        self.counter = Path(self.temp_dir.name) / "counter"
+        self.install_counting_verifier(PASS_ONE_CHECK_VERIFIER)
+        self.write_manifest()
+
+    def install_counting_verifier(self, content: str) -> None:
+        body = content.split("\n", 1)[1]
+        self.install_verifier(f"#!/usr/bin/env bash\necho x >> {self.counter}\n{body}")
+
+    def runs(self) -> int:
+        return len(self.counter.read_text().splitlines()) if self.counter.exists() else 0
+
+    def store(self) -> Path:
+        common = git(self.worktree, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+        return Path(common) / "bento" / "gate-evidence"
+
+    def records(self) -> list[Path]:
+        return sorted(self.store().glob("*.json")) if self.store().exists() else []
+
+    def reuse(self, **kw) -> dict:
+        result = self.run_verifier("--reuse-evidence", **kw)
+        return json.loads(result.stdout)
+
+    def test_second_run_on_same_tree_is_reused_without_executing(self) -> None:
+        first = self.reuse()
+        self.assertTrue(first["ok"], first)
+        self.assertNotIn("reused", first)
+        self.assertEqual(self.runs(), 1)
+        self.assertEqual(len(self.records()), 1)
+
+        second = self.reuse()
+        self.assertTrue(second["ok"], second)
+        self.assertTrue(second["reused"])
+        self.assertIs(second["executed"], False)
+        self.assertEqual(second["verifier_status"], "passed")
+        self.assertEqual(second["reused_from"], str(self.records()[0]))
+        self.assertEqual(self.runs(), 1)
+
+    def test_record_shape_and_name(self) -> None:
+        self.reuse()
+        record_path = self.records()[0]
+        record = json.loads(record_path.read_text())
+        tree = git(self.worktree, "rev-parse", "HEAD^{tree}").stdout.strip()
+        self.assertEqual(record["tree"], tree)
+        self.assertTrue(record_path.name.startswith(f"{tree}-"))
+        self.assertTrue(record_path.name.endswith(".json"))
+        self.assertEqual(record["verifier_status"], "passed")
+        self.assertEqual(record["relevant_paths"], ["src/feature.go"])
+        self.assertEqual(record["head_sha"], self.head_sha)
+        self.assertEqual(record["selected_checks"][0]["name"], "make test-quick")
+        self.assertIn("recorded_at", record)
+        self.assertIn(record["manifest_sha256"][:8], record_path.name)
+
+    def test_reuse_not_attempted_without_flag(self) -> None:
+        self.run_verifier()
+        second = json.loads(self.run_verifier().stdout)
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+
+    def test_changed_manifest_reruns(self) -> None:
+        self.reuse()
+        self.write_manifest(verified_noop=[{"path": "README.md", "reason": "x"}])
+        second = self.reuse()
+        self.assertTrue(second["ok"], second)
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+        self.assertEqual(len(self.records()), 2)
+
+    def test_different_tree_reruns(self) -> None:
+        self.reuse()
+        (self.worktree / "src" / "other.go").write_text("package main\n", encoding="utf-8")
+        git(self.worktree, "add", "src/other.go")
+        git(self.worktree, "commit", "-m", "more")
+        self.head_sha = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+        second = self.reuse()
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+
+    def test_record_with_narrower_relevant_paths_reruns(self) -> None:
+        self.reuse()
+        record_path = self.records()[0]
+        record = json.loads(record_path.read_text())
+        record["relevant_paths"] = []
+        record_path.write_text(json.dumps(record))
+        second = self.reuse()
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+
+    def test_expired_record_reruns(self) -> None:
+        self.reuse()
+        record_path = self.records()[0]
+        record = json.loads(record_path.read_text())
+        record["recorded_at"] = "2020-01-01T00:00:00+00:00"
+        record_path.write_text(json.dumps(record))
+        second = self.reuse()
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+
+    def test_max_age_zero_disables_reuse(self) -> None:
+        self.reuse()
+        manifest_path = self.repo / ".agent-plugins/bento/bento/land-work/verifier.json"
+        manifest = json.loads(manifest_path.read_text())
+        manifest["evidence_reuse_max_age_hours"] = 0
+        manifest_path.write_text(json.dumps(manifest))
+        second = self.reuse()
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+
+    def test_dirty_candidate_neither_records_nor_reuses(self) -> None:
+        self.reuse()
+        (self.worktree / "src" / "feature.go").write_text("package dirty\n", encoding="utf-8")
+        second = self.reuse()
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+        self.assertEqual(len(self.records()), 1)
+
+    def test_failed_killed_and_timeout_results_are_never_recorded(self) -> None:
+        for content, timeout in (
+            (FAILED_STATUS_VERIFIER, None),
+            (FAILED_CHECK_VERIFIER, None),
+            (NONZERO_VERIFIER, None),
+            (INVALID_JSON_VERIFIER, None),
+            (SLOW_VERIFIER, "0.5"),
+        ):
+            self.install_counting_verifier(content)
+            result = self.run_verifier("--reuse-evidence", timeout=timeout)
+            self.assertEqual(result.returncode, 1, result.stdout)
+        self.assertEqual(self.records(), [])
+
+    def test_project_reported_all_cached_is_rejected_and_not_recorded(self) -> None:
+        self.install_counting_verifier(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"t","status":"passed","executed":false}]}\'\n'
+        )
+        result = self.run_verifier("--reuse-evidence")
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(self.records(), [])
+        again = self.run_verifier("--reuse-evidence")
+        self.assertEqual(again.returncode, 1)
+        self.assertEqual(self.runs(), 2)
+
+    def test_reused_record_does_not_trip_all_cached_rule(self) -> None:
+        # An honest record from an executed run stays reusable; the reused
+        # payload itself reports executed: false at the top level only.
+        self.reuse()
+        second = self.reuse()
+        self.assertTrue(second["ok"])
+        self.assertTrue(second["reused"])
+
+
 if __name__ == "__main__":
     unittest.main()
