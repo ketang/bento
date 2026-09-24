@@ -476,6 +476,97 @@ class VerifierFailureTest(LandDriverTestBase):
         self.assertEqual(self.registered_preview_worktrees(), [])
 
 
+class VerifierTreeReuseDriverTest(LandDriverTestBase):
+    """bento-c96u.2: a green record for the candidate tree is reused."""
+
+    def setUp(self) -> None:
+        super().setUp()
+        self.counter = Path(self.temp_dir.name) / "counter"
+        self.install_counting(PASS_VERIFIER)
+
+    def install_counting(self, content: str) -> None:
+        body = content.split("\n", 1)[1]
+        self.install_verifier(f"#!/usr/bin/env bash\necho x >> {self.counter}\n{body}")
+
+    def runs(self) -> int:
+        return len(self.counter.read_text().splitlines()) if self.counter.exists() else 0
+
+    def pre_verify_feature(self) -> None:
+        # Feature is based on the leased tip, so its HEAD tree equals the
+        # future merge tree; verifying it ahead of landing produces the record.
+        head = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+        base = git(self.worktree, "rev-parse", "main").stdout.strip()
+        result = subprocess.run(
+            [str(REPO_ROOT / "catalog/skills/land-work/scripts/land-work-run-verifier.py"),
+             "--repo-root", str(self.worktree), "--candidate", str(self.worktree),
+             "--base-sha", base, "--head-sha", head,
+             "--log", str(Path(self.temp_dir.name) / "pre-verify.log")],
+            capture_output=True, text=True, cwd=self.worktree, check=False,
+        )
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs(), 1)
+
+    def test_identical_tree_landing_reuses_record_and_skips_verifier(self) -> None:
+        self.pre_verify_feature()
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs(), 1)
+        verify_step = next(s for s in payload["steps"] if s["step"] == "verify")
+        self.assertTrue(verify_step["reused"])
+        self.assertNotIn("cached", verify_step)
+        self.assertIn("verify: passed", result.stderr)
+        self.assertIn("[reused, not executed]", result.stderr)
+
+    def test_changed_tree_reruns_verifier(self) -> None:
+        self.pre_verify_feature()
+        (self.worktree / "more.txt").write_text("more\n", encoding="utf-8")
+        git(self.worktree, "add", "more.txt")
+        git(self.worktree, "commit", "-m", "more")
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs(), 2)
+        verify_step = next(s for s in payload["steps"] if s["step"] == "verify")
+        self.assertNotIn("reused", verify_step)
+        self.assertIn("[executed]", result.stderr)
+
+    def test_advanced_base_changes_preview_tree_and_reruns(self) -> None:
+        self.pre_verify_feature()
+        (self.repo / "other.txt").write_text("o\n", encoding="utf-8")
+        git(self.repo, "add", "other.txt")
+        git(self.repo, "commit", "-m", "main advance")
+        git(self.repo, "push", "origin", "main")
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs(), 2)
+        self.assertNotIn("reused", result.stderr)
+
+    def test_stale_record_still_passes_flag_and_executes(self) -> None:
+        self.pre_verify_feature()
+        store = Path(git(self.worktree, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) / "bento" / "gate-evidence"
+        for record_path in store.glob("*.json"):
+            record = json.loads(record_path.read_text())
+            record["recorded_at"] = "2020-01-01T00:00:00+00:00"
+            record_path.write_text(json.dumps(record))
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs(), 2)
+        self.assertIn("[executed]", result.stderr)
+
+    def test_project_reported_all_cached_still_rejected(self) -> None:
+        self.install_counting(
+            '#!/usr/bin/env bash\n'
+            'echo \'{"schema_version":1,"status":"passed",'
+            '"selected_checks":[{"name":"t","status":"passed","executed":false}]}\'\n'
+        )
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 1)
+        self.assertEqual(payload["failed_step"], "verify")
+        self.assertIn("executed: false", payload["error"])
+
+
 class SigintDuringMergeTest(LandDriverTestBase):
     def test_sigint_during_merge_leaves_no_preview_and_no_partial_merge(self) -> None:
         # BENTO_LAND_TEST_DELAY_MERGE is a test-only seam (see land.py) that

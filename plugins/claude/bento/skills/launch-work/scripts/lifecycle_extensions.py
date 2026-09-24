@@ -15,6 +15,7 @@ hook-skills.
 from __future__ import annotations
 
 import json
+import math
 import re
 import stat
 import subprocess
@@ -123,6 +124,8 @@ def discover(
 
 VERIFIER_MANIFEST_NAME = "verifier.json"
 VERIFIER_SCHEMA_VERSION = 1
+DEFAULT_EVIDENCE_REUSE_MAX_AGE_HOURS = 24.0
+MAX_EVIDENCE_REUSE_MAX_AGE_HOURS = 24.0 * 365
 
 
 @dataclass
@@ -131,6 +134,21 @@ class VerifierManifest:
     command: list[str]
     verified_noop: list[dict] = field(default_factory=list)
     allow_all_cached: bool = False
+    # Reuse window for tree-keyed evidence (bento-c96u.2). 0 disables reuse.
+    evidence_reuse_max_age_hours: float = DEFAULT_EVIDENCE_REUSE_MAX_AGE_HOURS
+
+
+def _evidence_reuse_max_age_hours(raw: dict) -> float:
+    """Lenient on purpose: a bad value must not fail runs that never asked for
+    reuse, so anything but a finite number in (0, 1y] disables reuse."""
+    if "evidence_reuse_max_age_hours" not in raw:
+        return DEFAULT_EVIDENCE_REUSE_MAX_AGE_HOURS
+    value = raw["evidence_reuse_max_age_hours"]
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    if not math.isfinite(value) or not 0 < value <= MAX_EVIDENCE_REUSE_MAX_AGE_HOURS:
+        return 0.0
+    return float(value)
 
 
 @dataclass
@@ -257,6 +275,7 @@ def discover_verifier(repo_root: Path) -> VerifierDiscovery:
             for entry in raw.get("verified_noop", [])
         ],
         allow_all_cached=bool(raw.get("allow_all_cached", False)),
+        evidence_reuse_max_age_hours=_evidence_reuse_max_age_hours(raw),
     )
     return discovery
 
