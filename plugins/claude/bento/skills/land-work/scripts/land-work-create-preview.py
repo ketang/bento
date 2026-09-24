@@ -4,9 +4,13 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
+import socket
 import subprocess
 import sys
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 
 from git_state import (
@@ -54,7 +58,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--allow-existing",
         action="store_true",
-        help="skip the leftover-preview-worktree refusal check and create a new preview anyway",
+        help="skip the leftover-preview-worktree check and create a new preview anyway. "
+        "Does NOT protect a live preview owned by another landing.",
+    )
+    parser.add_argument(
+        "--owner-pid",
+        type=int,
+        help="pid of a long-lived process (e.g. land.py) that owns the new preview for its whole lifetime; "
+        "recorded as owner_kind=driver so a later run can tell whether the preview is still live. "
+        "Omit for standalone use (owner_kind=manual, judged by preview mtime instead of pid).",
     )
     return parser.parse_args()
 
@@ -79,6 +91,144 @@ def leftover_preview_worktrees(checkout_root: Path) -> tuple[list[Path], list[st
         ]
     leftovers = sorted(p for p in registered if p.name.startswith("land-work-preview-"))
     return leftovers, []
+
+
+OWNER_FILE = "land-work-owner.json"
+# A manual/ownerless preview is only reclaimed after this long untouched.
+MANUAL_STALE_SECONDS = 6 * 3600
+
+
+def preview_admin_dir(preview: Path) -> Path | None:
+    try:
+        out = git_stdout("rev-parse", "--absolute-git-dir", cwd=preview)
+    except (subprocess.CalledProcessError, OSError):
+        return None
+    return Path(out.strip()) if out.strip() else None
+
+
+def pid_start_time(pid: int) -> str | None:
+    """Field 22 of /proc/<pid>/stat (clock ticks since boot); None if the pid
+    is gone or /proc is unavailable."""
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return raw.rsplit(")", 1)[1].split()[19]
+    except (OSError, IndexError):
+        return None
+
+
+def write_owner_file(preview: Path, owner_pid: int | None, feature_ref: str | None) -> str | None:
+    """Record who owns a new preview inside its git admin dir (never the
+    working tree, so it cannot dirty or be staged). Returns a warning on failure."""
+    admin = preview_admin_dir(preview)
+    if admin is None:
+        return f"unable to locate git dir of {preview}; preview owner not recorded"
+    pid = owner_pid if owner_pid is not None else os.getpid()
+    info = {
+        "owner_kind": "driver" if owner_pid is not None else "manual",
+        "pid": pid,
+        "pid_start_time": pid_start_time(pid),
+        "hostname": socket.gethostname(),
+        "session_id": os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CODEX_SESSION_ID"),
+        "created_at": datetime.now(timezone.utc).isoformat(),
+        "feature_branch": feature_ref,
+    }
+    try:
+        (admin / OWNER_FILE).write_text(json.dumps(info), encoding="utf-8")
+    except OSError as exc:
+        return f"unable to record preview owner in {admin} ({exc})"
+    return None
+
+
+def read_owner_file(admin: Path | None) -> dict | None:
+    if admin is None:
+        return None
+    try:
+        info = json.loads((admin / OWNER_FILE).read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    return info if isinstance(info, dict) else None
+
+
+def newest_mtime(preview: Path, admin: Path | None) -> float | None:
+    """Newest mtime among the preview and its git admin dir, plus their direct
+    entries (index included). Deliberately not recursive: node_modules/target
+    trees make a full walk slow."""
+    newest: float | None = None
+    for base in (preview, admin):
+        if base is None:
+            continue
+        try:
+            paths = [base, *base.iterdir()]
+        except OSError:
+            continue
+        for path in paths:
+            try:
+                mtime = path.lstat().st_mtime
+            except OSError:
+                continue
+            newest = mtime if newest is None else max(newest, mtime)
+    return newest
+
+
+def classify_leftover(preview: Path, now: float | None = None) -> tuple[str, str]:
+    """Return (state, description) with state one of dead/live/unknown.
+
+    Ownership-based (bento-e583): only a provably dead driver, or a
+    manual/ownerless preview untouched for MANUAL_STALE_SECONDS, is dead.
+    Anything else -- live pid, other host, unparseable owner file, recent
+    activity -- is never reclaimed."""
+    now = time.time() if now is None else now
+    if not preview.exists():
+        return "dead", f"{preview} (directory already gone)"
+    admin = preview_admin_dir(preview)
+    info = read_owner_file(admin)
+    mtime = newest_mtime(preview, admin)
+    age = f"{(now - mtime) / 3600:.1f}h" if mtime is not None else "unknown age"
+    kind = info.get("owner_kind") if info else None
+    desc = (
+        f"{preview} (owner_kind={kind or 'none'}, pid={info.get('pid') if info else None}, "
+        f"session={info.get('session_id') if info else None}, "
+        f"branch={info.get('feature_branch') if info else None}, last modified {age} ago)"
+    )
+    if kind == "driver":
+        pid = info.get("pid")
+        if info.get("hostname") != socket.gethostname() or not isinstance(pid, int):
+            return "unknown", desc
+        started = pid_start_time(pid)
+        if started is None or started != info.get("pid_start_time"):
+            return "dead", desc
+        return "live", desc
+    if info is not None and kind != "manual":
+        return "unknown", desc
+    if mtime is not None and now - mtime > MANUAL_STALE_SECONDS:
+        return "dead", desc
+    return "unknown", desc
+
+
+def reclaim_dead_leftovers(
+    checkout_root: Path, leftovers: list[Path]
+) -> tuple[list[Path], list[str], list[str]]:
+    """Remove provably dead leftovers. Returns (remaining, reclaimed_paths,
+    descriptions of remaining live/unknown ones or failed removals)."""
+    remaining: list[Path] = []
+    reclaimed: list[str] = []
+    described: list[str] = []
+    for path in leftovers:
+        state, desc = classify_leftover(path)
+        if state == "dead":
+            if path.exists():
+                removed, errs = cleanup_preview(path, checkout_root)
+                if not removed:
+                    remaining.append(path)
+                    described.append(f"{desc}: reclaim failed ({'; '.join(errs)})")
+                    continue
+            else:
+                git("worktree", "prune", cwd=checkout_root, check=False)
+            reclaimed.append(str(path))
+        else:
+            remaining.append(path)
+            described.append(f"{state}: {desc}")
+    return remaining, reclaimed, described
 
 
 def default_preview_dir() -> Path:
@@ -249,9 +399,11 @@ def main() -> int:
     base_ref = args.base_ref or default_base_ref
     feature_ref = args.feature_ref or branch
 
+    reclaimed_previews: list[str] = []
     if not args.allow_existing:
         leftover, leftover_warnings = leftover_preview_worktrees(checkout_root)
         warnings.extend(leftover_warnings)
+        leftover, reclaimed_previews, described = reclaim_dead_leftovers(checkout_root, leftover)
         if leftover:
             cleanup_hint = "; ".join(
                 f"land-work-create-preview.py --cleanup --preview-dir {p}" for p in leftover
@@ -263,12 +415,14 @@ def main() -> int:
                 "primary_branch": primary_branch,
                 "linked_worktree": is_linked_worktree(checkout_root),
                 "leftover_previews": [str(p) for p in leftover],
+                "reclaimed_previews": reclaimed_previews,
                 "ok": False,
                 "warnings": warnings,
                 "errors": [
-                    "leftover land-work-preview-* worktree(s) exist: "
-                    + ", ".join(str(p) for p in leftover)
-                    + f"; remove them first ({cleanup_hint}) or pass --allow-existing"
+                    "leftover land-work-preview-* worktree(s) exist (live or unknown owner, not reclaimed): "
+                    + "; ".join(described)
+                    + f"; wait for the owner, or if you are sure it is abandoned remove it ({cleanup_hint}) "
+                    "or pass --allow-existing"
                 ],
             }
             json.dump(payload, sys.stdout, indent=2)
@@ -342,6 +496,9 @@ def main() -> int:
                 preview_dir.parent.mkdir(parents=True, exist_ok=True)
                 git("worktree", "add", "--detach", str(preview_dir), base_sha, cwd=checkout_root)
                 worktree_added = True
+                owner_warning = write_owner_file(preview_dir, args.owner_pid, feature_ref)
+                if owner_warning:
+                    warnings.append(owner_warning)
             merge_result = git("merge", "--no-ff", "--no-commit", feature_sha, cwd=preview_dir, check=False)
             merge_clean = merge_result.returncode == 0
             if merge_clean:
@@ -402,6 +559,7 @@ def main() -> int:
         "persistent_worktree": persistent_worktree,
         "reused_worktree": reused_worktree,
         "preview_cleaned_up": preview_cleaned_up,
+        "reclaimed_previews": reclaimed_previews,
         "conflicting_paths": conflicting_paths,
         "ok": not errors,
         "warnings": warnings,
