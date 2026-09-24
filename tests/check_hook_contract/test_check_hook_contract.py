@@ -52,7 +52,7 @@ class RealHooksComplyTest(unittest.TestCase):
 
     def test_decoy_filtering_does_not_erase_genuine_payload_reads(self) -> None:
         """Guard against the fix vacuously passing by rejecting every Python
-        hook's `cwd` read: exactly 10 of 20 catalog Python hooks that
+        hook's `cwd` read: exactly 11 of 21 catalog Python hooks that
         reference the payload `cwd` field before the Subscript-recursion and
         temp-variable fixes must still reference it after. (bento-rdtn.15
         added require-worktree-git-guard.py, which reads payload["cwd"],
@@ -61,13 +61,13 @@ class RealHooksComplyTest(unittest.TestCase):
 
         scripts = checker.find_hook_scripts(REPO_ROOT)
         py_scripts = [p for p in scripts if p.suffix == ".py"]
-        self.assertEqual(len(py_scripts), 20)
+        self.assertEqual(len(py_scripts), 21)
         referencing = sum(
             1
             for p in py_scripts
             if checker._references_payload_cwd_ast(ast.parse(p.read_text()))
         )
-        self.assertEqual(referencing, 10)
+        self.assertEqual(referencing, 11)
 
     def test_finds_the_hook_scripts(self) -> None:
         scripts = checker.find_hook_scripts(REPO_ROOT)

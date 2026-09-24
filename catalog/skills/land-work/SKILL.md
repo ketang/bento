@@ -224,8 +224,16 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
 
    **Acting on findings:**
    - Fix Critical and Important issues before rebasing or merging.
-   - Create tracker follow-up items for Minor issues that are real but
-     non-blocking.
+   - Minor issues under about 20 changed lines: fix on the branch.
+   - Style-only Minors: drop with a one-line note; do not file.
+   - File at most one follow-up per landing, covering all remaining Minors as
+     a checklist, labelled `review-followup`, with a `discovered-from`
+     dependency on the landed issue. It must pass `issue-readiness-check`; a
+     pure decision goes to the operator, not the tracker.
+   - If the landed issue itself carries `review-followup`, do not file; surface
+     the Minors in the landing report. A `bd create` hook denies a second
+     follow-up per parent or a follow-up of a follow-up unless the operator
+     waives it.
    - If the reviewer is wrong, push back with technical reasoning — do not
      silently discard valid findings.
    - A "Merge with fixes" verdict requires the fixes to be committed before
