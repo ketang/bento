@@ -148,6 +148,40 @@ class HappyPathTest(LandDriverTestBase):
         self.assertTrue(payload["ok"])
 
 
+class PreviewOwnershipTest(LandDriverTestBase):
+    def test_driver_records_its_pid_as_preview_owner(self) -> None:
+        # The verifier runs while the preview exists: capture its owner file
+        # and its ancestor pids (land.py is one of them).
+        out = Path(self.temp_dir.name) / "owner-capture"
+        self.install_verifier(
+            "#!/usr/bin/env bash\n"
+            f'cp "$(git rev-parse --absolute-git-dir)/land-work-owner.json" {out}.json\n'
+            f'p=$$; while [ "$p" -gt 1 ]; do echo $p >> {out}.pids; '
+            'p=$(awk \'{print $4}\' /proc/$p/stat); done\n'
+            + PASS_VERIFIER.split("\n", 1)[1]
+        )
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        owner = json.loads(Path(f"{out}.json").read_text(encoding="utf-8"))
+        self.assertEqual(owner["owner_kind"], "driver")
+        self.assertIn(str(owner["pid"]), Path(f"{out}.pids").read_text().split())
+        self.assertNotEqual(owner["pid"], os.getpid())
+
+    def test_driver_reclaims_dead_driver_leftover(self) -> None:
+        proc = subprocess.Popen(["true"])
+        proc.wait()
+        created = run(
+            [str(CREATE_PREVIEW_SCRIPT), "--owner-pid", str(proc.pid)], self.worktree,
+        )
+        leftover = json.loads(created.stdout)["preview_dir"]
+        self.assertEqual(self.registered_preview_worktrees(), [leftover])
+
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertFalse(Path(leftover).exists())
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+
 class BehindFeatureBranchTest(LandDriverTestBase):
     def advance_primary(self, name: str, content: str = "main\n", count: int = 3) -> None:
         for i in range(count):
