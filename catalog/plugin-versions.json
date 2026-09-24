@@ -1,10 +1,10 @@
 {
   "bento": {
-    "version": "2.3.91",
-    "content_hash": "90c4a2c6c7a79cd98578dd45f5a238779ea87f5dee3b9d41e7203fa9f6a1e276"
+    "version": "2.3.92",
+    "content_hash": "bbaea5cb1562409e7d545b39a8d0fb873d89f93de9c1ef642009ebe2fdad1682"
   },
   "trackers": {
-    "version": "1.2.9",
+    "version": "1.2.8",
     "content_hash": "6a33f1725a50a835b9b85d0848fedf819e7707679d02aa5265635d494b990e30"
   },
   "session-id": {
