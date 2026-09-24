@@ -96,7 +96,9 @@ class Driver:
             entry.update(extra)
         self.steps.append(entry)
         line = f"{name}: {status} ({entry['seconds']}s)"
-        if "cached" in entry:
+        if entry.get("reused"):
+            line += f" [reused, not executed] (tree {str(entry.get('reused_tree'))[:12]})"
+        elif "cached" in entry:
             line += " [cached]" if entry["cached"] else " [executed]"
         print(line, file=sys.stderr)
         if entry.get("warning"):
@@ -117,7 +119,11 @@ class Driver:
         if step == "verify":
             checks = payload.get("selected_checks") or []
             executed_flags = [c.get("executed") for c in checks if c.get("executed") is not None]
-            if executed_flags:
+            if payload.get("reused"):
+                extra["reused"] = True
+                extra["reused_from"] = payload.get("reused_from")
+                extra["reused_tree"] = payload.get("reused_tree")
+            elif executed_flags:
                 extra["cached"] = not any(executed_flags)
 
         self._record(step, "passed" if ok else "failed", start, extra or None)
@@ -314,6 +320,7 @@ class Driver:
             "--base-sha", mb.stdout.strip(),
             "--head-sha", head_sha,
             "--runtime", self.runtime,
+            "--reuse-evidence",
         ]
         if self.timeout:
             verifier_args += ["--timeout", self.timeout]

@@ -63,6 +63,12 @@ exact command and its exit status, for example:
     make lint  → exit 0
     make build → exit 0
 
+If the verifier gate was reused rather than executed (land.py's `verify` step
+reports `[reused, not executed]`), say so instead of an exit status: `verifier
+→ reused (tree <short>, recorded <time>)`, taking both from the step output.
+A reused verifier record covers only that gate; every other gate still needs its
+own command and exit status.
+
 For a waived gate, name it and link the tracker issue where the waiver is
 recorded. When no suite was discoverable, state that ("no repo gate suite
 discovered; none run"). "Tests pass" without commands and exit statuses is not

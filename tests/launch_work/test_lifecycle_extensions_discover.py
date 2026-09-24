@@ -175,6 +175,23 @@ class VerifierDiscoveryTest(unittest.TestCase):
         self.assertEqual(result.errors, [])
         self.assertFalse(result.manifest.allow_all_cached)
 
+    def test_evidence_reuse_max_age_hours_parsing(self) -> None:
+        cases = {24.0: None, 6.0: 6, 0.0: 0}
+        for bad in ("soon", True, -1, 1e12, float("nan"), float("inf")):
+            cases_bad = bad
+            manifest = {"schema_version": 1, "command": ["./v.sh"], "evidence_reuse_max_age_hours": cases_bad}
+            self._write_manifest(self.repo, manifest)
+            result = lifecycle_extensions.discover_verifier(self.repo)
+            self.assertEqual(result.errors, [], bad)
+            self.assertEqual(result.manifest.evidence_reuse_max_age_hours, 0.0, bad)
+        for expected, raw in cases.items():
+            manifest = {"schema_version": 1, "command": ["./v.sh"]}
+            if raw is not None:
+                manifest["evidence_reuse_max_age_hours"] = raw
+            self._write_manifest(self.repo, manifest)
+            result = lifecycle_extensions.discover_verifier(self.repo)
+            self.assertEqual(result.manifest.evidence_reuse_max_age_hours, expected)
+
     def test_allow_all_cached_true_parsed(self) -> None:
         self._write_manifest(self.repo, {
             "schema_version": 1,
