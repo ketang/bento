@@ -65,8 +65,8 @@ class LandingQueueTest(unittest.TestCase):
     def tearDown(self) -> None:
         self.tmp.cleanup()
 
-    def start_agent(self, agent: Path) -> "FakeAgent":
-        env = {**os.environ, "XDG_RUNTIME_DIR": self.tmp.name}
+    def start_agent(self, agent: Path, extra_env: dict | None = None) -> "FakeAgent":
+        env = {**os.environ, "XDG_RUNTIME_DIR": self.tmp.name, **(extra_env or {})}
         proc = subprocess.Popen(
             [str(agent), "-c", AGENT_LOOP, str(self.repo)],
             stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True, env=env,
@@ -177,7 +177,10 @@ class LandingQueueTest(unittest.TestCase):
         d = Path(self.tmp.name) / "plain"
         d.mkdir()
         (d / "node").symlink_to(sys.executable)
-        r = self.start_agent(d / "node").run(
+        # Hermetic: no ancestor (including any real claude above the test
+        # process) can match, whatever the ambient process tree looks like.
+        env = {"SWARM_LANDING_QUEUE_TEST_AGENT_COMMS": "no-such-agent-comm"}
+        r = self.start_agent(d / "node", env).run(
             [str(QUEUE), "add", BRANCH, "--worktree", str(self.repo)]
         )
         self.assertEqual(r.returncode, 0)
