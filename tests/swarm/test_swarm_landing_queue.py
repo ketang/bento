@@ -106,7 +106,7 @@ class LandingQueueTest(unittest.TestCase):
 
     def test_concurrent_adds_keep_both(self) -> None:
         procs = [
-            subprocess.Popen([str(QUEUE), "add", f"b{i}", "--worktree", "/x"], cwd=self.repo)
+            subprocess.Popen([str(QUEUE), "add", f"b{i}", "--worktree", "/x"], cwd=self.repo, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
             for i in range(8)
         ]
         for p in procs:
@@ -132,7 +132,7 @@ class LandingQueueTest(unittest.TestCase):
         for hook_dir in HOOK_DIRS:
             r = self.stop(self.agents[0], hook_dir)
             self.assertEqual(r.returncode, 2, r.stderr)
-            self.assertIn("1 branches are ready to land: " + BRANCH, r.stderr)
+            self.assertIn("1 branch is ready to land: " + BRANCH, r.stderr)
 
     def test_hook_allows_empty_queue_and_different_agent(self) -> None:
         self.assertEqual(self.stop(self.agents[0]).returncode, 0)
@@ -144,19 +144,51 @@ class LandingQueueTest(unittest.TestCase):
         self.q(self.agents[0], "defer", BRANCH, "--reason", "waiting on review")
         self.assertEqual(self.stop(self.agents[0]).returncode, 0)
 
-    def test_hook_allows_reentry_and_consumes_hold_marker(self) -> None:
+    def test_hook_allows_reentry(self) -> None:
         self.add(self.agents[0])
-        self.assertEqual(self.stop(self.agents[0], stop_hook_active=True).returncode, 0)
-        marker = Path(self.tmp.name) / "bento-check-landing-queue-hold-s1"
-        marker.write_text("")
-        self.assertEqual(self.stop(self.agents[0]).returncode, 0)
-        self.assertFalse(marker.exists())
         self.assertEqual(self.stop(self.agents[0]).returncode, 2)
+        self.assertEqual(self.stop(self.agents[0], stop_hook_active=True).returncode, 0)
 
     def test_hook_allows_when_branch_already_merged(self) -> None:
         self.add(self.agents[0])
         git(self.repo, "merge", "-q", "--no-edit", BRANCH)
         self.assertEqual(self.stop(self.agents[0]).returncode, 0)
+
+    def test_hook_allows_when_branch_deleted_or_worktree_gone(self) -> None:
+        self.q(self.agents[0], "add", BRANCH, "--worktree", str(self.repo / "gone"))
+        self.assertEqual(self.stop(self.agents[0]).returncode, 0)  # worktree missing
+        self.add(self.agents[0], branch="never-existed")
+        self.assertEqual(self.stop(self.agents[0]).returncode, 0)  # branch missing
+
+    def test_hook_fails_open_and_helper_errors_on_corrupt_queue(self) -> None:
+        self.add(self.agents[0])
+        qfile = Path(git(self.repo, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) / "bento" / "landing-queue.json"
+        qfile.write_text("{not json")
+        self.assertEqual(self.stop(self.agents[0]).returncode, 0)
+        r = self.q(self.agents[0], "list")
+        self.assertNotEqual(r.returncode, 0)
+        self.assertIn("corrupt", r.stderr)
+        self.assertNotIn("Traceback", r.stderr)
+
+    def test_defer_missing_branch_fails(self) -> None:
+        self.assertNotEqual(self.q(self.agents[0], "defer", "nope", "--reason", "x").returncode, 0)
+
+    def test_add_warns_when_agent_unidentifiable(self) -> None:
+        d = Path(self.tmp.name) / "plain"
+        d.mkdir()
+        (d / "node").symlink_to(sys.executable)
+        r = self.start_agent(d / "node").run(
+            [str(QUEUE), "add", BRANCH, "--worktree", str(self.repo)]
+        )
+        self.assertEqual(r.returncode, 0)
+        self.assertIn("warning", r.stderr)
+        self.assertIn("warning", json.loads(r.stdout))
+
+    def test_claude_and_codex_hook_copies_are_identical(self) -> None:
+        self.assertEqual(
+            (HOOK_DIRS[0] / "check-landing-queue.py").read_bytes(),
+            (HOOK_DIRS[1] / "check-landing-queue.py").read_bytes(),
+        )
 
     # (c) doctor report
     def test_doctor_reports_stale_unlanded_entries(self) -> None:
@@ -167,7 +199,7 @@ class LandingQueueTest(unittest.TestCase):
             later = time.time() + 2 * 3600
             lines = doctor.check_unlanded_queue(self.repo, now=later)
             self.assertEqual(len(lines), 1)
-            self.assertIn("1 ready-but-unlanded branches (oldest: " + BRANCH, lines[0])
+            self.assertIn("1 ready-but-unlanded branch (oldest: " + BRANCH, lines[0])
         self.q(self.agents[0], "pop", BRANCH)
         self.assertEqual(doctor.check_unlanded_queue(self.repo, now=later), [])
 

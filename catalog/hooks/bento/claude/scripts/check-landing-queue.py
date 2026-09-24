@@ -18,10 +18,10 @@ import subprocess
 import sys
 from pathlib import Path
 
-HOLD_PREFIX = "bento-check-landing-queue-hold-"
 AGENT_COMMS = ("claude", "codex")
 
 
+# swarm-landing-queue.py mirrors agent_ancestor(); keep the two in sync.
 def agent_ancestor(pid: int | None = None) -> dict | None:
     pid = os.getpid() if pid is None else pid
     for _ in range(64):
@@ -43,8 +43,11 @@ def _git(cwd: str, *args: str) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True)
 
 
-def is_landed(cwd: str, branch: str) -> bool:
-    """True when the branch is gone or already merged into the primary branch."""
+def is_landed(cwd: str, entry: dict) -> bool:
+    """True when the entry's worktree or branch is gone, or the branch is merged."""
+    branch = entry["branch"]
+    if not Path(entry.get("worktree") or "/").exists():
+        return True
     if _git(cwd, "rev-parse", "--verify", "-q", f"refs/heads/{branch}").returncode != 0:
         return True
     head = _git(cwd, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
@@ -61,28 +64,16 @@ def pending_entries(cwd: str) -> list[dict]:
     if common.returncode != 0:
         return []
     try:
-        entries = json.loads((Path(common.stdout.strip()) / "bento" / "landing-queue.json").read_text())["entries"]
-    except (OSError, ValueError, KeyError):
+        entries = json.loads((Path(common.stdout.strip()) / "bento" / "landing-queue.json").read_text()).get("entries", [])
+    except (OSError, ValueError, AttributeError):
         return []
     me = agent_ancestor()
     if me is None:
         return []
     return [
         e for e in entries
-        if not e.get("deferred") and e.get("lead_agent") == me and not is_landed(cwd, e["branch"])
+        if not e.get("deferred") and e.get("lead_agent") == me and not is_landed(cwd, e)
     ]
-
-
-def consume_hold(session_id: str) -> bool:
-    if not session_id or any(not (c.isalnum() or c in "._-") for c in session_id) or set(session_id) <= {"."}:
-        return False
-    runtime = os.environ.get("XDG_RUNTIME_DIR")
-    base = Path(runtime) if runtime and Path(runtime).is_absolute() and Path(runtime).is_dir() else Path("/tmp")
-    try:
-        (base / f"{HOLD_PREFIX}{session_id}").unlink()
-    except OSError:
-        return False
-    return True
 
 
 def evaluate(hook_input: dict) -> str | None:
@@ -94,14 +85,13 @@ def evaluate(hook_input: dict) -> str | None:
     entries = pending_entries(cwd)
     if not entries:
         return None
-    session_id = hook_input.get("session_id") or ""
-    if consume_hold(session_id):
-        return None
     branches = ", ".join(e["branch"] for e in entries)
+    helper = Path(__file__).resolve().parents[2] / "skills" / "swarm" / "scripts" / "swarm-landing-queue.py"
+    tool = str(helper) if helper.exists() else "swarm-landing-queue.py"
+    noun = "branch is" if len(entries) == 1 else "branches are"
     return (
-        f"{len(entries)} branches are ready to land: {branches}. Land them, or run "
-        "swarm-landing-queue.py defer <branch> --reason ... "
-        f"(one-turn hold: create '{HOLD_PREFIX}{session_id}' under $XDG_RUNTIME_DIR or /tmp).\n"
+        f"{len(entries)} {noun} ready to land: {branches}. Land them (then `{tool} pop <branch>`), "
+        f"or run `{tool} defer <branch> --reason ...`.\n"
     )
 
 

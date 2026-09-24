@@ -307,7 +307,7 @@ teammate plan that attempts to land is a protocol violation.
 | "Several teammates are done, so I can land them as a batch." | Landing changes the base for every remaining branch. Land one branch at a time, run required post-land hooks, then re-triage conflicts and readiness before continuing — unless the repo is batch-mode (Phase 0's "Batch vs. serial mode"), then follow the batch queue protocol in Phase 4's Batch-Mode Landing instead. |
 | "The user is silent, so the human-gated step is approved." | Silence is not approval. Teammates park and idle, the lead serializes user attention, and work resumes only after the lead routes an explicit decision back. |
 | "A stalled teammate is probably done enough to clean up." | Runtime resources close only after the work is safely landed or explicitly deferred. Never discard a teammate's branch or worktree while its status is unresolved. |
-| "I'll land the rest next session." | Ready-but-unlanded branches strand (median merge delay >100 h). Land every queued branch now, or `swarm-landing-queue.py defer <branch> --reason ...`; the Stop hook blocks the lead until the queue is empty or deferred. |
+| "I'll land the rest next session." | Ready-but-unlanded branches strand. Land every queued branch now, or `swarm-landing-queue.py defer <branch> --reason ...`; the Stop hook nudges the lead once per stop attempt until the queue is empty or deferred. |
 | "The teammate's gates all passed, so it can just run land-work itself." | Landing is the lead's job regardless of how clean the branch is. The auto mode classifier can block landing operations in teammate agents. The lead owns the single serialized landing path. |
 
 ## Phase 4: Monitor and Land
@@ -323,7 +323,7 @@ For each ready-to-land signal received:
 
 1. Record the signal first:
    `swarm/scripts/swarm-landing-queue.py add <branch> --worktree <path> --tracker-id <id> --gate-summary <text>`
-   (see `references/continuation-state.md` — the lead's Stop hook blocks while
+   (see `references/continuation-state.md` — the lead's Stop hook nudges while
    entries remain). Then navigate to the teammate's worktree path. The
    teammate has already exited, so the worktree is unoccupied.
 2. From within that worktree, confirm the gate summary in the teammate's
