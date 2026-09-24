@@ -294,6 +294,19 @@ land-work/scripts/land.py --runtime <runtime>
     deliberately need to intervene between its steps (e.g. a `landing.mode:
     batch` repo, which `land.py` does not handle — see `## Batch Landing`
     below).
+
+    **Canary for landing-path changes.** Changes to gate scripts, verifier
+    wiring, receipts, or land-work hooks can break every later landing, and
+    their own tests do not exercise the real path. Before merging one, create
+    a throwaway branch from the candidate with a one-line no-op commit and run
+    `land.py --no-merge` from its worktree. It runs prepare → fetch →
+    create-preview → run-verifier → verify-lease, then cleans up the preview
+    and exits: it still fetches, but does not merge, push, or touch the
+    primary checkout (`"mode": "no-merge"`, `"merged": false`). It always
+    executes the verifier and never writes or reuses tree evidence. Require
+    exit 0, then delete the throwaway branch and worktree. With a persistent
+    `landing.integration_worktree`, cleanup is a no-op and the worktree
+    stays registered.
 8. Otherwise, perform a compare-and-set merge flow as separate commands, not
    one compound command string:
    - refresh the primary-branch ref you intend to lease

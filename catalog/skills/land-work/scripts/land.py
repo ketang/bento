@@ -23,6 +23,14 @@ script. Prints one line per step to stderr as each completes
 (step, status, seconds[, executed/cached for the verify step]); the final
 JSON diagnostics object goes to stdout. Exit 0 means landed; any nonzero exit
 stops before the next step and always leaves the preview cleaned up.
+
+--no-merge is a canary for landing-path changes: it stops after the lease
+check (cleanup still runs, and a cleanup failure fails the run) and reports
+"merged": false. It still fetches, but does not merge, push, or move any local
+branch, and never touches the primary checkout. It never writes or reuses a
+verifier evidence record -- the tree is throwaway and a canary must exercise
+the real verifier. Errors raised before the driver starts (not a work tree)
+carry no mode/merged fields.
 """
 
 from __future__ import annotations
@@ -76,12 +84,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", help="verifier command timeout in seconds, forwarded to land-work-run-verifier.py")
     parser.add_argument("--runtime", default="unknown", help="agent runtime: claude, codex, or unknown")
+    parser.add_argument(
+        "--no-merge", action="store_true",
+        help="canary: run prepare, fetch, create-preview, verify and lease check, clean up the "
+        "preview, then stop without merging, pushing, or touching the primary checkout",
+    )
     return parser.parse_args()
 
 
 class Driver:
-    def __init__(self, cwd: Path, runtime: str, timeout: str | None):
+    def __init__(self, cwd: Path, runtime: str, timeout: str | None, no_merge: bool = False):
         self.cwd = cwd
+        self.no_merge = no_merge
         self.runtime = runtime
         self.timeout = timeout
         self.steps: list[dict] = []
@@ -140,9 +154,9 @@ class Driver:
             raise StepFailure(step, message, output_path=payload.get("verifier_log"))
         return payload
 
-    def cleanup_preview(self) -> None:
+    def cleanup_preview(self) -> bool:
         if self.preview_dir is None:
-            return
+            return True
         start = time.monotonic()
         try:
             result = subprocess.run(
@@ -154,9 +168,11 @@ class Driver:
             ok = False
         self._record("cleanup", "passed" if ok else "failed", start)
         self.preview_dir = None
+        return ok
 
     def abort_primary_merge_if_in_progress(self) -> None:
-        if self.primary_root is None:
+        # A canary never merges, so any merge in the primary is the operator's.
+        if self.primary_root is None or self.no_merge:
             return
         if (self.primary_root / ".git" / "MERGE_HEAD").exists():
             subprocess.run(["git", "merge", "--abort"], cwd=self.primary_root, capture_output=True, check=False)
@@ -282,6 +298,11 @@ class Driver:
             return merge_sha, merge_tree, f"refs/remotes/origin/{primary_branch}", warning
         return merge_sha, merge_tree, None, None
 
+    def finish(self, payload: dict) -> dict:
+        if self.no_merge:
+            payload.update(mode="no-merge", merged=False)
+        return payload
+
     # -- the full sequence --------------------------------------------------- #
 
     def run(self) -> dict:
@@ -320,13 +341,27 @@ class Driver:
             "--base-sha", mb.stdout.strip(),
             "--head-sha", head_sha,
             "--runtime", self.runtime,
-            "--reuse-evidence",
         ]
+        # A canary must really execute the verifier (a real landing's record
+        # would let it skip) and must not leave a record for its throwaway tree.
+        verifier_args += ["--no-record-evidence"] if self.no_merge else ["--reuse-evidence"]
         if self.timeout:
             verifier_args += ["--timeout", self.timeout]
         self._run_script("verify", RUN_VERIFIER, verifier_args)
 
         self._run_script("lease_check", VERIFY_LEASE, ["--expected-sha", leased_sha])
+
+        if self.no_merge:
+            if not self.cleanup_preview():
+                raise StepFailure("cleanup", "could not remove the canary preview worktree")
+            return self.finish({
+                "ok": True,
+                "steps": self.steps,
+                "failed_step": None,
+                "error": None,
+                "preview_tree": preview_tree,
+                "primary_branch": primary_branch,
+            })
 
         start = time.monotonic()
         merge_sha, merge_tree, verify_ref, merge_warning = self._merge_and_push(
@@ -365,17 +400,17 @@ class Driver:
 def main() -> int:
     args = parse_args()
     cwd = Path.cwd().resolve()
-    driver = Driver(cwd, args.runtime, args.timeout)
+    driver = Driver(cwd, args.runtime, args.timeout, args.no_merge)
 
     def _on_signal(signum, _frame):
         driver.cleanup_preview()
         driver.abort_primary_merge_if_in_progress()
-        payload = {
+        payload = driver.finish({
             "ok": False,
             "steps": driver.steps,
             "failed_step": "interrupted",
             "error": f"interrupted by signal {signum}",
-        }
+        })
         json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
         sys.exit(128 + signum)
@@ -388,13 +423,13 @@ def main() -> int:
     except StepFailure as exc:
         driver.cleanup_preview()
         driver.abort_primary_merge_if_in_progress()
-        result = {
+        result = driver.finish({
             "ok": False,
             "steps": driver.steps,
             "failed_step": exc.step,
             "error": exc.message,
             "output_path": exc.output_path,
-        }
+        })
     except BaseException:
         driver.cleanup_preview()
         driver.abort_primary_merge_if_in_progress()

@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -565,6 +566,180 @@ class VerifierTreeReuseDriverTest(LandDriverTestBase):
         self.assertEqual(result.returncode, 1)
         self.assertEqual(payload["failed_step"], "verify")
         self.assertIn("executed: false", payload["error"])
+
+
+class NoMergeCanaryTest(LandDriverTestBase):
+    """bento-c96u.15: --no-merge runs the real sequence and stops before merge."""
+
+    def run_driver(self, *args: str, env: dict | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
+        # Independent of the caller's env: drop any test seams a parent set.
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("BENTO_LAND_TEST_")}
+        clean.update(env or {})
+        return subprocess.run(
+            [str(LAND_SCRIPT), *args], cwd=self.worktree, capture_output=True, text=True, env=clean, check=check,
+            stdin=subprocess.DEVNULL,
+        )
+
+    def remote_main(self) -> str:
+        return subprocess.run(
+            ["git", "rev-parse", "refs/heads/main"], cwd=self.remote, capture_output=True, text=True, check=True,
+        ).stdout.strip()
+
+    def evidence_records(self) -> list[Path]:
+        store = Path(git(self.worktree, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) / "bento" / "gate-evidence"
+        return list(store.glob("*.json")) if store.exists() else []
+
+    def test_good_branch_reports_every_step_and_touches_nothing(self) -> None:
+        main_before = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        remote_before = self.remote_main()
+        result = self.run_driver("--no-merge")
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(payload["mode"], "no-merge")
+        self.assertIs(payload["merged"], False)
+        self.assertTrue(payload["preview_tree"])
+        self.assertEqual(
+            [s["step"] for s in payload["steps"]],
+            ["prepare", "fetch", "create_preview", "verify", "lease_check", "cleanup"],
+        )
+        self.assertTrue(all(s["status"] == "passed" for s in payload["steps"]))
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD").stdout.strip(), main_before)
+        self.assertEqual(self.remote_main(), remote_before)
+        self.assertFalse((self.repo / "feature.txt").exists())
+        self.assertEqual(git(self.repo, "status", "--porcelain=v1").stdout.strip(), "")
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+    def test_never_writes_evidence_record(self) -> None:
+        self.assertEqual(self.run_driver("--no-merge").returncode, 0)
+        self.assertEqual(self.evidence_records(), [])
+
+    def test_never_reuses_evidence_record(self) -> None:
+        # A real landing's record must not let the canary skip the verifier.
+        counter = Path(self.temp_dir.name) / "counter"
+        self.install_verifier(f"#!/usr/bin/env bash\necho x >> {counter}\n" + PASS_VERIFIER.split("\n", 1)[1])
+        head = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+        base = git(self.worktree, "rev-parse", "main").stdout.strip()
+        subprocess.run(
+            [str(REPO_ROOT / "catalog/skills/land-work/scripts/land-work-run-verifier.py"),
+             "--repo-root", str(self.worktree), "--candidate", str(self.worktree),
+             "--base-sha", base, "--head-sha", head, "--log", str(Path(self.temp_dir.name) / "pre.log")],
+            capture_output=True, text=True, cwd=self.worktree, check=True,
+        )
+        self.assertEqual(len(counter.read_text().splitlines()), 1)
+        result = self.run_driver("--no-merge")
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(len(counter.read_text().splitlines()), 2)
+        self.assertNotIn("reused", result.stderr)
+
+    def test_verifier_failure_fails_at_verify(self) -> None:
+        self.install_verifier(FAILED_VERIFIER)
+        result = self.run_driver("--no-merge")
+        payload = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["failed_step"], "verify")
+        self.assertEqual(payload["mode"], "no-merge")
+        self.assertIs(payload["merged"], False)
+        self.assertEqual([s["step"] for s in payload["steps"]][-2:], ["verify", "cleanup"])
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+    def test_moved_lease_fails_at_lease_check(self) -> None:
+        other = Path(self.temp_dir.name) / "other-clone"
+        subprocess.run(["git", "clone", str(self.remote), str(other)], check=True, capture_output=True, text=True)
+        git(other, "config", "user.name", "Other")
+        git(other, "config", "user.email", "other@example.com")
+        (other / "moved.txt").write_text("m\n", encoding="utf-8")
+        git(other, "add", "moved.txt")
+        git(other, "commit", "-m", "moves the lease")
+        # The verifier (running mid-sequence) pushes a new main and refreshes
+        # the remote-tracking ref, as a concurrent landing would.
+        self.install_verifier(
+            "#!/usr/bin/env bash\n"
+            f'git -C {other} push -q origin main && git fetch -q origin main\n'
+            + PASS_VERIFIER.split("\n", 1)[1]
+        )
+        result = self.run_driver("--no-merge")
+        payload = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(payload["failed_step"], "lease_check")
+        self.assertIs(payload.get("merged"), False)
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+    def _interrupt(self, sig: int) -> tuple[int, dict]:
+        started = Path(self.temp_dir.name) / f"verifier-started-{sig}"
+        self.install_verifier(f"#!/usr/bin/env bash\ntouch {started}\nexec sleep 4\n")
+        clean = {k: v for k, v in os.environ.items() if not k.startswith("BENTO_LAND_TEST_")}
+        proc = subprocess.Popen(
+            [str(LAND_SCRIPT), "--no-merge"], cwd=self.worktree, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True, env=clean,
+        )
+        deadline = time.monotonic() + 15
+        while not started.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(started.exists())
+        proc.send_signal(sig)
+        stdout, _stderr = proc.communicate(timeout=20)
+        return proc.returncode, json.loads(stdout)
+
+    def test_sigint_cleans_up_preview(self) -> None:
+        main_before = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+        code, payload = self._interrupt(signal.SIGINT)
+        self.assertEqual(code, 128 + signal.SIGINT)
+        self.assertEqual(payload["failed_step"], "interrupted")
+        self.assertEqual(payload["mode"], "no-merge")
+        self.assertIs(payload["merged"], False)
+        self.assertEqual(self.registered_preview_worktrees(), [])
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD").stdout.strip(), main_before)
+
+    def test_sigterm_cleans_up_preview(self) -> None:
+        code, payload = self._interrupt(signal.SIGTERM)
+        self.assertEqual(code, 128 + signal.SIGTERM)
+        self.assertEqual(payload["failed_step"], "interrupted")
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+    def test_never_aborts_an_operators_merge_in_the_primary(self) -> None:
+        # An in-progress merge in the primary is the operator's; the canary's
+        # failure/signal paths must not `git merge --abort` it. (prepare
+        # normally refuses a mid-merge primary, so drive the Driver directly.)
+        git(self.repo, "checkout", "-q", "-b", "side")
+        (self.repo / "clash.txt").write_text("side\n", encoding="utf-8")
+        git(self.repo, "add", "clash.txt")
+        git(self.repo, "commit", "-m", "side")
+        git(self.repo, "checkout", "-q", "main")
+        (self.repo / "clash.txt").write_text("main\n", encoding="utf-8")
+        git(self.repo, "add", "clash.txt")
+        git(self.repo, "commit", "-m", "main clash")
+        subprocess.run(["git", "merge", "side"], cwd=self.repo, capture_output=True, text=True)
+        merge_head = self.repo / ".git" / "MERGE_HEAD"
+        self.assertTrue(merge_head.exists())
+        # Fresh interpreter: other test modules put a different git_state on
+        # sys.path/sys.modules.
+        probe = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import land, pathlib; "
+            "d = land.Driver(pathlib.Path('.'), 'unknown', None, no_merge=%s); "
+            "d.primary_root = pathlib.Path(sys.argv[2]); d.abort_primary_merge_if_in_progress()"
+        )
+        scripts = str(LAND_SCRIPT.parent)
+        for no_merge, expect_present in (("True", True), ("False", False)):
+            subprocess.run(
+                [sys.executable, "-c", probe % no_merge, scripts, str(self.repo)],
+                cwd=self.worktree, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(merge_head.exists(), expect_present)
+
+
+class VerifierEvidenceFlagsTest(unittest.TestCase):
+    def test_reuse_and_no_record_are_mutually_exclusive(self) -> None:
+        result = subprocess.run(
+            [str(REPO_ROOT / "catalog/skills/land-work/scripts/land-work-run-verifier.py"),
+             "--repo-root", ".", "--candidate", ".", "--base-sha", "a", "--head-sha", "b",
+             "--reuse-evidence", "--no-record-evidence"],
+            capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False,
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("mutually exclusive", result.stderr)
 
 
 class SigintDuringMergeTest(LandDriverTestBase):
