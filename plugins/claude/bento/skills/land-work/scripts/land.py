@@ -123,6 +123,14 @@ class Driver:
         self._record(step, "passed" if ok else "failed", start, extra or None)
         if not ok:
             message = "; ".join(payload.get("errors") or []) or result.stderr.strip() or f"{script.name} exited {result.returncode}"
+            conflicts = payload.get("conflicting_paths") if step == "create_preview" else None
+            if conflicts:
+                hint = (
+                    f"rebase required: conflicts in {', '.join(conflicts)}; rebase onto "
+                    f"origin/{payload.get('primary_branch')}, resolve, and re-run land.py"
+                )
+                errors = payload.get("errors") or []
+                message = hint if errors == ["merge preview has conflicts"] else f"{message}; {hint}"
             raise StepFailure(step, message, output_path=payload.get("verifier_log"))
         return payload
 
@@ -271,7 +279,7 @@ class Driver:
     # -- the full sequence --------------------------------------------------- #
 
     def run(self) -> dict:
-        prepare = self._run_script("prepare", PREPARE, ["--require-up-to-date"])
+        prepare = self._run_script("prepare", PREPARE, [])
         primary_branch = prepare["primary_branch"]
         feature_branch = prepare["branch"]
         primary_root = Path(prepare["primary_checkout_root"])
@@ -293,10 +301,15 @@ class Driver:
         head_sha = preview["feature_sha"]
         preview_tree = preview["preview_tree"]
 
+        # Diff from the merge-base so the verifier sees only the feature's own
+        # changes, not the reverse of commits the primary gained since.
+        mb = git("merge-base", leased_sha, head_sha, cwd=self.cwd, check=False)
+        if mb.returncode != 0 or not mb.stdout.strip():
+            raise StepFailure("verify", f"could not compute merge-base of {leased_sha} and {head_sha}: {mb.stderr.strip()}")
         verifier_args = [
             "--repo-root", str(self.cwd),
             "--candidate", str(self.preview_dir),
-            "--base-sha", leased_sha,
+            "--base-sha", mb.stdout.strip(),
             "--head-sha", head_sha,
             "--runtime", self.runtime,
         ]

@@ -121,11 +121,13 @@ helper path beside this skill, so sandbox approvals stay narrowly scoped.
 1. Run the prepare helper from the feature-branch worktree:
 
 ```bash
-land-work/scripts/land-work-prepare.py --require-up-to-date
+land-work/scripts/land-work-prepare.py
 ```
 
 2. Confirm the current branch is the intended landing branch and that the helper
-   reports a clean feature-branch checkout.
+   reports a clean feature-branch checkout. A branch behind the primary branch
+   needs no rebase: the verified candidate is the preview merge of the branch
+   onto the current primary tip (step 5).
 2a. Read `../launch-work/references/project-hook-scripts.md` and
     `../launch-work/references/project-hook-skills.md`. Run the **`pre`**
     hook scripts before creating or verifying the merge preview, rebasing, or
@@ -165,9 +167,8 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
     and confirm the primary branch is green before landing (halt on a
     pre-existing red base). If no suite is discoverable after checking every
     listed surface, record that explicitly; never claim green.
-3. Treat any verification that ran before a rebase, merge, cherry-pick, or
-   manual conflict resolution as stale evidence only. It does not authorize a
-   landing after the candidate changes.
+3. Evidence attaches to the verified preview tree. Verification on a different
+   tree (after conflict resolution or any candidate change) is stale.
 4. Run an independent code review of the feature diff before merging.
 
    **Why independent:** the reviewer must see only the code and its stated
@@ -236,10 +237,12 @@ land-work/scripts/land-work-prepare.py --require-up-to-date
    diverging from workspace state (see `references/artifact-verification.md`
    when binary or LFS files are in the diff); container build inputs that
    differ between local and remote platforms.
-5. Rebase onto the preferred primary-branch base reported by the helper, usually
-   `origin/<primary-branch>` when available.
-   If you are preparing to merge into local `main`, rebase against local
-   `main` before attempting the merge.
+5. Do not rebase just because the branch is behind the primary branch; the
+   preview merge (`land.py` step create_preview) verifies the tree that lands.
+   Rebase only when the preview merge conflicts (`land.py` reports
+   `failed_step: create_preview` with a rebase hint) or the operator asks. Rebase
+   onto the preferred primary-branch base reported by the helper, usually
+   `origin/<primary-branch>` when available (local `main` if merging into it).
    If the rebase or preview merge requires manual conflict resolution, require
    a fresh run of the discovered gate suite (step 2c) and an explicit review
    checkpoint on the resolved candidate before landing.
@@ -357,7 +360,7 @@ land-work/scripts/land-work-run-verifier.py \
      not proceed to the lease check or merge; remove the preview worktree (the
      cleanup command below) before stopping.
    - satisfy the gate requirement (step 6a) against that exact preview only; do
-     not reuse pre-rebase or pre-conflict results
+     not reuse results from a different candidate tree
    - re-check the lease with:
 
 ```bash
@@ -736,8 +739,8 @@ itself remains out of scope here — it lives in the `swarm` skill.
 - Do not fast-forward feature branches into the primary branch unless the repo
   explicitly requires it.
 - Always use regular merge commits (`--no-ff`). Never squash.
-- Do not treat pre-rebase, pre-merge, or pre-conflict verification as valid
-  for a changed landing candidate.
+- Do not treat verification of a different candidate tree as valid for the
+  landing candidate.
 - Do not merge if the leased primary-branch ref moved after verification.
 - Do not land from a dirty feature-branch checkout.
 - Do not remove the feature worktree while untracked files created during the
@@ -767,11 +770,11 @@ itself remains out of scope here — it lives in the `swarm` skill.
 
 | Excuse | Counter-argument |
 |---|---|
-| "Tests passed before the rebase, so the branch is verified." | Verification attaches to the exact candidate being landed. Rebase, merge, cherry-pick, conflict resolution, or artifact regeneration makes earlier results stale. |
+| "Tests passed on the branch, so the merged result is verified." | Verification attaches to the exact preview tree being landed. A different base, cherry-pick, conflict resolution, or artifact regeneration produces a different tree and makes earlier results stale. |
 | "The primary branch probably did not move; the lease check is ceremony." | Landing is compare-and-set. If the leased ref moved after verification, the verified candidate is no longer the candidate that would land. |
 | "This repo usually accepts quick merges, so I can fast-forward or squash." | The default landing record is a regular merge commit unless the repo explicitly requires otherwise. Fast-forward and squash erase the branch boundary this workflow relies on. |
 | "The issue is functionally done, so I can close it before merging." | Tracker closure advertises landed availability to dependent work. Closing before verified landing can make downstream agents claim work against code that is not on the integration branch. |
-| "The diff is simple; I can skip the preview/exact-candidate checks." | Simplicity does not prove candidate identity. Preview, lease, and landing verification protect against stale bases, helper mismatch, generated artifacts, and accidental local-only state. |
+| "The diff is simple; I can skip the preview/exact-candidate checks." | Simplicity does not prove candidate identity, and a branch that is behind main still needs its merge preview verified, not a rebase. Preview, lease, and landing verification protect against stale bases, helper mismatch, generated artifacts, and accidental local-only state. |
 | "Closure will clean up my just-landed branch." | The landing agent owns direct post-merge cleanup: leave the feature worktree, remove that worktree, then delete the merged branch. Closure is only a fallback for stale or ambiguous leftovers. |
 | "The landing is done; the preview worktree under /tmp is harmless to leave." | Preview worktrees are registered git worktrees, not loose temp files. Left behind, they accumulate across landings and make every later `git worktree` probe slower or crash-prone. Remove the preview on every exit path; closure is not your janitor for worktrees you created this run. `land-work-create-preview.py` also refuses to start a new preview while a leftover one is still registered, and `land-work-verify-landing.py --preview-dir` fails the landing if cleanup was skipped — so this is enforced, not just prose. |
 | "The change is small and I ran the tests locally earlier, so gates are fine." | Earlier or partial runs are not evidence for the exact candidate, and "small" does not exempt a change from the repo's gates. |

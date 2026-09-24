@@ -11,6 +11,18 @@
       "command": "swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch>",
       "script": "scripts/swarm-post-land.py",
       "subcommand": null
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "swarm/scripts/swarm-landing-queue.py add <branch> --worktree <path> --tracker-id <id> --gate-summary <text>",
+      "script": "scripts/swarm-landing-queue.py",
+      "subcommand": "add"
+    },
+    {
+      "doc": "SKILL.md",
+      "command": "swarm/scripts/swarm-landing-queue.py defer <branch> --reason <why>",
+      "script": "scripts/swarm-landing-queue.py",
+      "subcommand": "defer"
     }
   ]
 }

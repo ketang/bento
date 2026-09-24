@@ -345,7 +345,7 @@ Continue directly from step 2 above:
 3. Invoke `bento:land-work` from within the teammate's worktree — land-work's
    cleanup step can remove it safely once landing succeeds.
    Once landed, run `swarm-landing-queue.py pop <branch>`; if landing must
-   wait, run `swarm-landing-queue.py defer <branch> --reason <why>`.
+   wait, run `swarm/scripts/swarm-landing-queue.py defer <branch> --reason <why>`.
 4. If a post-land hook is configured for this swarm, run it after `land-work`
    completes:
    `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
