@@ -391,7 +391,10 @@ class BuildPluginsTest(unittest.TestCase):
                 for entry in codex_hooks["hooks"]["Stop"]
                 for hook in entry["hooks"]
             ],
-            ["${PLUGIN_ROOT}/hooks/scripts/check-unpushed.py"],
+            [
+                "${PLUGIN_ROOT}/hooks/scripts/check-unpushed.py",
+                "${PLUGIN_ROOT}/hooks/scripts/check-landing-queue.py",
+            ],
         )
         self.assertIn(
             "${PLUGIN_ROOT}/hooks/scripts/permission-request.py bento ${PLUGIN_ROOT}",
