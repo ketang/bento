@@ -71,6 +71,8 @@ RECOGNIZED_AGENT_MODE_KEYS = frozenset(
         "agent_env_doctor_seen",
         "agent_env_doctor_remind_after",
         "agent_env_doctor_superpowers_pointer_seen",
+        "review_followup_guard",
+        "review_followup_waiver",
     }
 )
 

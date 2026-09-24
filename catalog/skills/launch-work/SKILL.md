@@ -1,6 +1,6 @@
 ---
 name: launch-work
-description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Creates branch+worktree. Never skip for small changes. If superpowers is also installed, this replaces superpowers:using-git-worktrees.
+description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Governs the full task lifecycle — branch+worktree setup, TDD discipline, hooks, and ready-to-land summaries — not just initial setup; reload it late in a task too. Inside an active expedition, branch/worktree creation defers to the expedition skill. Never skip for small changes. If superpowers is also installed, this replaces superpowers:using-git-worktrees.
 ---
 
 # Launch Work
@@ -26,6 +26,31 @@ These are exempt and do not require a branch or linked worktree:
 - agent memory directories
 - review reports and handoff files written outside the working tree
 - tracker-only mutations (create, claim, update, close issues)
+
+## Expedition Precedence
+
+Inside an active expedition (check with
+`expedition/scripts/expedition.py discover`), do not create the task branch
+and worktree with this skill's bootstrap helper. Task and experiment branches
+must be cut from the expedition base via
+`expedition/scripts/expedition.py start-task`, which enforces the expedition's
+shared base, landing lease, and numbering. `start-task` requires the current
+directory to be the expedition base worktree (`discover`'s `base_worktree`
+field) — `cd` there first if you are not already; `--apply` exits nonzero
+from anywhere else, and preview mode (no `--apply`) reports the same failure
+in its JSON `ok`/`errors` without a nonzero exit, so check `ok` there too, not
+just the exit code. This replaces steps 6-7 below, not
+step 8: after `start-task` creates the branch/worktree, enter it and verify
+with `expedition/scripts/expedition.py verify --expedition <name>
+--require-active-task` in place of `launch-work-verify.py` — the same hard gate step 8 requires, just the
+expedition-aware check instead of the plain one. Do not proceed to
+implementation until it passes. `start-task` has no `--claim` flag, so if
+step 4 determined this is tracker-backed work, claim the issue manually via
+the tracker skill now — the same fallback step 4 already documents for a
+failed or skipped bootstrap-helper claim — since step 7's claim mechanism
+never runs in this path. Once verified and claimed, this skill's remaining
+steps (dependency install, TDD discipline, hooks, checkpoint commits,
+ready-to-land summary) still apply as normal.
 
 ## Inputs
 
@@ -94,7 +119,10 @@ target branch and worktree path are confirmed correct.
    implementation begins.
 5. Determine the target branch name and linked-worktree path from repo docs.
    Follow `launch-work/references/worktree-location.md` for the default root,
-   prohibited locations, and override guidance.
+   prohibited locations, and override guidance. If inside an active
+   expedition, skip to Expedition Precedence above instead of steps 6-7 (step 8's
+   verification still applies, via the expedition-aware command Expedition
+   Precedence names).
 6. Preview the setup with:
 
 ```bash
