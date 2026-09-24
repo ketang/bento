@@ -149,6 +149,49 @@ class HappyPathTest(LandDriverTestBase):
         self.assertTrue(payload["ok"])
 
 
+class BehindFeatureBranchTest(LandDriverTestBase):
+    def advance_primary(self, name: str, content: str = "main\n", count: int = 3) -> None:
+        for i in range(count):
+            (self.repo / f"{name}{i}.txt").write_text(content, encoding="utf-8")
+            git(self.repo, "add", f"{name}{i}.txt")
+            git(self.repo, "commit", "-m", f"main advance {i}")
+        git(self.repo, "push", "origin", "main")
+
+    def test_behind_branch_with_clean_preview_lands_without_rebase(self) -> None:
+        self.advance_primary("other")
+        feature_tip = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(git(self.worktree, "rev-parse", "HEAD").stdout.strip(), feature_tip)
+        parent2 = git(self.repo, "rev-parse", "HEAD^2").stdout.strip()
+        self.assertEqual(parent2, feature_tip)
+        self.assertTrue((self.repo / "other0.txt").exists())
+        self.assertTrue((self.repo / "feature.txt").exists())
+
+    def test_conflicting_branch_reports_rebase_required(self) -> None:
+        self.advance_primary("feature", content="main version\n", count=1)
+        # main now also adds feature0.txt; make the feature touch the same path.
+        (self.worktree / "feature0.txt").write_text("feature version\n", encoding="utf-8")
+        git(self.worktree, "add", "feature0.txt")
+        git(self.worktree, "commit", "-m", "conflicting feature change")
+        main_before = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["failed_step"], "create_preview")
+        self.assertIn("rebase onto main, resolve, and re-run land.py", payload["error"])
+        self.assertIn("feature0.txt", payload["error"])
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD").stdout.strip(), main_before)
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+
 class PushFromPreviewRouteTest(LandDriverTestBase):
     def test_ahead_primary_uses_push_from_preview_route(self) -> None:
         # Simulate the primary's local main gaining a commit the leased

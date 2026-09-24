@@ -123,6 +123,13 @@ class Driver:
         self._record(step, "passed" if ok else "failed", start, extra or None)
         if not ok:
             message = "; ".join(payload.get("errors") or []) or result.stderr.strip() or f"{script.name} exited {result.returncode}"
+            conflicts = payload.get("conflicting_paths") if step == "create_preview" else None
+            if conflicts:
+                message = (
+                    f"rebase required: merging the feature branch onto the current "
+                    f"{payload.get('primary_branch')} conflicts in {', '.join(conflicts)}; "
+                    f"rebase onto {payload.get('primary_branch')}, resolve, and re-run land.py"
+                )
             raise StepFailure(step, message, output_path=payload.get("verifier_log"))
         return payload
 
@@ -271,7 +278,7 @@ class Driver:
     # -- the full sequence --------------------------------------------------- #
 
     def run(self) -> dict:
-        prepare = self._run_script("prepare", PREPARE, ["--require-up-to-date"])
+        prepare = self._run_script("prepare", PREPARE, [])
         primary_branch = prepare["primary_branch"]
         feature_branch = prepare["branch"]
         primary_root = Path(prepare["primary_checkout_root"])
