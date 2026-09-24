@@ -284,7 +284,8 @@ land-work/scripts/land.py --runtime <runtime>
     merge on interrupt. It stops at the first failed step and reports the
     step name, the error, and (for a verifier failure) the raw log path in
     its final JSON. Exit 0 means every step in the sequence succeeded,
-    including verify-landing; proceed straight to step 9. A nonzero exit
+    including verify-landing; proceed straight to step 8a. It never removes
+    the worktree — that is the explicit `--teardown-only` run in step 10. A nonzero exit
     means the failed step's own diagnostics are the source of truth — fix
     that specific problem and re-run `land.py` from the top; do not fall
     back to the manual flow below just because one run failed.
@@ -538,9 +539,25 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree> --preview-d
     removing the worktree over unaccounted residue.
 10. Clean up the merged feature branch and its linked worktree directly. This
     is the routine post-landing path for the agent that just landed its own
-    work. Return to the repo root on the primary branch first (you cannot
-    remove the worktree you are standing in), then run, in order, as separate
-    commands:
+    work. Preferred, once steps 8a–9b are done: from the feature worktree run
+
+    ```bash
+    land-work/scripts/land.py --teardown-only
+    ```
+
+    It fetches, then removes the worktree (`git worktree remove`) and deletes
+    the branch (`git branch -d`) from the primary checkout, never with
+    `--force`, and sweeps rust-analyzer `target/flycheck*` residue that
+    reappears at the removed path (extra globs:
+    `.agent-plugins/bento/bento/land-work/residue-globs.txt`). It fails closed:
+    if the feature tip is not in `origin/<primary>`, or the worktree is dirty,
+    holds untracked files or ignored files outside `target/`, or is locked, it
+    exits 0 with `"status": "skipped"` and a `reason` — fix that and re-run,
+    or use the manual commands below. On `"removed"` your shell is in a
+    deleted directory: `cd` to the JSON's `cd` (the primary root; on Claude
+    use ExitWorktree). Manual fallback: return to the repo root on the primary
+    branch first (you cannot remove the worktree you are standing in), then run,
+    in order, as separate commands:
 
     ```bash
     git worktree remove <worktree-path>

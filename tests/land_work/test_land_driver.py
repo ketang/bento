@@ -90,12 +90,12 @@ class LandDriverTestBase(unittest.TestCase):
         git(self.repo, "push", "origin", "main")
 
     def run_driver(self, *args: str, env: dict | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
-        run_env = dict(os.environ)
+        run_env = {k: v for k, v in os.environ.items() if not k.startswith("BENTO_LAND_")}
         if env:
             run_env.update(env)
         return subprocess.run(
             [str(LAND_SCRIPT), *args], cwd=self.worktree, capture_output=True, text=True,
-            env=run_env, check=check,
+            env=run_env, check=check, stdin=subprocess.DEVNULL,
         )
 
     def registered_preview_worktrees(self) -> list[str]:

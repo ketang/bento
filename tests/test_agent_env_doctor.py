@@ -943,6 +943,25 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIn("orphan worktree directory", context)
         self.assertIn(str(orphan), context)
 
+    def test_residue_only_orphan_classified_separately(self) -> None:
+        self._git("init", "-q")
+        self._git("commit", "--allow-empty", "-m", "init", "-q")
+        wt_root = self.home / ".local" / "share" / "worktrees" / self.repo.name
+        wt_root.mkdir(parents=True)
+        residue = wt_root / "landed-branch"
+        (residue / "target" / "flycheck0").mkdir(parents=True)
+        (residue / "target" / "flycheck0" / "stdout").write_text("", encoding="utf-8")
+        real = wt_root / "mixed-branch"
+        (real / "target" / "flycheck0").mkdir(parents=True)
+        (real / "target" / "flycheck0" / "stdout").write_text("", encoding="utf-8")
+        (real / "src").mkdir()
+        (real / "src" / "x.rs").write_text("fn main() {}\n", encoding="utf-8")
+        context = self._context(self._evaluate())
+        self.assertIn(f"LSP build residue recreated after teardown — safe to remove: rm -rf {residue}", context)
+        self.assertNotIn(f"orphan worktree directory: {residue}", context)
+        self.assertIn(f"orphan worktree directory: {real}", context)
+        self.assertNotIn(f"rm -rf {real}", context)
+
     def test_registered_worktree_directory_not_flagged(self) -> None:
         self._git("init", "-q")
         self._git("commit", "--allow-empty", "-m", "init", "-q")

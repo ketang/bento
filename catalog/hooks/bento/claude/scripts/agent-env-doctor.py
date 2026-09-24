@@ -850,6 +850,56 @@ def _registered_worktree_paths(entries: list[dict]) -> set[Path]:
     return paths
 
 
+# Files a still-running LSP recreates under a removed worktree. Identical
+# matcher to land.py's residue sweep (valid globs, default + residue-globs.txt).
+_DEFAULT_RESIDUE_GLOBS = ("target/flycheck*/**",)
+
+
+def _valid_residue_glob(glob: str) -> bool:
+    parts = glob.split("/")
+    return bool(glob) and "\\" not in glob and ".." not in parts and bool(parts[0]) and "*" not in parts[0]
+
+
+def _residue_regexes(root: Path, home: Path) -> list[re.Pattern[str]]:
+    globs = list(_DEFAULT_RESIDUE_GLOBS)
+    xdg = Path(os.environ.get("XDG_CONFIG_HOME") or home / ".config")
+    rel = Path("agent-plugins/bento/bento/land-work/residue-globs.txt")
+    for candidate in (root / ".agent-plugins/bento/bento/land-work/residue-globs.txt", xdg / rel):
+        text = _read_text_bounded(candidate)
+        if text is None:
+            continue
+        lines = (ln.strip() for ln in text.splitlines())
+        globs += [ln for ln in lines if ln and not ln.startswith("#") and _valid_residue_glob(ln)]
+        break
+    patterns = []
+    for glob in globs:
+        body = "".join(
+            ".*" if part == "**" else "[^/]*".join(re.escape(p) for p in part.split("*"))
+            for part in re.split(r"(\*\*)", glob)
+        )
+        patterns.append(re.compile(body + r"\Z"))
+    return patterns
+
+
+def _is_residue_only(directory: Path, patterns: list[re.Pattern[str]]) -> bool:
+    """True when `directory` has files and every one matches a residue glob
+    (an empty or unreadable directory is left to the generic orphan wording)."""
+    def _raise(exc: OSError) -> None:
+        raise exc
+
+    found = False
+    try:
+        for dirpath, dirs, files in os.walk(directory, onerror=_raise):
+            for name in files + [d for d in dirs if (Path(dirpath) / d).is_symlink()]:
+                rel = (Path(dirpath) / name).relative_to(directory).as_posix()
+                if not any(p.match(rel) for p in patterns):
+                    return False
+                found = True
+    except OSError:
+        return False
+    return found
+
+
 def check_worktree_root_orphans(
     root: Path, home: Path, entries: list[dict] | None = None
 ) -> list[str]:
@@ -862,6 +912,7 @@ def check_worktree_root_orphans(
     if entries is None:
         entries = _worktree_list_entries(root)
     registered = _registered_worktree_paths(entries)
+    patterns = _residue_regexes(root, home)
     warnings: list[str] = []
     try:
         entries = sorted(worktrees_dir.iterdir())
@@ -875,6 +926,12 @@ def check_worktree_root_orphans(
         except OSError:
             resolved = entry
         if resolved in registered:
+            continue
+        if _is_residue_only(entry, patterns):
+            warnings.append(
+                "LSP build residue recreated after teardown — safe to remove: "
+                f"rm -rf {shlex.quote(str(entry))}"
+            )
             continue
         warnings.append(
             f"orphan worktree directory: {entry} is not a registered git "
