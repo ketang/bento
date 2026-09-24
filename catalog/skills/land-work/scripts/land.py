@@ -31,6 +31,16 @@ branch, and never touches the primary checkout. It never writes or reuses a
 verifier evidence record -- the tree is throwaway and a canary must exercise
 the real verifier. Errors raised before the driver starts (not a work tree)
 carry no mode/merged fields.
+
+After verify-landing, a real landing tears down the feature worktree and its
+local branch from the primary checkout (`git worktree remove`, then `git
+branch -d`, never --force), then sweeps LSP residue (e.g. rust-analyzer
+target/flycheck*) that a still-running editor recreates at the removed path.
+Teardown fails closed: a dirty/untracked worktree, a batch-mode repo, the
+primary checkout itself, or --no-teardown leaves everything in place and the
+run still exits 0 -- the landing is already done. The result's `teardown`
+object reports what happened; when the worktree was removed the caller's
+shell is in a deleted directory and must `cd` to `teardown.cd`.
 """
 
 from __future__ import annotations
@@ -38,6 +48,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
+import shutil
 import signal
 import subprocess
 import sys
@@ -89,13 +101,68 @@ def parse_args() -> argparse.Namespace:
         help="canary: run prepare, fetch, create-preview, verify and lease check, clean up the "
         "preview, then stop without merging, pushing, or touching the primary checkout",
     )
+    parser.add_argument(
+        "--no-teardown", action="store_true",
+        help="keep the feature worktree and branch after a verified landing",
+    )
     return parser.parse_args()
 
 
+# Files a still-running LSP recreates under a removed worktree. Extendable via
+# <scope>/agent-plugins/bento/bento/land-work/residue-globs.txt.
+DEFAULT_RESIDUE_GLOBS = ("target/flycheck*/**",)
+RESIDUE_WAIT_SECONDS = 2.0
+
+
+def _glob_regex(glob: str) -> re.Pattern[str]:
+    out, i = [], 0
+    while i < len(glob):
+        if glob.startswith("**", i):
+            out.append(".*")
+            i += 2
+        elif glob[i] == "*":
+            out.append("[^/]*")
+            i += 1
+        else:
+            out.append(re.escape(glob[i]))
+            i += 1
+    return re.compile("".join(out) + r"\Z")
+
+
+def residue_globs(primary_root: Path) -> list[str]:
+    globs = list(DEFAULT_RESIDUE_GLOBS)
+    xdg = os.environ.get("XDG_CONFIG_HOME") or str(Path.home() / ".config")
+    rel = Path("agent-plugins/bento/bento/land-work/residue-globs.txt")
+    # Repo scope overrides home scope, per file.
+    for candidate in (primary_root / ".agent-plugins/bento/bento/land-work/residue-globs.txt", Path(xdg) / rel):
+        try:
+            text = candidate.read_text(encoding="utf-8")
+        except OSError:
+            continue
+        globs += [ln.strip() for ln in text.splitlines() if ln.strip() and not ln.strip().startswith("#")]
+        break
+    return globs
+
+
+def non_residue_files(path: Path, globs: list[str]) -> list[str]:
+    """Relative paths of files under `path` matching no residue glob."""
+    patterns = [_glob_regex(g) for g in globs]
+    left = []
+    for dirpath, _dirs, files in os.walk(path):
+        for name in files:
+            rel = (Path(dirpath) / name).relative_to(path).as_posix()
+            if not any(p.match(rel) for p in patterns):
+                left.append(rel)
+    return sorted(left)
+
+
 class Driver:
-    def __init__(self, cwd: Path, runtime: str, timeout: str | None, no_merge: bool = False):
+    def __init__(
+        self, cwd: Path, runtime: str, timeout: str | None, no_merge: bool = False, no_teardown: bool = False,
+    ):
         self.cwd = cwd
         self.no_merge = no_merge
+        self.no_teardown = no_teardown
         self.runtime = runtime
         self.timeout = timeout
         self.steps: list[dict] = []
@@ -298,6 +365,66 @@ class Driver:
             return merge_sha, merge_tree, f"refs/remotes/origin/{primary_branch}", warning
         return merge_sha, merge_tree, None, None
 
+    # -- teardown -------------------------------------------------------------- #
+
+    def _teardown(self, primary_root: Path, feature_branch: str) -> dict:
+        """Remove the feature worktree + branch after a verified landing. Never
+        raises for an expected refusal: the landing is already done."""
+        top = git("rev-parse", "--show-toplevel", cwd=self.cwd, check=False).stdout.strip()
+        worktree = Path(top).resolve() if top else self.cwd
+        report: dict = {
+            "status": "skipped", "worktree": str(worktree), "branch": feature_branch,
+            "branch_deleted": False, "residue_removed": False, "residue_left": [],
+            "cd": str(primary_root.resolve()),
+        }
+        if self.no_teardown:
+            report["reason"] = "--no-teardown"
+            return report
+        if worktree == primary_root.resolve():
+            report["reason"] = "running in the primary checkout"
+            return report
+        try:
+            config = json.loads((primary_root / "swarm-config.json").read_text(encoding="utf-8"))
+            if (config.get("landing") or {}).get("mode") == "batch":
+                report["reason"] = "batch landing mode"
+                return report
+        except (OSError, ValueError, AttributeError):
+            pass
+        status = git("status", "--porcelain=v1", "--untracked-files=all", cwd=worktree, check=False)
+        if status.returncode != 0:
+            report["reason"] = f"could not inspect the worktree: {status.stderr.strip()}"
+            return report
+        if status.stdout.strip():
+            paths = [ln[3:] for ln in status.stdout.splitlines()]
+            report["reason"] = f"dirty: {', '.join(paths[:10])}" + (" ..." if len(paths) > 10 else "")
+            return report
+
+        # Run from the primary checkout: this process's own cwd is the
+        # worktree being deleted.
+        removed = git("worktree", "remove", str(worktree), cwd=primary_root, check=False)
+        if removed.returncode != 0:
+            report["reason"] = f"git worktree remove failed: {removed.stderr.strip()}"
+            return report
+        os.chdir(primary_root)
+        self.cwd = primary_root
+        report["status"] = "removed"
+        deleted = git("branch", "-d", feature_branch, cwd=primary_root, check=False)
+        report["branch_deleted"] = deleted.returncode == 0
+        if not report["branch_deleted"]:
+            report["warning"] = f"git branch -d {feature_branch} failed: {deleted.stderr.strip()}"
+
+        # A still-running LSP (rust-analyzer flycheck) may recreate the path.
+        time.sleep(float(os.environ.get("BENTO_LAND_RESIDUE_WAIT", RESIDUE_WAIT_SECONDS)))
+        if worktree.exists():
+            left = non_residue_files(worktree, residue_globs(primary_root))
+            report["residue_left"] = left
+            if not left:
+                shutil.rmtree(worktree, ignore_errors=True)
+                report["residue_removed"] = not worktree.exists()
+            else:
+                report.setdefault("warning", f"left {worktree}: it contains non-residue files")
+        return report
+
     def finish(self, payload: dict) -> dict:
         if self.no_merge:
             payload.update(mode="no-merge", merged=False)
@@ -386,6 +513,14 @@ class Driver:
             verify_args += ["--ref", verify_ref]
         self._run_script("verify_landing", VERIFY_LANDING, verify_args)
 
+        start = time.monotonic()
+        teardown = self._teardown(primary_root, feature_branch)
+        note = teardown.get("warning") or (
+            f"teardown skipped ({teardown['reason']})" if teardown["status"] == "skipped" else None
+        )
+        self._record("teardown", "passed" if teardown["status"] == "removed" else "skipped", start,
+                     {"warning": note} if note else None)
+
         return {
             "ok": True,
             "steps": self.steps,
@@ -394,13 +529,14 @@ class Driver:
             "merge_sha": merge_sha,
             "primary_branch": primary_branch,
             "warning": merge_warning,
+            "teardown": teardown,
         }
 
 
 def main() -> int:
     args = parse_args()
     cwd = Path.cwd().resolve()
-    driver = Driver(cwd, args.runtime, args.timeout, args.no_merge)
+    driver = Driver(cwd, args.runtime, args.timeout, args.no_merge, args.no_teardown)
 
     def _on_signal(signum, _frame):
         driver.cleanup_preview()
