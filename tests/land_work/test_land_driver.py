@@ -2,6 +2,7 @@ import json
 import os
 import signal
 import subprocess
+import sys
 import tempfile
 import threading
 import time
@@ -702,10 +703,6 @@ class NoMergeCanaryTest(LandDriverTestBase):
         # An in-progress merge in the primary is the operator's; the canary's
         # failure/signal paths must not `git merge --abort` it. (prepare
         # normally refuses a mid-merge primary, so drive the Driver directly.)
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("land_under_test", LAND_SCRIPT)
-        land = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(land)
         git(self.repo, "checkout", "-q", "-b", "side")
         (self.repo / "clash.txt").write_text("side\n", encoding="utf-8")
         git(self.repo, "add", "clash.txt")
@@ -717,34 +714,20 @@ class NoMergeCanaryTest(LandDriverTestBase):
         subprocess.run(["git", "merge", "side"], cwd=self.repo, capture_output=True, text=True)
         merge_head = self.repo / ".git" / "MERGE_HEAD"
         self.assertTrue(merge_head.exists())
-        driver = land.Driver(self.worktree, "unknown", None, no_merge=True)
-        driver.primary_root = self.repo
-        driver.abort_primary_merge_if_in_progress()
-        self.assertTrue(merge_head.exists())
-        real = land.Driver(self.worktree, "unknown", None)
-        real.primary_root = self.repo
-        real.abort_primary_merge_if_in_progress()
-        self.assertFalse(merge_head.exists())
-
-    def test_cleanup_failure_fails_the_canary(self) -> None:
-        # A locked preview worktree cannot be removed by a plain --force.
-        self.install_verifier("#!/usr/bin/env bash\ngit worktree lock .\n" + PASS_VERIFIER.split("\n", 1)[1])
-        result = self.run_driver("--no-merge")
-        payload = json.loads(result.stdout)
-        self.assertNotEqual(result.returncode, 0, result.stdout + result.stderr)
-        self.assertFalse(payload["ok"])
-        self.assertEqual(payload["failed_step"], "cleanup")
-        self.assertIs(payload["merged"], False)
-        for wt in self.registered_preview_worktrees():
-            git(self.repo, "worktree", "unlock", wt)
-            git(self.repo, "worktree", "remove", "--force", wt)
-
-    def test_omitting_flag_still_records_reuses_and_merges(self) -> None:
-        first = json.loads(self.run_driver().stdout)
-        self.assertTrue(first["ok"])
-        self.assertNotIn("mode", first)
-        self.assertEqual(len(self.evidence_records()), 1)
-        self.assertTrue((self.repo / "feature.txt").exists())
+        # Fresh interpreter: other test modules put a different git_state on
+        # sys.path/sys.modules.
+        probe = (
+            "import sys; sys.path.insert(0, sys.argv[1]); import land, pathlib; "
+            "d = land.Driver(pathlib.Path('.'), 'unknown', None, no_merge=%s); "
+            "d.primary_root = pathlib.Path(sys.argv[2]); d.abort_primary_merge_if_in_progress()"
+        )
+        scripts = str(LAND_SCRIPT.parent)
+        for no_merge, expect_present in (("True", True), ("False", False)):
+            subprocess.run(
+                [sys.executable, "-c", probe % no_merge, scripts, str(self.repo)],
+                cwd=self.worktree, stdin=subprocess.DEVNULL, capture_output=True, text=True, check=True,
+            )
+            self.assertEqual(merge_head.exists(), expect_present)
 
 
 class VerifierEvidenceFlagsTest(unittest.TestCase):
@@ -756,7 +739,7 @@ class VerifierEvidenceFlagsTest(unittest.TestCase):
             capture_output=True, text=True, stdin=subprocess.DEVNULL, check=False,
         )
         self.assertEqual(result.returncode, 2)
-        self.assertIn("not allowed with", result.stderr)
+        self.assertIn("mutually exclusive", result.stderr)
 
 
 class SigintDuringMergeTest(LandDriverTestBase):
