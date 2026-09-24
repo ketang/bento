@@ -36,8 +36,8 @@ must be cut from the expedition base via
 `expedition/scripts/expedition.py start-task`, which enforces the expedition's
 shared base, landing lease, and numbering. This replaces steps 6-7 below, not
 step 8: after `start-task` creates the branch/worktree, enter it and verify
-with `expedition/scripts/expedition.py verify --require-active-task` in place
-of `launch-work-verify.py` — the same hard gate step 8 requires, just the
+with `expedition/scripts/expedition.py verify --expedition <name>
+--require-active-task` in place of `launch-work-verify.py` — the same hard gate step 8 requires, just the
 expedition-aware check instead of the plain one. Do not proceed to
 implementation until it passes. Once verified, this skill's remaining steps
 (dependency install, TDD discipline, hooks, checkpoint commits, ready-to-land
