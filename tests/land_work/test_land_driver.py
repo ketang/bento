@@ -57,8 +57,7 @@ class LandDriverTestBase(unittest.TestCase):
         self.install_verifier(PASS_VERIFIER)
         # Committed and pushed before the feature worktree branches off, so
         # the feature branch starts from a main that already includes it --
-        # otherwise the feature branch would be behind primary by this
-        # commit and --require-up-to-date would (correctly) refuse to land.
+        # otherwise the feature branch would be behind primary by this commit.
         self.write_manifest()
 
         git(self.repo, "worktree", "add", "-b", "feature/test", str(self.worktree), "main")
@@ -149,13 +148,88 @@ class HappyPathTest(LandDriverTestBase):
         self.assertTrue(payload["ok"])
 
 
+class BehindFeatureBranchTest(LandDriverTestBase):
+    def advance_primary(self, name: str, content: str = "main\n", count: int = 3) -> None:
+        for i in range(count):
+            (self.repo / f"{name}{i}.txt").write_text(content, encoding="utf-8")
+            git(self.repo, "add", f"{name}{i}.txt")
+            git(self.repo, "commit", "-m", f"main advance {i}")
+        git(self.repo, "push", "origin", "main")
+
+    def test_behind_branch_with_clean_preview_lands_without_rebase(self) -> None:
+        self.advance_primary("other")
+        feature_tip = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertTrue(payload["ok"])
+        self.assertEqual(git(self.worktree, "rev-parse", "HEAD").stdout.strip(), feature_tip)
+        parent2 = git(self.repo, "rev-parse", "HEAD^2").stdout.strip()
+        self.assertEqual(parent2, feature_tip)
+        self.assertTrue((self.repo / "other0.txt").exists())
+        self.assertTrue((self.repo / "feature.txt").exists())
+
+    def test_verifier_sees_merged_candidate_and_only_feature_paths(self) -> None:
+        # Exempt the feature's only changed path and have the verifier select
+        # zero checks. With a feature-only diff nothing relevant remains and
+        # the landing passes; a two-dot diff against the advanced base would
+        # also list main-only files as unverified and fail.
+        manifest_path = self.repo / ".agent-plugins/bento/bento/land-work/verifier.json"
+        manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        manifest["verified_noop"] = [{"path": "feature.txt", "reason": "test"}]
+        manifest_path.write_text(json.dumps(manifest), encoding="utf-8")
+        git(self.repo, "commit", "-am", "exempt feature.txt")
+        git(self.repo, "push", "origin", "main")
+        git(self.worktree, "merge", "main", "-m", "sync manifest")
+        self.advance_primary("other")
+        self.install_verifier(
+            "#!/usr/bin/env bash\n"
+            'echo \'{"schema_version":1,"status":"passed","selected_checks":[]}\'\n'
+        )
+
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+
+    def test_verifier_runs_in_candidate_with_main_and_feature_files(self) -> None:
+        self.advance_primary("other")
+        seen = Path(self.temp_dir.name) / "seen"
+        self.install_verifier(
+            "#!/usr/bin/env bash\n"
+            f"ls other0.txt feature.txt > {seen}\n" + PASS_VERIFIER.split("\n", 1)[1]
+        )
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(seen.read_text().split(), ["feature.txt", "other0.txt"])
+
+    def test_conflicting_branch_reports_rebase_required(self) -> None:
+        self.advance_primary("shared", content="main version\n", count=1)
+        # main now also adds shared0.txt; make the feature touch the same path.
+        (self.worktree / "shared0.txt").write_text("feature version\n", encoding="utf-8")
+        git(self.worktree, "add", "shared0.txt")
+        git(self.worktree, "commit", "-m", "conflicting feature change")
+        main_before = git(self.repo, "rev-parse", "HEAD").stdout.strip()
+
+        result = self.run_driver()
+        payload = json.loads(result.stdout)
+
+        self.assertEqual(result.returncode, 1)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["failed_step"], "create_preview")
+        self.assertIn("rebase onto origin/main, resolve, and re-run land.py", payload["error"])
+        self.assertIn("shared0.txt", payload["error"])
+        self.assertEqual(git(self.repo, "rev-parse", "HEAD").stdout.strip(), main_before)
+        self.assertEqual(self.registered_preview_worktrees(), [])
+
+
 class PushFromPreviewRouteTest(LandDriverTestBase):
     def test_ahead_primary_uses_push_from_preview_route(self) -> None:
         # Simulate the primary's local main gaining a commit the leased
         # remote doesn't have yet (bento-rdtn.5's "ahead" diagnostic),
         # deliberately never pushed. Rebase the feature branch onto it so the
         # feature branch itself is not behind the local primary --
-        # --require-up-to-date is a separate, orthogonal check from
+        # primary_local_vs_remote is a separate, orthogonal check from
         # primary_local_vs_remote.
         (self.repo / "extra.txt").write_text("more\n", encoding="utf-8")
         git(self.repo, "add", "extra.txt")
@@ -182,7 +256,7 @@ class PushFromPreviewRouteTest(LandDriverTestBase):
         # Code review (bento-rdtn.14): if the primary checkout gains an
         # incompatible local commit in the window between push-from-preview's
         # push and its best-effort primary sync (a race, not something
-        # --require-up-to-date at prepare time could have caught), the
+        # prepare could have caught), the
         # landing itself already succeeded on origin -- ff-only failing to
         # sync the primary's local branch afterward must be a warning, not a
         # reported failure, and must never force-reset the primary.
@@ -249,8 +323,7 @@ class BehindPrimaryTest(LandDriverTestBase):
         # -- it is now "behind" origin/main.
 
         # Rebase the feature branch onto the new origin/main so the feature
-        # branch itself is not behind (an orthogonal --require-up-to-date
-        # check); the primary checkout's local main is still stale.
+        # branch itself is not behind; the primary checkout's local main is still stale.
         git(self.worktree, "fetch", "origin")
         git(self.worktree, "rebase", "origin/main")
 

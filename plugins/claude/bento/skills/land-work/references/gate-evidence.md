@@ -29,8 +29,8 @@ rare — reach it only after checking all of them.
 Run the suite against a clean checkout of the leased base SHA with the branch
 applied — the step 8 merge preview is exactly this. Do not run against the
 shared primary checkout, which may hold other agents' state. Verification is
-valid only for the candidate it ran on: a later rebase, merge, or conflict
-resolution makes it stale.
+valid only for the candidate tree it ran on: a different candidate tree
+(conflict resolution, changed base, regenerated artifacts) makes it stale.
 
 ## Pre-existing red primary branch
 
