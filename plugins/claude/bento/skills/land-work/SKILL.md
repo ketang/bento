@@ -49,12 +49,12 @@ state checks that should not rely on ad hoc prose reconstruction:
 - `land-work/scripts/land-work-create-preview.py` to materialize the exact
   merge candidate from the leased primary-branch base into a preview checkout
   (and `--cleanup --preview-dir <path>` to remove that registered worktree
-  once verification finishes). Records an owner file in each preview's git dir and auto-removes
-  leftover `land-work-preview-*` worktrees whose owner is provably dead
-  (`reclaimed_previews`); refuses while a live or unknown-owner one remains
-  (error names the owner). `--allow-existing` skips the check and does not
-  protect a live preview. When the repo's
-  `swarm-config.json` declares
+  once verification finishes). Records an owner file in each preview's git
+  dir and auto-removes leftover `land-work-preview-*` worktrees only when their
+  `land.py` owner is proven dead (`reclaimed_previews`); anything unprovable
+  (manual, ownerless, other host, unreadable) refuses, naming the owner.
+  `--allow-existing` skips the check and does not protect a live preview.
+  When the repo's `swarm-config.json` declares
   `landing.integration_worktree`, the preview materializes there instead of a
   scratch `/tmp` directory, reusing build caches across landings — see
   `land-work/references/integration-worktree.md`. `--cleanup` is a safe no-op
@@ -430,8 +430,8 @@ land-work/scripts/land-work-create-preview.py --cleanup --preview-dir <preview-d
      `landing.integration_worktree`) — that its worktree is no longer
      registered, by passing `--preview-dir`. `land-work-create-preview.py`
      also refuses to start a new preview while a live or unknown-owner
-     `land-work-preview-*` worktree is registered (dead-owner ones are
-     reclaimed), so an unremoved preview surfaces immediately:
+     `land-work-preview-*` worktree is registered (proven-dead driver ones
+     are reclaimed), so an unremoved preview surfaces immediately:
 
 ```bash
 land-work/scripts/land-work-verify-landing.py --expected-tree <tree> --preview-dir <preview-dir>
