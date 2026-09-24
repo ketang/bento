@@ -302,7 +302,9 @@ class Driver:
         )
         self._record("fetch", "passed", start)
 
-        preview = self._run_script("create_preview", CREATE_PREVIEW, ["--base-ref", leased_sha])
+        preview = self._run_script(
+            "create_preview", CREATE_PREVIEW, ["--base-ref", leased_sha, "--owner-pid", str(os.getpid())]
+        )
         self.preview_dir = Path(preview["preview_dir"])
         head_sha = preview["feature_sha"]
         preview_tree = preview["preview_tree"]

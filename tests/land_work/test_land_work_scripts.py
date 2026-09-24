@@ -4,7 +4,9 @@ import json
 import os
 import subprocess
 import sys
+import socket
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -49,6 +51,8 @@ class LandWorkScriptsTest(unittest.TestCase):
         git(self.worktree, "commit", "-m", "feature change")
 
     def tearDown(self) -> None:
+        for preview in getattr(self, "created_previews", []):
+            self.run_preview("--cleanup", "--preview-dir", str(preview), cwd=self.worktree, check=False)
         self.temp_dir.cleanup()
 
     def run_prepare(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -355,6 +359,166 @@ class LandWorkScriptsTest(unittest.TestCase):
 
         self.run_preview("--cleanup", "--preview-dir", str(leftover_dir), cwd=self.worktree)
         self.run_preview("--cleanup", "--preview-dir", payload["preview_dir"], cwd=self.worktree)
+
+    # --- preview ownership / dead-leftover reclaim (bento-c96u.17) ---
+    # Reclaim only when owner death is PROVEN; everything else must refuse.
+
+    def track_preview(self, preview: Path) -> None:
+        self.__dict__.setdefault("created_previews", []).append(preview)
+
+    def admin_dir(self, preview: Path) -> Path:
+        return Path(git(preview, "rev-parse", "--absolute-git-dir").stdout.strip())
+
+    def make_leftover(self, *preview_args: str, overrides: dict | None = None, delete_owner: bool = False) -> Path:
+        """Create a real preview, then patch its owner file."""
+        payload = json.loads(self.run_preview(*preview_args, cwd=self.worktree).stdout)
+        leftover = Path(payload["preview_dir"])
+        self.track_preview(leftover)
+        owner_file = self.admin_dir(leftover) / "land-work-owner.json"
+        self.assertTrue(owner_file.exists())
+        if delete_owner:
+            owner_file.unlink()
+        elif overrides:
+            info = json.loads(owner_file.read_text(encoding="utf-8"))
+            info.update(overrides)
+            owner_file.write_text(json.dumps(info), encoding="utf-8")
+        return leftover
+
+    def dead_driver_leftover(self, **overrides) -> Path:
+        """A driver preview whose recorded owner pid has provably exited."""
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        return self.make_leftover(
+            "--owner-pid", str(proc.pid), overrides={"pid_start_time": "1", **overrides}
+        )
+
+    def assert_refused(self, leftover: Path) -> dict:
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(payload["leftover_previews"], [str(leftover)])
+        self.assertTrue(leftover.exists())
+        return payload
+
+    def assert_reclaimed(self, leftover: Path) -> None:
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(payload["reclaimed_previews"], [str(leftover)])
+        self.assertFalse(leftover.exists())
+        self.track_preview(Path(payload["preview_dir"]))
+
+    def test_preview_writes_owner_file_in_git_dir_not_worktree(self) -> None:
+        payload = json.loads(self.run_preview("--owner-pid", str(os.getpid()), cwd=self.worktree).stdout)
+        preview = Path(payload["preview_dir"])
+        self.track_preview(preview)
+        info = json.loads((self.admin_dir(preview) / "land-work-owner.json").read_text(encoding="utf-8"))
+        self.assertEqual(info["owner_kind"], "driver")
+        self.assertEqual(info["pid"], os.getpid())
+        self.assertEqual(info["hostname"], socket.gethostname())
+        self.assertEqual(info["base_sha"], payload["base_sha"])
+        self.assertFalse((preview / "land-work-owner.json").exists())
+        self.assertNotIn("land-work-owner", git(preview, "status", "--porcelain").stdout)
+
+    def test_standalone_preview_records_manual_owner_with_parent_pid(self) -> None:
+        leftover = self.make_leftover()
+        info = json.loads((self.admin_dir(leftover) / "land-work-owner.json").read_text(encoding="utf-8"))
+        self.assertEqual(info["owner_kind"], "manual")
+        self.assertEqual(info["pid"], os.getpid())  # create-preview's parent is this test
+
+    def test_owner_write_failure_is_an_error_for_a_driver_caller(self) -> None:
+        module = load_preview_module()
+        with unittest.mock.patch.object(module.os, "replace", side_effect=OSError("disk full")):
+            err = module.write_owner_file(self.worktree, 1234, "feature/test", "abc")
+        self.assertIn("disk full", err)
+
+    def test_preview_reclaims_driver_leftover_whose_pid_exited(self) -> None:
+        self.assert_reclaimed(self.dead_driver_leftover())
+
+    def test_preview_reclaims_driver_leftover_with_reused_pid(self) -> None:
+        self.assert_reclaimed(
+            self.make_leftover("--owner-pid", str(os.getpid()), overrides={"pid_start_time": "1"})
+        )
+
+    def test_preview_refuses_driver_leftover_owned_by_live_process(self) -> None:
+        leftover = self.make_leftover(
+            "--owner-pid", str(os.getpid()), overrides={"session_id": "sess-1", "feature_branch": "feature/other"}
+        )
+        payload = self.assert_refused(leftover)
+        err = " ".join(payload["errors"])
+        for needle in ("owner_kind=driver", f"pid={os.getpid()}", "sess-1", "feature/other"):
+            self.assertIn(needle, err)
+
+    def test_preview_refuses_when_owner_is_unobservable(self) -> None:
+        for name, overrides in {
+            "other host": {"hostname": "not-this-host.invalid"},
+            "null start time": {"pid_start_time": None},
+            "pid namespace mismatch": {"pid_ns": "pid:[1]"},
+            "missing pid namespace": {"pid_ns": None},
+            "boot id mismatch": {"boot_id": "other-boot"},
+            "missing boot id": {"boot_id": None},
+            "bad pid": {"pid": -5},
+        }.items():
+            with self.subTest(name):
+                leftover = self.dead_driver_leftover(**overrides)
+                self.assert_refused(leftover)
+                self.run_preview("--cleanup", "--preview-dir", str(leftover), cwd=self.worktree)
+
+    def test_preview_refuses_manual_and_ownerless_leftovers_however_old(self) -> None:
+        for delete_owner in (False, True):
+            with self.subTest(delete_owner=delete_owner):
+                leftover = self.make_leftover(delete_owner=delete_owner)
+                admin = self.admin_dir(leftover)
+                old = time.time() - 50 * 3600
+                for base in (leftover, admin):
+                    for path in [base, *base.iterdir()]:
+                        os.utime(path, (old, old), follow_symlinks=False)
+                self.assert_refused(leftover)
+                self.run_preview("--cleanup", "--preview-dir", str(leftover), cwd=self.worktree)
+
+    def test_preview_refuses_unparseable_owner_file(self) -> None:
+        leftover = self.make_leftover()
+        (self.admin_dir(leftover) / "land-work-owner.json").write_text("{not json", encoding="utf-8")
+        self.assert_refused(leftover)
+
+    def test_preview_refuses_dead_driver_leftover_holding_an_extra_commit(self) -> None:
+        # A driver killed mid push-from-preview leaves the merge commit only here.
+        leftover = self.dead_driver_leftover()
+        git(leftover, "-c", "user.name=t", "-c", "user.email=t@example.com", "commit", "-m", "merge in preview")
+        payload = self.assert_refused(leftover)
+        self.assertIn("beyond its base", " ".join(payload["errors"]))
+
+    def test_reclaim_does_not_run_when_validation_fails(self) -> None:
+        leftover = self.dead_driver_leftover()
+        (self.worktree / "dirty.txt").write_text("dirty\n", encoding="utf-8")
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("working tree is dirty", payload["errors"])
+        self.assertTrue(leftover.exists())
+        self.assertEqual(payload["reclaimed_previews"], [])
+
+    def test_two_reclaimers_of_one_leftover_both_succeed(self) -> None:
+        module = load_preview_module()
+        leftover = self.dead_driver_leftover()
+        first = module.reclaim_dead_leftovers(self.repo, [leftover])
+        second = module.reclaim_dead_leftovers(self.repo, [leftover])
+        self.assertEqual(first, ([str(leftover)], []))
+        self.assertEqual(second, ([str(leftover)], []))
+        self.assertFalse(leftover.exists())
+
+    def test_reclaim_reclassifies_before_removing(self) -> None:
+        module = load_preview_module()
+        leftover = self.dead_driver_leftover()
+        # The owner shows up alive between classification and removal.
+        info_path = self.admin_dir(leftover) / "land-work-owner.json"
+        info = json.loads(info_path.read_text(encoding="utf-8"))
+        info.update({"pid": os.getpid(), "pid_start_time": module.proc_start_time(os.getpid())})
+        info_path.write_text(json.dumps(info), encoding="utf-8")
+        reclaimed, errors = module.reclaim_dead_leftovers(self.repo, [leftover])
+        self.assertEqual(reclaimed, [])
+        self.assertTrue(errors)
+        self.assertTrue(leftover.exists())
 
     def test_leftover_check_warns_but_does_not_block_on_git_failure(self) -> None:
         # A `git worktree list` failure while checking for leftovers must
@@ -727,11 +891,13 @@ class PushFromPreviewLandingTest(unittest.TestCase):
 
 
 class IntegrationWorktreePreviewTest(unittest.TestCase):
+    INTEGRATION_NAME = "integration"
+
     def setUp(self) -> None:
         self.temp_dir = tempfile.TemporaryDirectory()
         self.repo = Path(self.temp_dir.name) / "repo"
         self.worktree = Path(self.temp_dir.name) / "feature-worktree"
-        self.integration_worktree = Path(self.temp_dir.name) / "integration"
+        self.integration_worktree = Path(self.temp_dir.name) / self.INTEGRATION_NAME
         self.repo.mkdir()
 
         git(self.repo, "init", "-b", "main")
@@ -951,6 +1117,28 @@ def working_tree_dirty_for_test(path: Path) -> bool:
         check=True,
     )
     return bool(result.stdout.strip())
+
+
+class PreviewNamedIntegrationWorktreeTest(IntegrationWorktreePreviewTest):
+    """A configured persistent worktree that happens to match the
+    land-work-preview-* glob must never be reclaimed."""
+
+    INTEGRATION_NAME = "land-work-preview-persistent"
+
+    def test_persistent_worktree_with_dead_driver_owner_is_not_reclaimed(self) -> None:
+        self.run_preview(cwd=self.worktree)
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        admin = Path(git(self.integration_worktree, "rev-parse", "--absolute-git-dir").stdout.strip())
+        (admin / "land-work-owner.json").write_text(
+            json.dumps({"owner_kind": "driver", "pid": proc.pid, "pid_start_time": "1"}), encoding="utf-8"
+        )
+        result = self.run_preview(cwd=self.worktree)
+        payload = json.loads(result.stdout)
+        self.assertTrue(payload["ok"])
+        self.assertTrue(payload["reused_worktree"])
+        self.assertEqual(payload["reclaimed_previews"], [])
+        self.assertTrue(self.integration_worktree.exists())
 
 
 if __name__ == "__main__":

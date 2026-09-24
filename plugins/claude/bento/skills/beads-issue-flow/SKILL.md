@@ -217,6 +217,11 @@ once Beads is decommissioned.
 - Avoid references to local filesystem paths or other access-scoped artifacts
   unless there is no practical alternative, such as an image hosted in a
   tracker that cannot take attachments.
+- Review follow-ups from land-work carry the `review-followup` label and a
+  `discovered-from` dependency on the landed issue. A `bd create` hook denies
+  a second one per parent and any whose parent is itself a `review-followup`;
+  only the operator can waive it (see the hook,
+  `bd-review-followup-guard.py`).
 - Do not invent extra Beads statuses or transitions that the repo does not
   document.
 - Do not close from cleanup evidence alone unless the landed-work correlation
