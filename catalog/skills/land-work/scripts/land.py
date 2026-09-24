@@ -66,7 +66,6 @@ from git_state import (  # noqa: E402
     detect_primary_branch,
     git,
     git_stdout,
-    is_linked_worktree,
     primary_checkout_root,
     ref_exists,
     rev_parse,
@@ -163,8 +162,8 @@ def residue_regexes(globs: list[str]) -> list[re.Pattern[str]]:
     return patterns
 
 
-def non_residue_files(path: Path, patterns: list[re.Pattern[str]]) -> list[str]:
-    """Relative paths under `path` matching no residue glob. Symlinked
+def non_residue_files(path: Path, patterns: list[re.Pattern[str]], prefix: str = "") -> list[str]:
+    """`prefix` + relative paths under `path` matching no residue glob. Symlinked
     directories count as files; an unreadable tree is never residue."""
     def _raise(exc: OSError) -> None:
         raise exc
@@ -174,7 +173,7 @@ def non_residue_files(path: Path, patterns: list[re.Pattern[str]]) -> list[str]:
         for dirpath, dirs, files in os.walk(path, onerror=_raise):
             names = files + [d for d in dirs if (Path(dirpath) / d).is_symlink()]
             for name in names:
-                rel = (Path(dirpath) / name).relative_to(path).as_posix()
+                rel = prefix + (Path(dirpath) / name).relative_to(path).as_posix()
                 if not any(p.match(rel) for p in patterns):
                     left.append(rel)
     except OSError:
@@ -217,8 +216,15 @@ def _teardown_checked(worktree: Path, primary_root: Path, branch: str, primary_b
     if dirty:
         return skip(f"dirty: {', '.join(dirty[:10])}" + (" ..." if len(dirty) > 10 else ""))
     globs = residue_globs(primary_root)
-    allowed = {"target", *(g.split("/")[0] for g in globs)}
-    precious = [p for p in ignored if p.rstrip("/").split("/")[0] not in allowed]
+    # `git worktree remove` deletes every ignored file: each must be build
+    # output under target/ or match a residue glob (a trailing "/" = a directory).
+    allowed = residue_regexes([*globs, "target/**"])
+    precious: list[str] = []
+    for entry in ignored:
+        if entry.endswith("/"):
+            precious += non_residue_files(worktree / entry, allowed, prefix=entry)
+        elif not any(p.match(entry) for p in allowed):
+            precious.append(entry)
     if precious:
         return skip(f"ignored files would be deleted: {', '.join(precious[:10])}" + (" ..." if len(precious) > 10 else ""))
 
@@ -237,8 +243,8 @@ def _teardown_checked(worktree: Path, primary_root: Path, branch: str, primary_b
     # A still-running LSP (rust-analyzer flycheck) may recreate the path.
     time.sleep(_residue_wait())
     hook = os.environ.get("BENTO_LAND_TEST_AFTER_REMOVE")  # test seam: stands in for the LSP
-    if hook:
-        subprocess.run([hook, str(worktree)], stdin=subprocess.DEVNULL, capture_output=True, check=False)
+    if hook and "BENTO_LAND_TEST_RESIDUE_WAIT" in os.environ:
+        subprocess.run(["bash", hook, str(worktree)], stdin=subprocess.DEVNULL, capture_output=True, check=False)
     if worktree.exists():
         left = ["<symlink>"] if worktree.is_symlink() else non_residue_files(worktree, residue_regexes(globs))
         report["residue_left"] = left
@@ -251,24 +257,28 @@ def _teardown_checked(worktree: Path, primary_root: Path, branch: str, primary_b
 
 
 def teardown(cwd: Path, worktree_arg: str | None, branch_arg: str | None) -> dict:
-    worktree = detect_checkout_root(Path(worktree_arg).resolve() if worktree_arg else cwd).resolve()
-    primary_root = primary_checkout_root(worktree).resolve()
-    primary_branch, _ = detect_primary_branch(worktree)
-    branch = current_branch(worktree)
     report: dict = {
-        "ok": True, "mode": "teardown-only", "status": "skipped", "worktree": str(worktree),
-        "branch": branch, "branch_deleted": False, "residue_removed": False, "residue_left": [],
-        "cd": str(primary_root),
+        "ok": True, "mode": "teardown-only", "status": "skipped",
+        "worktree": str(Path(worktree_arg).resolve() if worktree_arg else cwd),
+        "branch": None, "branch_deleted": False, "residue_removed": False, "residue_left": [], "cd": None,
     }
-    if branch_arg and branch_arg != branch:
-        report["reason"] = f"worktree is on {branch}, not {branch_arg}"
-        return report
     try:
+        worktree = detect_checkout_root(Path(worktree_arg).resolve() if worktree_arg else cwd).resolve()
+        primary_root = primary_checkout_root(worktree).resolve()
+        primary_branch, _ = detect_primary_branch(worktree)
+        branch = current_branch(worktree)
+        report.update(worktree=str(worktree), branch=branch, cd=str(primary_root))
+        if branch_arg and branch_arg != branch:
+            report["reason"] = f"worktree is on {branch}, not {branch_arg}"
+            return report
         return _teardown_checked(worktree, primary_root, branch, primary_branch, report)
+    except NotAWorkTreeError:
+        report["reason"] = f"{report['worktree']} is not a git work tree"
     except Exception as exc:  # noqa: BLE001 -- the landing is already done; never fail on cleanup
-        report["status"] = "error" if report["status"] == "skipped" else report["status"]
+        if report["status"] == "skipped":
+            report["status"] = "error"
         report["warning"] = f"teardown error: {exc}"
-        return report
+    return report
 
 
 class Driver:

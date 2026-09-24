@@ -125,6 +125,34 @@ class TeardownTest(LandDriverTestBase):
         result, payload = self.teardown()
         self.assertEqual(payload["status"], "removed", result.stderr)
 
+    def test_ignored_file_next_to_custom_glob_is_refused(self) -> None:
+        (self.worktree / ".gitignore").write_text("build/\n", encoding="utf-8")
+        git(self.worktree, "add", ".gitignore")
+        git(self.worktree, "commit", "-m", "ignore")
+        self.commit_globs("build/gen/**\n")
+        self.land()
+        (self.worktree / "build" / "gen").mkdir(parents=True)
+        (self.worktree / "build" / "gen" / "a").write_text("x", encoding="utf-8")
+        (self.worktree / "build" / "local.env").write_text("SECRET=1\n", encoding="utf-8")
+        result, payload = self.teardown()
+        self.assert_kept(result, payload, "build/local.env")
+        (self.worktree / "build" / "local.env").unlink()
+        result, payload = self.teardown()
+        self.assertEqual(payload["status"], "removed", result.stderr)
+
+    def test_non_repo_worktree_is_reported_not_a_traceback(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            result, payload = self.teardown("--worktree", tmp)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertIn(payload["status"], ("skipped", "error"))
+        self.assertTrue(payload.get("reason") or payload.get("warning"))
+
+    def test_missing_origin_ref_is_reported(self) -> None:
+        self.land()
+        git(self.repo, "remote", "remove", "origin")
+        result, payload = self.teardown()
+        self.assert_kept(result, payload, "origin/main")
+
     def test_locked_worktree_is_refused(self) -> None:
         self.land()
         git(self.repo, "worktree", "lock", str(self.worktree))
