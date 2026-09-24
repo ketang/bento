@@ -72,7 +72,10 @@ state checks that should not rely on ad hoc prose reconstruction:
   recorded by tree hash + manifest digest under `<git-common-dir>/bento/
   gate-evidence/`; land.py passes `--reuse-evidence`, so an identical candidate
   tree is reported `reused`, not executed. To produce evidence before landing,
-  run it with `--candidate <clean rebased feature worktree>`. See
+  run it with `--candidate <clean rebased feature worktree>` and `--log <path
+  outside the worktree>` (the default log leaves an untracked file that makes
+  prepare report the worktree dirty). It only helps when the feature tree
+  equals the merge-preview tree, i.e. the branch is on the leased tip. See
   `references/project-verifier.md` for the manifest contract. If
   no manifest exists anywhere in the discovery chain, land-work invokes
   `wire-land-verifier` inline rather than deferring the fix to a later,
