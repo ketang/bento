@@ -363,6 +363,11 @@ def parse_args() -> argparse.Namespace:
         help="reuse a fresh green record for the same candidate tree and manifest "
         "digest instead of executing the verifier command",
     )
+    parser.add_argument(
+        "--no-record-evidence",
+        action="store_true",
+        help="do not write a green record for this candidate tree (canary runs)",
+    )
     return parser.parse_args()
 
 
@@ -715,7 +720,7 @@ def main() -> int:
             log_text=log_text,
         )
 
-    if record_path is not None:
+    if record_path is not None and not args.no_record_evidence:
         try:
             _write_record(
                 record_path,

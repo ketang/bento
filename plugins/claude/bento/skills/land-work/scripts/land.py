@@ -23,6 +23,12 @@ script. Prints one line per step to stderr as each completes
 (step, status, seconds[, executed/cached for the verify step]); the final
 JSON diagnostics object goes to stdout. Exit 0 means landed; any nonzero exit
 stops before the next step and always leaves the preview cleaned up.
+
+--no-merge is a canary for landing-path changes: it stops after the lease
+check (cleanup still runs) and reports "merged": false. It never writes or
+reuses a verifier evidence record -- the tree is throwaway and a canary must
+exercise the real verifier -- and it never touches the primary checkout,
+origin, or any ref.
 """
 
 from __future__ import annotations
@@ -76,12 +82,18 @@ def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--timeout", help="verifier command timeout in seconds, forwarded to land-work-run-verifier.py")
     parser.add_argument("--runtime", default="unknown", help="agent runtime: claude, codex, or unknown")
+    parser.add_argument(
+        "--no-merge", action="store_true",
+        help="canary: run prepare, fetch, create-preview, verify and lease check, clean up the "
+        "preview, then stop without merging, pushing, or touching the primary checkout",
+    )
     return parser.parse_args()
 
 
 class Driver:
-    def __init__(self, cwd: Path, runtime: str, timeout: str | None):
+    def __init__(self, cwd: Path, runtime: str, timeout: str | None, no_merge: bool = False):
         self.cwd = cwd
+        self.no_merge = no_merge
         self.runtime = runtime
         self.timeout = timeout
         self.steps: list[dict] = []
@@ -320,13 +332,28 @@ class Driver:
             "--base-sha", mb.stdout.strip(),
             "--head-sha", head_sha,
             "--runtime", self.runtime,
-            "--reuse-evidence",
         ]
+        # A canary must really execute the verifier (a real landing's record
+        # would let it skip) and must not leave a record for its throwaway tree.
+        verifier_args += ["--no-record-evidence"] if self.no_merge else ["--reuse-evidence"]
         if self.timeout:
             verifier_args += ["--timeout", self.timeout]
         self._run_script("verify", RUN_VERIFIER, verifier_args)
 
         self._run_script("lease_check", VERIFY_LEASE, ["--expected-sha", leased_sha])
+
+        if self.no_merge:
+            self.cleanup_preview()
+            return {
+                "ok": True,
+                "mode": "no-merge",
+                "merged": False,
+                "steps": self.steps,
+                "failed_step": None,
+                "error": None,
+                "preview_tree": preview_tree,
+                "primary_branch": primary_branch,
+            }
 
         start = time.monotonic()
         merge_sha, merge_tree, verify_ref, merge_warning = self._merge_and_push(
@@ -365,7 +392,7 @@ class Driver:
 def main() -> int:
     args = parse_args()
     cwd = Path.cwd().resolve()
-    driver = Driver(cwd, args.runtime, args.timeout)
+    driver = Driver(cwd, args.runtime, args.timeout, args.no_merge)
 
     def _on_signal(signum, _frame):
         driver.cleanup_preview()
@@ -376,6 +403,8 @@ def main() -> int:
             "failed_step": "interrupted",
             "error": f"interrupted by signal {signum}",
         }
+        if args.no_merge:
+            payload.update(mode="no-merge", merged=False)
         json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
         sys.exit(128 + signum)
@@ -395,6 +424,8 @@ def main() -> int:
             "error": exc.message,
             "output_path": exc.output_path,
         }
+        if args.no_merge:
+            result.update(mode="no-merge", merged=False)
     except BaseException:
         driver.cleanup_preview()
         driver.abort_primary_merge_if_in_progress()
