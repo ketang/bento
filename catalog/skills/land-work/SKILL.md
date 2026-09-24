@@ -225,8 +225,8 @@ land-work/scripts/land-work-prepare.py
 
    **Acting on findings:**
    - Fix Critical and Important issues before rebasing or merging.
-   - Create tracker follow-up items for Minor issues that are real but
-     non-blocking.
+   - File at most one follow-up per landing for real Minor issues, and none
+     whose parent is itself a follow-up without operator approval.
    - If the reviewer is wrong, push back with technical reasoning — do not
      silently discard valid findings.
    - A "Merge with fixes" verdict requires the fixes to be committed before
