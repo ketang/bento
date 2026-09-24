@@ -307,6 +307,7 @@ teammate plan that attempts to land is a protocol violation.
 | "Several teammates are done, so I can land them as a batch." | Landing changes the base for every remaining branch. Land one branch at a time, run required post-land hooks, then re-triage conflicts and readiness before continuing — unless the repo is batch-mode (Phase 0's "Batch vs. serial mode"), then follow the batch queue protocol in Phase 4's Batch-Mode Landing instead. |
 | "The user is silent, so the human-gated step is approved." | Silence is not approval. Teammates park and idle, the lead serializes user attention, and work resumes only after the lead routes an explicit decision back. |
 | "A stalled teammate is probably done enough to clean up." | Runtime resources close only after the work is safely landed or explicitly deferred. Never discard a teammate's branch or worktree while its status is unresolved. |
+| "I'll land the rest next session." | Ready-but-unlanded branches strand (median merge delay >100 h). Land every queued branch now, or `swarm-landing-queue.py defer <branch> --reason ...`; the Stop hook blocks the lead until the queue is empty or deferred. |
 | "The teammate's gates all passed, so it can just run land-work itself." | Landing is the lead's job regardless of how clean the branch is. The auto mode classifier can block landing operations in teammate agents. The lead owns the single serialized landing path. |
 
 ## Phase 4: Monitor and Land
@@ -320,8 +321,11 @@ lead-assembled batch. Steps 1-2 below are identical in both modes.
 
 For each ready-to-land signal received:
 
-1. Navigate to the teammate's worktree path. The teammate has already
-   exited, so the worktree is unoccupied.
+1. Record the signal first:
+   `swarm/scripts/swarm-landing-queue.py add <branch> --worktree <path> --tracker-id <id> --gate-summary <text>`
+   (see `references/continuation-state.md` — the lead's Stop hook blocks while
+   entries remain). Then navigate to the teammate's worktree path. The
+   teammate has already exited, so the worktree is unoccupied.
 2. From within that worktree, confirm the gate summary in the teammate's
    signal covers all required gates for that task. For a batch-mode repo
    (Phase 0), do this under the teammate scoped-gate contract: re-run
@@ -340,6 +344,8 @@ Continue directly from step 2 above:
 
 3. Invoke `bento:land-work` from within the teammate's worktree — land-work's
    cleanup step can remove it safely once landing succeeds.
+   Once landed, run `swarm-landing-queue.py pop <branch>`; if landing must
+   wait, run `swarm-landing-queue.py defer <branch> --reason <why>`.
 4. If a post-land hook is configured for this swarm, run it after `land-work`
    completes:
    `swarm/scripts/swarm-post-land.py --hook <name> --landing-target <branch> --primary <branch> --apply`
@@ -369,7 +375,9 @@ teammates — the assemble/gate/push mechanics themselves are `land-work`'s,
 not restated here.
 
 1. **Queue admission.** A branch confirmed in step 2 joins the queue. It
-   does not land yet.
+   does not land yet. The persisted queue file is this queue: its entries'
+   `signalled_at` times drive the linger window, and after each branch's
+   post-land teardown run `swarm-landing-queue.py pop <branch>` for it.
 2. **Starting a batch.** The lead — acting as the batch runner through the
    integration worktree — is idle whenever no batch is currently assembling
    or gating. When the runner is idle and the queue is non-empty:

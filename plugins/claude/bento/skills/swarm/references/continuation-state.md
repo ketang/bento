@@ -72,3 +72,23 @@ Keep `handoff.md` short and reset-oriented:
   tasks when relevant
 - treat this state as ephemeral; if the runtime-local directory disappears,
   recompute from tracker and repo state rather than treating it as a fatal error
+
+## Landing Queue
+
+Ready-to-land signals are persisted, not held in the lead's context, at
+`$(git rev-parse --git-common-dir)/bento/landing-queue.json` (shared by all
+worktrees; not runtime- or session-scoped). Manage it only through
+`swarm/scripts/swarm-landing-queue.py`:
+
+- `add <branch> --worktree <path> [--tracker-id ..] [--gate-summary ..]` on
+  each ready signal (re-adding a branch replaces its entry)
+- `pop <branch>` after it lands (non-zero if not queued)
+- `defer <branch> --reason <why>` to stop it blocking Stop (still reported)
+- `list` prints entries; `clear --all --yes` is operator-only
+
+Each entry records `lead_agent` `{pid, start_time}` — the nearest `claude`/
+`codex` ancestor process — so `check-landing-queue.py` (Stop hook) blocks only
+that lead session while non-deferred, unmerged entries remain. A one-turn hold
+marker `bento-check-landing-queue-hold-<session_id>` in `$XDG_RUNTIME_DIR` (or
+`/tmp`) lets one Stop through. `agent-env-doctor` reports entries older than
+1 h whose branch is unmerged as "N ready-but-unlanded branches".
