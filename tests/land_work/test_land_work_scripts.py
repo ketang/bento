@@ -4,7 +4,9 @@ import json
 import os
 import subprocess
 import sys
+import socket
 import tempfile
+import time
 import unittest
 import unittest.mock
 from pathlib import Path
@@ -49,6 +51,8 @@ class LandWorkScriptsTest(unittest.TestCase):
         git(self.worktree, "commit", "-m", "feature change")
 
     def tearDown(self) -> None:
+        for preview in getattr(self, "created_previews", []):
+            self.run_preview("--cleanup", "--preview-dir", str(preview), cwd=self.worktree, check=False)
         self.temp_dir.cleanup()
 
     def run_prepare(self, *args: str, cwd: Path, check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -355,6 +359,125 @@ class LandWorkScriptsTest(unittest.TestCase):
 
         self.run_preview("--cleanup", "--preview-dir", str(leftover_dir), cwd=self.worktree)
         self.run_preview("--cleanup", "--preview-dir", payload["preview_dir"], cwd=self.worktree)
+
+    # --- preview ownership / dead-leftover reclaim (bento-c96u.17) ---
+
+    def track_preview(self, preview: Path) -> None:
+        self.__dict__.setdefault("created_previews", []).append(preview)
+
+    def make_leftover(self, owner: dict | None, age_hours: float = 0) -> Path:
+        """Create a real preview, then rewrite its owner file (None deletes it)
+        and optionally backdate its admin dir, index and top-level entries."""
+        payload = json.loads(self.run_preview(cwd=self.worktree).stdout)
+        leftover = Path(payload["preview_dir"])
+        admin = Path(git(leftover, "rev-parse", "--absolute-git-dir").stdout.strip())
+        owner_file = admin / "land-work-owner.json"
+        self.assertTrue(owner_file.exists())
+        if owner is None:
+            owner_file.unlink()
+        else:
+            owner_file.write_text(json.dumps(owner), encoding="utf-8")
+        if age_hours:
+            old = time.time() - age_hours * 3600
+            for base in (leftover, admin):
+                for path in [base, *base.iterdir()]:
+                    os.utime(path, (old, old), follow_symlinks=False)
+        self.track_preview(leftover)
+        return leftover
+
+    def driver_owner(self, pid: int, start_time: str | None = None, hostname: str | None = None) -> dict:
+        module = load_preview_module()
+        return {
+            "owner_kind": "driver",
+            "pid": pid,
+            "pid_start_time": start_time if start_time is not None else module.pid_start_time(pid),
+            "hostname": hostname or socket.gethostname(),
+            "session_id": "sess-1",
+            "feature_branch": "feature/other",
+        }
+
+    def exited_pid(self) -> int:
+        proc = subprocess.Popen([sys.executable, "-c", "pass"])
+        proc.wait()
+        return proc.pid
+
+    def test_preview_writes_owner_file_in_git_dir_not_worktree(self) -> None:
+        payload = json.loads(self.run_preview("--owner-pid", str(os.getpid()), cwd=self.worktree).stdout)
+        preview = Path(payload["preview_dir"])
+        self.track_preview(preview)
+        admin = Path(git(preview, "rev-parse", "--absolute-git-dir").stdout.strip())
+        info = json.loads((admin / "land-work-owner.json").read_text(encoding="utf-8"))
+        self.assertEqual(info["owner_kind"], "driver")
+        self.assertEqual(info["pid"], os.getpid())
+        self.assertEqual(info["hostname"], socket.gethostname())
+        self.assertFalse((preview / "land-work-owner.json").exists())
+        # Merge --no-commit leaves staged feature changes; the owner file must add nothing.
+        self.assertNotIn("land-work-owner", git(preview, "status", "--porcelain").stdout)
+
+    def test_preview_reclaims_driver_leftover_whose_pid_exited(self) -> None:
+        leftover = self.make_leftover(self.driver_owner(self.exited_pid(), start_time="1"))
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+        self.assertEqual(result.returncode, 0, result.stdout)
+        self.assertEqual(payload["reclaimed_previews"], [str(leftover)])
+        self.assertFalse(leftover.exists())
+        self.assertNotEqual(payload["preview_dir"], str(leftover))
+        self.run_preview("--cleanup", "--preview-dir", payload["preview_dir"], cwd=self.worktree)
+
+    def test_preview_refuses_driver_leftover_owned_by_live_process(self) -> None:
+        leftover = self.make_leftover(self.driver_owner(os.getpid()), age_hours=50)
+        result = self.run_preview(cwd=self.worktree, check=False)
+        payload = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(payload["leftover_previews"], [str(leftover)])
+        self.assertEqual(payload["reclaimed_previews"], [])
+        err = " ".join(payload["errors"])
+        self.assertIn("owner_kind=driver", err)
+        self.assertIn(f"pid={os.getpid()}", err)
+        self.assertIn("sess-1", err)
+        self.assertIn("feature/other", err)
+        self.assertTrue(leftover.exists())
+
+    def test_preview_reclaims_driver_leftover_with_reused_pid(self) -> None:
+        leftover = self.make_leftover(self.driver_owner(os.getpid(), start_time="1"))
+        payload = json.loads(self.run_preview(cwd=self.worktree).stdout)
+        self.assertEqual(payload["reclaimed_previews"], [str(leftover)])
+        self.run_preview("--cleanup", "--preview-dir", payload["preview_dir"], cwd=self.worktree)
+
+    def test_preview_refuses_driver_leftover_from_other_host(self) -> None:
+        leftover = self.make_leftover(
+            self.driver_owner(self.exited_pid(), start_time="1", hostname="not-this-host.invalid"),
+            age_hours=50,
+        )
+        result = self.run_preview(cwd=self.worktree, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(leftover.exists())
+
+    def test_preview_refuses_recent_manual_leftover_even_if_pid_gone(self) -> None:
+        owner = {"owner_kind": "manual", "pid": self.exited_pid(), "hostname": socket.gethostname()}
+        leftover = self.make_leftover(owner, age_hours=1)
+        result = self.run_preview(cwd=self.worktree, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(leftover.exists())
+
+    def test_preview_reclaims_stale_manual_and_ownerless_leftovers(self) -> None:
+        for owner in ({"owner_kind": "manual", "pid": 1, "hostname": socket.gethostname()}, None):
+            with self.subTest(owner=owner):
+                leftover = self.make_leftover(owner, age_hours=7)
+                payload = json.loads(self.run_preview(cwd=self.worktree).stdout)
+                self.assertEqual(payload["reclaimed_previews"], [str(leftover)])
+                self.run_preview("--cleanup", "--preview-dir", payload["preview_dir"], cwd=self.worktree)
+
+    def test_preview_refuses_recent_ownerless_and_unparseable_owner_leftover(self) -> None:
+        leftover = self.make_leftover(None, age_hours=1)
+        self.assertNotEqual(self.run_preview(cwd=self.worktree, check=False).returncode, 0)
+        admin = Path(git(leftover, "rev-parse", "--absolute-git-dir").stdout.strip())
+        (admin / "land-work-owner.json").write_text("{not json", encoding="utf-8")
+        old = time.time() - 3600
+        os.utime(admin / "land-work-owner.json", (old, old))
+        result = self.run_preview(cwd=self.worktree, check=False)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertTrue(leftover.exists())
 
     def test_leftover_check_warns_but_does_not_block_on_git_failure(self) -> None:
         # A `git worktree list` failure while checking for leftovers must
