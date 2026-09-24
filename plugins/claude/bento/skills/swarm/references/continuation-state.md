@@ -72,3 +72,28 @@ Keep `handoff.md` short and reset-oriented:
   tasks when relevant
 - treat this state as ephemeral; if the runtime-local directory disappears,
   recompute from tracker and repo state rather than treating it as a fatal error
+
+## Landing Queue
+
+Ready-to-land signals are persisted, not held in the lead's context, at
+`$(git rev-parse --git-common-dir)/bento/landing-queue.json` (shared by all
+worktrees; not runtime- or session-scoped). Manage it only through
+`swarm/scripts/swarm-landing-queue.py`:
+
+- `add <branch> --worktree <path> [--tracker-id ..] [--gate-summary ..]` on
+  each ready signal (re-adding a branch replaces its entry)
+- `pop <branch>` after it lands (non-zero if not queued)
+- `defer <branch> --reason <why>` to stop it blocking Stop (still reported)
+- `list` prints entries; `clear --all --yes` is operator-only
+
+Each entry records `lead_agent` `{pid, start_time}` — the nearest `claude`/
+`codex` ancestor process (read from `/proc`, Linux only; `add` warns on stderr
+and stores `null` when it cannot identify one, and such an entry never blocks).
+Only the lead runs `add`; a resumed session gets a new pid, so re-`add` its
+entries. `check-landing-queue.py` (Stop hook) nudges only that lead session
+while non-deferred entries remain — it blocks once per stop attempt (Stop
+re-entry is allowed), so land, `pop`, or `defer` to silence it. Entries whose
+worktree or branch is gone, or whose branch is merged into the primary branch,
+stop counting; a squash-merged branch needs an explicit `pop`.
+`agent-env-doctor` reports entries older than 1 h with an unmerged branch as
+"N ready-but-unlanded branches".
