@@ -149,6 +149,7 @@ class HappyPathTest(LandDriverTestBase):
 
 
 class PreviewOwnershipTest(LandDriverTestBase):
+    @unittest.skipUnless(Path("/proc/self/stat").exists(), "needs /proc")
     def test_driver_records_its_pid_as_preview_owner(self) -> None:
         # The verifier runs while the preview exists: capture its owner file
         # and its ancestor pids (land.py is one of them).
@@ -174,6 +175,12 @@ class PreviewOwnershipTest(LandDriverTestBase):
             [str(CREATE_PREVIEW_SCRIPT), "--owner-pid", str(proc.pid)], self.worktree,
         )
         leftover = json.loads(created.stdout)["preview_dir"]
+        # The pid was already gone at creation, so no start time was recorded
+        # (unobservable => unknown); record the one a live driver would have.
+        owner_file = Path(git(leftover, "rev-parse", "--absolute-git-dir").stdout.strip()) / "land-work-owner.json"
+        owner = json.loads(owner_file.read_text(encoding="utf-8"))
+        owner["pid_start_time"] = "1"
+        owner_file.write_text(json.dumps(owner), encoding="utf-8")
         self.assertEqual(self.registered_preview_worktrees(), [leftover])
 
         result = self.run_driver()

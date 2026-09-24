@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import argparse
+import fcntl
 import json
 import os
 import socket
 import subprocess
 import sys
 import tempfile
-import time
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -94,8 +94,7 @@ def leftover_preview_worktrees(checkout_root: Path) -> tuple[list[Path], list[st
 
 
 OWNER_FILE = "land-work-owner.json"
-# A manual/ownerless preview is only reclaimed after this long untouched.
-MANUAL_STALE_SECONDS = 6 * 3600
+LOCK_FILE = "land-work-preview.lock"
 
 
 def preview_admin_dir(preview: Path) -> Path | None:
@@ -106,9 +105,9 @@ def preview_admin_dir(preview: Path) -> Path | None:
     return Path(out.strip()) if out.strip() else None
 
 
-def pid_start_time(pid: int) -> str | None:
-    """Field 22 of /proc/<pid>/stat (clock ticks since boot); None if the pid
-    is gone or /proc is unavailable."""
+def proc_start_time(pid: int) -> str | None:
+    """Field 22 of /proc/<pid>/stat (clock ticks since boot); None if it
+    cannot be read, whether the pid is gone or /proc is unavailable."""
     try:
         raw = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
         return raw.rsplit(")", 1)[1].split()[19]
@@ -116,24 +115,48 @@ def pid_start_time(pid: int) -> str | None:
         return None
 
 
-def write_owner_file(preview: Path, owner_pid: int | None, feature_ref: str | None) -> str | None:
+def pid_namespace() -> str | None:
+    try:
+        return os.readlink("/proc/self/ns/pid")
+    except OSError:
+        return None
+
+
+def boot_id() -> str | None:
+    try:
+        return Path("/proc/sys/kernel/random/boot_id").read_text(encoding="utf-8").strip() or None
+    except OSError:
+        return None
+
+
+def write_owner_file(
+    preview: Path, owner_pid: int | None, feature_ref: str | None, base_sha: str | None
+) -> str | None:
     """Record who owns a new preview inside its git admin dir (never the
-    working tree, so it cannot dirty or be staged). Returns a warning on failure."""
+    working tree, so it cannot dirty or be staged). Returns an error message on
+    failure. owner_kind=driver means owner_pid is a long-lived process whose
+    death proves the preview abandoned; manual (standalone) previews record
+    the parent pid for information only and are never auto-reclaimed."""
     admin = preview_admin_dir(preview)
     if admin is None:
         return f"unable to locate git dir of {preview}; preview owner not recorded"
-    pid = owner_pid if owner_pid is not None else os.getpid()
+    pid = owner_pid if owner_pid is not None else os.getppid()
     info = {
         "owner_kind": "driver" if owner_pid is not None else "manual",
         "pid": pid,
-        "pid_start_time": pid_start_time(pid),
+        "pid_start_time": proc_start_time(pid),
         "hostname": socket.gethostname(),
+        "pid_ns": pid_namespace(),
+        "boot_id": boot_id(),
         "session_id": os.environ.get("CLAUDE_SESSION_ID") or os.environ.get("CODEX_SESSION_ID"),
         "created_at": datetime.now(timezone.utc).isoformat(),
         "feature_branch": feature_ref,
+        "base_sha": base_sha,
     }
+    tmp = admin / f"{OWNER_FILE}.tmp"
     try:
-        (admin / OWNER_FILE).write_text(json.dumps(info), encoding="utf-8")
+        tmp.write_text(json.dumps(info), encoding="utf-8")
+        os.replace(tmp, admin / OWNER_FILE)
     except OSError as exc:
         return f"unable to record preview owner in {admin} ({exc})"
     return None
@@ -149,86 +172,93 @@ def read_owner_file(admin: Path | None) -> dict | None:
     return info if isinstance(info, dict) else None
 
 
-def newest_mtime(preview: Path, admin: Path | None) -> float | None:
-    """Newest mtime among the preview and its git admin dir, plus their direct
-    entries (index included). Deliberately not recursive: node_modules/target
-    trees make a full walk slow."""
-    newest: float | None = None
-    for base in (preview, admin):
-        if base is None:
-            continue
-        try:
-            paths = [base, *base.iterdir()]
-        except OSError:
-            continue
-        for path in paths:
-            try:
-                mtime = path.lstat().st_mtime
-            except OSError:
-                continue
-            newest = mtime if newest is None else max(newest, mtime)
-    return newest
-
-
-def classify_leftover(preview: Path, now: float | None = None) -> tuple[str, str]:
-    """Return (state, description) with state one of dead/live/unknown.
-
-    Ownership-based (bento-e583): only a provably dead driver, or a
-    manual/ownerless preview untouched for MANUAL_STALE_SECONDS, is dead.
-    Anything else -- live pid, other host, unparseable owner file, recent
-    activity -- is never reclaimed."""
-    now = time.time() if now is None else now
+def classify_leftover(preview: Path) -> tuple[str, str]:
+    """Return (state, description); state is "dead" only when abandonment is
+    PROVEN, otherwise "live" or "unknown". Anything unobservable is unknown
+    (fail closed, bento-e583): a missing/unparseable owner file, a manual
+    owner, another host, pid namespace or boot, a missing recorded start time,
+    an unreadable /proc, or a preview holding a commit beyond its recorded
+    base (a driver may have died mid push-from-preview)."""
     if not preview.exists():
         return "dead", f"{preview} (directory already gone)"
     admin = preview_admin_dir(preview)
-    info = read_owner_file(admin)
-    mtime = newest_mtime(preview, admin)
-    age = f"{(now - mtime) / 3600:.1f}h" if mtime is not None else "unknown age"
-    kind = info.get("owner_kind") if info else None
+    info = read_owner_file(admin) or {}
+    pid = info.get("pid")
+    kind = info.get("owner_kind")
     desc = (
-        f"{preview} (owner_kind={kind or 'none'}, pid={info.get('pid') if info else None}, "
-        f"session={info.get('session_id') if info else None}, "
-        f"branch={info.get('feature_branch') if info else None}, last modified {age} ago)"
+        f"{preview} (owner_kind={kind or 'none'}, pid={pid}, session={info.get('session_id')}, "
+        f"branch={info.get('feature_branch')}, created {info.get('created_at')})"
     )
-    if kind == "driver":
-        pid = info.get("pid")
-        if info.get("hostname") != socket.gethostname() or not isinstance(pid, int):
-            return "unknown", desc
-        started = pid_start_time(pid)
-        if started is None or started != info.get("pid_start_time"):
-            return "dead", desc
-        return "live", desc
-    if info is not None and kind != "manual":
+    if kind != "driver" or type(pid) is not int or pid <= 0:
         return "unknown", desc
-    if mtime is not None and now - mtime > MANUAL_STALE_SECONDS:
-        return "dead", desc
-    return "unknown", desc
+    recorded_start = info.get("pid_start_time")
+    here_ns, here_boot = pid_namespace(), boot_id()
+    if (
+        not isinstance(recorded_start, str)
+        or not recorded_start
+        or info.get("hostname") != socket.gethostname()
+        or not here_ns
+        or not here_boot
+        or info.get("pid_ns") != here_ns
+        or info.get("boot_id") != here_boot
+    ):
+        return "unknown", desc
+    start = proc_start_time(pid)
+    if start is None:
+        # Unreadable stat proves death only if /proc is mounted and lists no such pid.
+        if proc_start_time(os.getpid()) is None or Path(f"/proc/{pid}").exists():
+            return "unknown", desc
+    elif start == recorded_start:
+        return "live", desc
+    base = info.get("base_sha")
+    try:
+        head = git_stdout("rev-parse", "HEAD", cwd=preview).strip()
+    except (subprocess.CalledProcessError, OSError):
+        return "unknown", desc
+    if not base or head != base:
+        return "unknown", desc + f" holds commit {head[:12]} beyond its base; may be an interrupted landing"
+    return "dead", desc
 
 
-def reclaim_dead_leftovers(
-    checkout_root: Path, leftovers: list[Path]
-) -> tuple[list[Path], list[str], list[str]]:
-    """Remove provably dead leftovers. Returns (remaining, reclaimed_paths,
-    descriptions of remaining live/unknown ones or failed removals)."""
+def classify_leftovers(leftovers: list[Path], reclaim_allowed: bool) -> tuple[list[Path], list[Path], list[str]]:
+    """Split leftovers into (dead, remaining, descriptions of remaining).
+    With reclaim_allowed False, dead ones are reported as remaining too."""
+    dead: list[Path] = []
     remaining: list[Path] = []
-    reclaimed: list[str] = []
     described: list[str] = []
     for path in leftovers:
         state, desc = classify_leftover(path)
-        if state == "dead":
-            if path.exists():
-                removed, errs = cleanup_preview(path, checkout_root)
-                if not removed:
-                    remaining.append(path)
-                    described.append(f"{desc}: reclaim failed ({'; '.join(errs)})")
-                    continue
-            else:
-                git("worktree", "prune", cwd=checkout_root, check=False)
-            reclaimed.append(str(path))
+        if state == "dead" and reclaim_allowed:
+            dead.append(path)
         else:
             remaining.append(path)
             described.append(f"{state}: {desc}")
-    return remaining, reclaimed, described
+    return dead, remaining, described
+
+
+def reclaim_dead_leftovers(checkout_root: Path, dead: list[Path]) -> tuple[list[str], list[str]]:
+    """Remove leftovers still provably dead. Re-classifies under a lock in the
+    common git dir so two sessions cannot both remove (or misjudge) one.
+    Returns (reclaimed paths, errors)."""
+    reclaimed: list[str] = []
+    errors: list[str] = []
+    common = git_stdout("rev-parse", "--git-common-dir", cwd=checkout_root).strip()
+    lock_path = (checkout_root / common).resolve() / LOCK_FILE
+    with open(lock_path, "a") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        for path in dead:
+            state, desc = classify_leftover(path)
+            if state != "dead":
+                errors.append(f"leftover preview no longer provably dead, not reclaimed: {state}: {desc}")
+                continue
+            if path.exists():
+                removed, errs = cleanup_preview(path, checkout_root)
+                if not removed and errs and path.exists():
+                    errors.append(f"unable to reclaim {path}: {'; '.join(errs)}")
+                    continue
+            git("worktree", "prune", cwd=checkout_root, check=False)
+            reclaimed.append(str(path))
+    return reclaimed, errors
 
 
 def default_preview_dir() -> Path:
@@ -325,6 +355,9 @@ def cleanup_preview(preview_dir: Path, checkout_root: Path) -> tuple[bool, list[
 
 def main() -> int:
     args = parse_args()
+    if args.owner_pid is not None and args.owner_pid <= 0:
+        print("--owner-pid must be a positive pid", file=sys.stderr)
+        return 2
     cwd = Path.cwd().resolve()
     checkout_root = detect_checkout_root(cwd)
     primary_branch, warnings = detect_primary_branch(checkout_root)
@@ -399,11 +432,20 @@ def main() -> int:
     base_ref = args.base_ref or default_base_ref
     feature_ref = args.feature_ref or branch
 
+    integration_worktree, iw_warnings = resolve_integration_worktree(checkout_root, args.runtime)
+    if not args.preview_dir:
+        warnings.extend(iw_warnings)
+
     reclaimed_previews: list[str] = []
+    dead_leftovers: list[Path] = []
     if not args.allow_existing:
         leftover, leftover_warnings = leftover_preview_worktrees(checkout_root)
         warnings.extend(leftover_warnings)
-        leftover, reclaimed_previews, described = reclaim_dead_leftovers(checkout_root, leftover)
+        if integration_worktree is not None:
+            # A configured persistent worktree is never a reclaim candidate.
+            leftover = [p for p in leftover if p != integration_worktree.resolve()]
+        # Unconfirmed integration-worktree config: reclaim nothing (fail closed).
+        dead_leftovers, leftover, described = classify_leftovers(leftover, reclaim_allowed=not iw_warnings)
         if leftover:
             cleanup_hint = "; ".join(
                 f"land-work-create-preview.py --cleanup --preview-dir {p}" for p in leftover
@@ -419,7 +461,7 @@ def main() -> int:
                 "ok": False,
                 "warnings": warnings,
                 "errors": [
-                    "leftover land-work-preview-* worktree(s) exist (live or unknown owner, not reclaimed): "
+                    "leftover land-work-preview-* worktree(s) exist (owner live or not proven dead; not reclaimed): "
                     + "; ".join(described)
                     + f"; wait for the owner, or if you are sure it is abandoned remove it ({cleanup_hint}) "
                     "or pass --allow-existing"
@@ -433,8 +475,6 @@ def main() -> int:
     if args.preview_dir:
         preview_dir = Path(args.preview_dir).resolve()
     else:
-        integration_worktree, iw_warnings = resolve_integration_worktree(checkout_root, args.runtime)
-        warnings.extend(iw_warnings)
         if integration_worktree is not None:
             preview_dir = integration_worktree.resolve()
             persistent_worktree = True
@@ -486,6 +526,12 @@ def main() -> int:
             preview_dir = default_preview_dir()
             persistent_worktree = False
 
+    # Reclaim only once every validation above passed, so a run that fails
+    # anyway never destroys another session's leftovers.
+    if not errors and dead_leftovers:
+        reclaimed_previews, reclaim_errors = reclaim_dead_leftovers(checkout_root, dead_leftovers)
+        errors.extend(reclaim_errors)
+
     if not errors:
         worktree_added = False
         try:
@@ -496,34 +542,37 @@ def main() -> int:
                 preview_dir.parent.mkdir(parents=True, exist_ok=True)
                 git("worktree", "add", "--detach", str(preview_dir), base_sha, cwd=checkout_root)
                 worktree_added = True
-                owner_warning = write_owner_file(preview_dir, args.owner_pid, feature_ref)
-                if owner_warning:
-                    warnings.append(owner_warning)
-            merge_result = git("merge", "--no-ff", "--no-commit", feature_sha, cwd=preview_dir, check=False)
-            merge_clean = merge_result.returncode == 0
-            if merge_clean:
-                preview_tree = git_stdout("write-tree", cwd=preview_dir)
-            else:
-                conflicting_paths = [
-                    line
-                    for line in git_stdout(
-                        "diff",
-                        "--name-only",
-                        "--diff-filter=U",
-                        cwd=preview_dir,
-                    ).splitlines()
-                    if line
-                ]
-                if conflicting_paths:
-                    errors.append("merge preview has conflicts")
+                owner_error = write_owner_file(preview_dir, args.owner_pid, feature_ref, base_sha)
+                if owner_error:
+                    # A driver relies on the owner file for liveness; a manual
+                    # caller can proceed without one (it is never reclaimed).
+                    (errors if args.owner_pid is not None else warnings).append(owner_error)
+            if not errors:
+                merge_result = git("merge", "--no-ff", "--no-commit", feature_sha, cwd=preview_dir, check=False)
+                merge_clean = merge_result.returncode == 0
+                if merge_clean:
+                    preview_tree = git_stdout("write-tree", cwd=preview_dir)
                 else:
-                    stderr = merge_result.stderr.strip()
-                    errors.append(stderr or "unable to create merge preview")
-                if persistent_worktree:
-                    # Leave the shared worktree clean for the next landing
-                    # attempt instead of removing it (bento-96ua.1) or leaving
-                    # a half-merged state behind.
-                    git("merge", "--abort", cwd=preview_dir, check=False)
+                    conflicting_paths = [
+                        line
+                        for line in git_stdout(
+                            "diff",
+                            "--name-only",
+                            "--diff-filter=U",
+                            cwd=preview_dir,
+                        ).splitlines()
+                        if line
+                    ]
+                    if conflicting_paths:
+                        errors.append("merge preview has conflicts")
+                    else:
+                        stderr = merge_result.stderr.strip()
+                        errors.append(stderr or "unable to create merge preview")
+                    if persistent_worktree:
+                        # Leave the shared worktree clean for the next landing
+                        # attempt instead of removing it (bento-96ua.1) or leaving
+                        # a half-merged state behind.
+                        git("merge", "--abort", cwd=preview_dir, check=False)
         except subprocess.CalledProcessError as exc:
             errors.append(exc.stderr.strip() or str(exc))
             if persistent_worktree and reused_worktree:
