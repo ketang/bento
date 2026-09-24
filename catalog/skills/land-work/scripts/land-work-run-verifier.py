@@ -357,16 +357,17 @@ def parse_args() -> argparse.Namespace:
         help="path to persist the verifier command's raw stdout+stderr; "
         "defaults to <candidate>/.land-work/verifier.log",
     )
-    parser.add_argument(
+    evidence = parser.add_mutually_exclusive_group()
+    evidence.add_argument(
         "--reuse-evidence",
         action="store_true",
         help="reuse a fresh green record for the same candidate tree and manifest "
         "digest instead of executing the verifier command",
     )
-    parser.add_argument(
+    evidence.add_argument(
         "--no-record-evidence",
         action="store_true",
-        help="do not write a green record for this candidate tree (canary runs)",
+        help="neither reuse nor write a green record for this candidate tree (canary runs)",
     )
     return parser.parse_args()
 

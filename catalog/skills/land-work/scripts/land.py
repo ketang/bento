@@ -25,10 +25,12 @@ JSON diagnostics object goes to stdout. Exit 0 means landed; any nonzero exit
 stops before the next step and always leaves the preview cleaned up.
 
 --no-merge is a canary for landing-path changes: it stops after the lease
-check (cleanup still runs) and reports "merged": false. It never writes or
-reuses a verifier evidence record -- the tree is throwaway and a canary must
-exercise the real verifier -- and it never touches the primary checkout,
-origin, or any ref.
+check (cleanup still runs, and a cleanup failure fails the run) and reports
+"merged": false. It still fetches, but does not merge, push, or move any local
+branch, and never touches the primary checkout. It never writes or reuses a
+verifier evidence record -- the tree is throwaway and a canary must exercise
+the real verifier. Errors raised before the driver starts (not a work tree)
+carry no mode/merged fields.
 """
 
 from __future__ import annotations
@@ -152,9 +154,9 @@ class Driver:
             raise StepFailure(step, message, output_path=payload.get("verifier_log"))
         return payload
 
-    def cleanup_preview(self) -> None:
+    def cleanup_preview(self) -> bool:
         if self.preview_dir is None:
-            return
+            return True
         start = time.monotonic()
         try:
             result = subprocess.run(
@@ -166,9 +168,11 @@ class Driver:
             ok = False
         self._record("cleanup", "passed" if ok else "failed", start)
         self.preview_dir = None
+        return ok
 
     def abort_primary_merge_if_in_progress(self) -> None:
-        if self.primary_root is None:
+        # A canary never merges, so any merge in the primary is the operator's.
+        if self.primary_root is None or self.no_merge:
             return
         if (self.primary_root / ".git" / "MERGE_HEAD").exists():
             subprocess.run(["git", "merge", "--abort"], cwd=self.primary_root, capture_output=True, check=False)
@@ -294,6 +298,11 @@ class Driver:
             return merge_sha, merge_tree, f"refs/remotes/origin/{primary_branch}", warning
         return merge_sha, merge_tree, None, None
 
+    def finish(self, payload: dict) -> dict:
+        if self.no_merge:
+            payload.update(mode="no-merge", merged=False)
+        return payload
+
     # -- the full sequence --------------------------------------------------- #
 
     def run(self) -> dict:
@@ -343,17 +352,16 @@ class Driver:
         self._run_script("lease_check", VERIFY_LEASE, ["--expected-sha", leased_sha])
 
         if self.no_merge:
-            self.cleanup_preview()
-            return {
+            if not self.cleanup_preview():
+                raise StepFailure("cleanup", "could not remove the canary preview worktree")
+            return self.finish({
                 "ok": True,
-                "mode": "no-merge",
-                "merged": False,
                 "steps": self.steps,
                 "failed_step": None,
                 "error": None,
                 "preview_tree": preview_tree,
                 "primary_branch": primary_branch,
-            }
+            })
 
         start = time.monotonic()
         merge_sha, merge_tree, verify_ref, merge_warning = self._merge_and_push(
@@ -397,14 +405,12 @@ def main() -> int:
     def _on_signal(signum, _frame):
         driver.cleanup_preview()
         driver.abort_primary_merge_if_in_progress()
-        payload = {
+        payload = driver.finish({
             "ok": False,
             "steps": driver.steps,
             "failed_step": "interrupted",
             "error": f"interrupted by signal {signum}",
-        }
-        if args.no_merge:
-            payload.update(mode="no-merge", merged=False)
+        })
         json.dump(payload, sys.stdout, indent=2)
         sys.stdout.write("\n")
         sys.exit(128 + signum)
@@ -417,15 +423,13 @@ def main() -> int:
     except StepFailure as exc:
         driver.cleanup_preview()
         driver.abort_primary_merge_if_in_progress()
-        result = {
+        result = driver.finish({
             "ok": False,
             "steps": driver.steps,
             "failed_step": exc.step,
             "error": exc.message,
             "output_path": exc.output_path,
-        }
-        if args.no_merge:
-            result.update(mode="no-merge", merged=False)
+        })
     except BaseException:
         driver.cleanup_preview()
         driver.abort_primary_merge_if_in_progress()
