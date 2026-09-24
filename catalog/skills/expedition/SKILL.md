@@ -103,8 +103,8 @@ Inside an active expedition, `start-task` — not `launch-work`'s bootstrap
 helper — creates task and experiment branches/worktrees; `launch-work`
 defaults to the primary branch and does not know about the expedition base or
 landing lease. After `start-task`, verify with
-`expedition/scripts/expedition.py verify --require-active-task` in place of
-`launch-work`'s own worktree-verify step — this is not optional, it is the
+`expedition/scripts/expedition.py verify --expedition <name> --require-active-task`
+in place of `launch-work`'s own worktree-verify step — this is not optional, it is the
 same hard gate `launch-work` requires before any edit, just the
 expedition-aware check. `launch-work` still governs everything after that
 verification: dependency install, TDD discipline, hooks, checkpoint commits,
