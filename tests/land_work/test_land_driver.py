@@ -531,6 +531,29 @@ class VerifierTreeReuseDriverTest(LandDriverTestBase):
         self.assertNotIn("reused", verify_step)
         self.assertIn("[executed]", result.stderr)
 
+    def test_advanced_base_changes_preview_tree_and_reruns(self) -> None:
+        self.pre_verify_feature()
+        (self.repo / "other.txt").write_text("o\n", encoding="utf-8")
+        git(self.repo, "add", "other.txt")
+        git(self.repo, "commit", "-m", "main advance")
+        git(self.repo, "push", "origin", "main")
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs(), 2)
+        self.assertNotIn("reused", result.stderr)
+
+    def test_stale_record_still_passes_flag_and_executes(self) -> None:
+        self.pre_verify_feature()
+        store = Path(git(self.worktree, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()) / "bento" / "gate-evidence"
+        for record_path in store.glob("*.json"):
+            record = json.loads(record_path.read_text())
+            record["recorded_at"] = "2020-01-01T00:00:00+00:00"
+            record_path.write_text(json.dumps(record))
+        result = self.run_driver()
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.runs(), 2)
+        self.assertIn("[executed]", result.stderr)
+
     def test_project_reported_all_cached_still_rejected(self) -> None:
         self.install_counting(
             '#!/usr/bin/env bash\n'

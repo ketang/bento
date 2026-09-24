@@ -939,6 +939,110 @@ class VerifierTreeReuseTest(unittest.TestCase):
         self.assertTrue(second["ok"])
         self.assertTrue(second["reused"])
 
+    def test_editing_the_wrapper_script_forces_rerun(self) -> None:
+        self.reuse()
+        self.install_counting_verifier(PASS_ONE_CHECK_VERIFIER + "# edited\n")
+        second = self.reuse()
+        self.assertNotIn("reused", second)
+        self.assertEqual(self.runs(), 2)
+
+    def test_untracked_wrapper_inside_candidate_is_in_the_key(self) -> None:
+        wrapper = self.worktree / ".git-ignored-wrapper.sh"
+        git(self.worktree, "config", "core.excludesFile", str(Path(self.temp_dir.name) / "ex"))
+        (Path(self.temp_dir.name) / "ex").write_text(".git-ignored-wrapper.sh\n")
+        _write_executable(wrapper, f"#!/usr/bin/env bash\necho x >> {self.counter}\n" + PASS_ONE_CHECK_VERIFIER.split("\n", 1)[1])
+        self.write_manifest(command=["./.git-ignored-wrapper.sh"])
+        self.reuse()
+        self.assertTrue(self.reuse().get("reused"))
+        _write_executable(wrapper, wrapper.read_text() + "# edited\n")
+        self.assertNotIn("reused", self.reuse())
+        self.assertEqual(self.runs(), 2)
+
+    def test_malformed_max_age_disables_reuse_without_failing_runs(self) -> None:
+        manifest_path = self.repo / ".agent-plugins/bento/bento/land-work/verifier.json"
+        base = json.loads(manifest_path.read_text())
+        for raw in ("NaN", "Infinity", "1e12", '"soon"', "true", "-3"):
+            manifest_path.write_text(json.dumps(base)[:-1] + f', "evidence_reuse_max_age_hours": {raw}' + "}")
+            for _ in range(2):
+                payload = self.reuse()
+                self.assertTrue(payload["ok"], (raw, payload))
+                self.assertNotIn("reused", payload)
+
+    def test_forged_records_fall_back_to_execution(self) -> None:
+        self.reuse()
+        record_path = self.records()[0]
+        good = json.loads(record_path.read_text())
+        forgeries = [
+            {**good, "relevant_paths": [["nested"], {"a": 1}, "src/feature.go"]},
+            {**good, "relevant_paths": "src/feature.go"},
+            {**good, "selected_checks": ["x"]},
+            {**good, "selected_checks": None},
+            {**good, "recorded_at": 12},
+            {**good, "recorded_at": "2999-01-01T00:00:00+00:00"},
+            [1, 2],
+        ]
+        for forged in forgeries:
+            record_path.write_text(json.dumps(forged))
+            payload = self.reuse()
+            self.assertTrue(payload["ok"], (forged, payload))
+            self.assertNotIn("reused", payload)
+        record_path.write_text("not json{")
+        self.assertNotIn("reused", self.reuse())
+
+    def test_symlinked_record_is_refused(self) -> None:
+        self.reuse()
+        record_path = self.records()[0]
+        real = record_path.with_name("real.json.bak")
+        record_path.rename(real)
+        record_path.symlink_to(real)
+        self.assertNotIn("reused", self.reuse())
+
+    def test_partial_tmp_records_are_ignored(self) -> None:
+        self.store().mkdir(parents=True)
+        (self.store() / ".tmp-partial.json").write_text('{"tree": "x"')
+        payload = self.reuse()
+        self.assertNotIn("reused", payload)
+        self.assertTrue(self.reuse().get("reused"))
+
+    def test_modified_tracked_file_under_log_dir_is_dirty(self) -> None:
+        (self.worktree / ".land-work").mkdir()
+        (self.worktree / ".land-work" / "tracked.txt").write_text("a\n")
+        git(self.worktree, "add", "-f", ".land-work/tracked.txt")
+        git(self.worktree, "commit", "-m", "track")
+        self.head_sha = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+        (self.worktree / ".land-work" / "tracked.txt").write_text("b\n")
+        self.reuse()
+        self.assertEqual(self.records(), [])
+
+    def test_staged_rename_in_candidate_is_handled(self) -> None:
+        git(self.worktree, "mv", "src/feature.go", "src/renamed.go")
+        payload = self.reuse()
+        self.assertTrue(payload["ok"], payload)  # staged-only change: a clean-index candidate
+
+    def test_narrower_older_base_record_does_not_cover_wider_diff(self) -> None:
+        (self.worktree / "src" / "two.go").write_text("package main\n", encoding="utf-8")
+        git(self.worktree, "add", "src/two.go")
+        git(self.worktree, "commit", "-m", "two")
+        self.head_sha = git(self.worktree, "rev-parse", "HEAD").stdout.strip()
+        first_commit = git(self.worktree, "rev-parse", "HEAD~1").stdout.strip()
+        narrow = json.loads(self.run_verifier("--reuse-evidence", "--base-sha", first_commit).stdout)
+        self.assertTrue(narrow["ok"], narrow)
+        self.assertEqual(self.runs(), 1)
+        wide = self.reuse()
+        self.assertNotIn("reused", wide)
+        self.assertEqual(self.runs(), 2)
+        # ...and the wide record now covers the narrow diff.
+        self.assertTrue(json.loads(self.run_verifier("--reuse-evidence", "--base-sha", first_commit).stdout).get("reused"))
+
+    def test_old_partial_and_expired_records_are_pruned_on_write(self) -> None:
+        self.store().mkdir(parents=True)
+        stale = self.store() / "deadbeef-00000000.json"
+        stale.write_text("{}")
+        old = time.time() - 30 * 24 * 3600
+        os.utime(stale, (old, old))
+        self.reuse()
+        self.assertFalse(stale.exists())
+
 
 if __name__ == "__main__":
     unittest.main()

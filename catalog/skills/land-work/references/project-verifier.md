@@ -56,8 +56,9 @@ verifier is never inferred from generic hook names.
   only that exact path — `docs/a.md` never exempts `docs/a.md.bak` or a child.
 - `allow_all_cached` — optional, defaults to `false`. Opts a repo out of the
   all-cached rule below (see "Per-check execution evidence").
-- `evidence_reuse_max_age_hours` — optional non-negative number, default `24`;
-  `0` disables reuse (see "Tree-keyed evidence reuse").
+- `evidence_reuse_max_age_hours` — optional number in (0, 8760], default `24`;
+  `0` or any invalid value (non-number, NaN, out of range) disables reuse
+  without failing the run (see "Tree-keyed evidence reuse").
 
 ### Per-check execution evidence (schema v2, backward compatible)
 
@@ -97,11 +98,19 @@ exactly, its relevant paths cover the current ones, and it is younger than
 
 Identity is computed by bento with `git write-tree` in the candidate, never
 reported by the wrapper, so the all-cached rule above (which guards
-project-reported caching) is unchanged. A dirty candidate (unstaged or
-untracked changes; a merge preview's staged merge is fine) neither records nor
-reuses. Failed, killed, timeout, and rejected all-cached runs never record.
-Accepted risk: toolchain or dependency drift within the max age is not in the
-key.
+project-reported caching) is unchanged. The key is tree + a digest of the
+manifest bytes and of every `command` element that names an existing file
+(relative to the candidate or repo root, or absolute), so editing the wrapper
+invalidates records. A dirty candidate (unstaged or untracked changes; a merge
+preview's staged merge is fine) neither records nor reuses. Failed, killed,
+timeout, and rejected all-cached runs never record.
+
+Not in the key (accepted): `--runtime`, `--timeout`, environment, toolchain or
+dependency drift within the max age, and ignored files inside the candidate
+that are not command elements. Records are unauthenticated same-user files: a
+symlinked, malformed, forged, or future-dated record is ignored and the
+verifier executes (any doubt means execute). Expired records and stale
+partial writes are pruned on the next write.
 
 ## Candidate diff union and precedence
 
