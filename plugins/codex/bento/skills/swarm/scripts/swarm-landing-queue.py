@@ -21,12 +21,15 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 AGENT_COMMS = ("claude", "codex")
+# Test-only: comma-separated comm names replacing AGENT_COMMS (the Stop hook ignores it).
+COMMS_OVERRIDE_ENV = "SWARM_LANDING_QUEUE_TEST_AGENT_COMMS"
 
 
 # Mirrors agent_ancestor() in the check-landing-queue.py Stop hook; keep in sync.
 def agent_ancestor(pid: int | None = None) -> dict | None:
     """Nearest ancestor whose comm is claude or codex, as {pid, start_time}."""
     pid = os.getpid() if pid is None else pid
+    comms = tuple(os.environ.get(COMMS_OVERRIDE_ENV, "").split(",")) if os.environ.get(COMMS_OVERRIDE_ENV) else AGENT_COMMS
     for _ in range(64):
         try:
             stat = Path(f"/proc/{pid}/stat").read_text()
@@ -34,7 +37,7 @@ def agent_ancestor(pid: int | None = None) -> dict | None:
         except OSError:
             return None
         fields = stat.rsplit(")", 1)[1].split()
-        if comm in AGENT_COMMS:
+        if comm in comms:
             return {"pid": pid, "start_time": int(fields[19])}
         pid = int(fields[1])
         if pid <= 1:
