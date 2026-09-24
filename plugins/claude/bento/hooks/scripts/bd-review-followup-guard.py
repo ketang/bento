@@ -2,20 +2,27 @@
 """PreToolUse/Bash hook: enforce land-work's review follow-up cap at `bd create`
 (bento-c96u.9).
 
-A `bd create` carrying the `review-followup` label is denied (exit 2) when:
+A `bd create` that carries the `review-followup` label is denied (exit 2) when:
 
 1. its parent (`--parent P` or `--deps discovered-from:P`) already has another
-   `review-followup` issue discovered from it (at most one follow-up per
+   `review-followup` child or discovered-from issue (at most one follow-up per
    landing), or
 2. its parent itself carries `review-followup` (no follow-ups of follow-ups).
 
-Creates without the label are never touched. An operator waiver names the
-parent in `.agent-mode.local`: `review_followup_waiver=<parent-id>[,<id>...]`.
-`review_followup_guard=false` disables the check for the repo.
+`bd create --parent Q` inherits Q's labels unless `--no-inherit-labels` is
+given (verified against a scratch DB), so such a create counts as labelled
+when Q carries `review-followup`. Creates without the label are never touched.
 
-Reads the working directory from the payload `cwd`. Fails open on any
-parse or `bd` error: it catches the common, unobfuscated case, not a
-security boundary.
+An operator waiver names the parent in `.agent-mode.local`:
+`review_followup_waiver=<parent-id>[,<id>...]`; agents must never write it
+themselves. `review_followup_guard=false` disables the check for the repo.
+
+Best-effort, not a security boundary: the command is tokenized once (quotes
+and heredoc bodies respected, `bash -c` unwrapped) but obfuscated shell can
+evade it, a lone quoted `';'`/`'&&'` argument is indistinguishable from an
+operator, and it fails open when `bd` errors, times out, or is missing. The
+shell segmenting is duplicated from the other guards; a shared module is out
+of scope. Reads the working directory from the payload `cwd`.
 """
 
 from __future__ import annotations
@@ -28,25 +35,61 @@ import sys
 from pathlib import Path
 
 LABEL = "review-followup"
-_SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;&|\n]")
+_OPERATOR_CHARS = frozenset(";&|()\n")
 _WRAPPERS = frozenset({"rtk", "command", "env", "exec"})
+_SHELLS = frozenset({"bash", "sh", "zsh"})
 _BD_GLOBAL_VALUE_FLAGS = frozenset({"--actor", "--db", "-C", "--directory", "--dolt-auto-commit"})
+_HEREDOC_RE = re.compile(r"<<-?\s*(['\"]?)([A-Za-z_][A-Za-z0-9_]*)\1")
+_BD_TIMEOUT_SECONDS = 10
 
 
-def _bd_create_args(command: str) -> list[list[str]]:
-    """Argument lists (after `create`/`new`) of every `bd create` segment."""
-    found: list[list[str]] = []
-    for segment in _SEGMENT_SPLIT_RE.split(command):
-        try:
-            tokens = shlex.split(segment)
-        except ValueError:
+def _strip_heredoc_bodies(command: str) -> str:
+    out: list[str] = []
+    terminator: str | None = None
+    for line in command.split("\n"):
+        if terminator is not None:
+            if line.strip() == terminator:
+                terminator = None
             continue
+        out.append(line)
+        match = _HEREDOC_RE.search(line)
+        if match:
+            terminator = match.group(2)
+    return "\n".join(out)
+
+
+def _segments(command: str) -> list[list[str]]:
+    """Split a command into argv lists on unquoted ; && || | & ( ) newline."""
+    lexer = shlex.shlex(_strip_heredoc_bodies(command), posix=True, punctuation_chars=";&|()\n")
+    lexer.whitespace_split = True
+    lexer.whitespace = " \t\r"
+    segments: list[list[str]] = [[]]
+    for token in lexer:
+        if set(token) <= _OPERATOR_CHARS:
+            segments.append([])
+        else:
+            segments[-1].append(token)
+    return [seg for seg in segments if seg]
+
+
+def _bd_create_args(command: str, depth: int = 0) -> list[list[str]]:
+    """Argument lists (after `create`/`new`) of every `bd create` segment,
+    including ones inside `bash -c "..."`."""
+    found: list[list[str]] = []
+    for tokens in _segments(command):
         i = 0
         while i < len(tokens) and (
             re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[i]) or tokens[i] in _WRAPPERS
         ):
             i += 1
-        if i >= len(tokens) or tokens[i] != "bd":
+        if i >= len(tokens):
+            continue
+        if tokens[i] in _SHELLS and depth < 3 and "-c" in tokens[i + 1:]:
+            j = tokens.index("-c", i + 1)
+            if j + 1 < len(tokens):
+                found.extend(_bd_create_args(tokens[j + 1], depth + 1))
+            continue
+        if tokens[i] != "bd":
             continue
         i += 1
         while i < len(tokens) and tokens[i].startswith("-"):
@@ -83,8 +126,9 @@ def _bd_json(args: list[str], cwd: str) -> list | dict | None:
     try:
         result = subprocess.run(
             ["bd", *args, "--json"], cwd=cwd, capture_output=True, text=True, check=False,
+            timeout=_BD_TIMEOUT_SECONDS,
         )
-    except OSError:
+    except (OSError, subprocess.SubprocessError):
         return None
     if result.returncode != 0:
         return None
@@ -102,12 +146,19 @@ def _labels_of(parent: str, cwd: str) -> list[str] | None:
 
 
 def _existing_followups(parent: str, cwd: str) -> list[str]:
-    dependents = _bd_json(["dep", "list", parent, "--direction=up", "-t", "discovered-from"], cwd)
+    """Review-followup issues discovered from, or children of, `parent`.
+    Fails open (returns []) when either `bd` call fails."""
+    dependents = _bd_json(["dep", "list", parent, "--direction=up"], cwd)
     labelled = _bd_json(["list", "--label", LABEL, "--all", "-n", "0"], cwd)
     if not isinstance(dependents, list) or not isinstance(labelled, list):
         return []
     labelled_ids = {d.get("id") for d in labelled if isinstance(d, dict)}
-    return [d["id"] for d in dependents if isinstance(d, dict) and d.get("id") in labelled_ids]
+    return [
+        d["id"] for d in dependents
+        if isinstance(d, dict)
+        and d.get("dependency_type") in ("discovered-from", "parent-child")
+        and d.get("id") in labelled_ids
+    ]
 
 
 def _agent_mode(repo_cwd: str) -> dict[str, str]:
@@ -138,14 +189,7 @@ def main() -> int:
         if not isinstance(command, str) or not cwd or "bd" not in command:
             return 0
 
-        creates = [
-            args for args in _bd_create_args(command)
-            if LABEL in {
-                label.strip()
-                for value in _flag_values(args, "--labels", "-l")
-                for label in value.split(",")
-            }
-        ]
+        creates = _bd_create_args(command)
         if not creates:
             return 0
 
@@ -155,15 +199,24 @@ def main() -> int:
         waived = {w.strip() for w in mode.get("review_followup_waiver", "").split(",")}
 
         for args in creates:
+            explicit = LABEL in {
+                label.strip()
+                for value in _flag_values(args, "--labels", "-l")
+                for label in value.split(",")
+            }
+            inherits = "--no-inherit-labels" not in args
+            hierarchical = _flag_values(args, "--parent")
             for parent in _parents(args):
-                if parent in waived:
+                if parent in waived or not (explicit or (inherits and parent in hierarchical)):
                     continue
-                if LABEL in (_labels_of(parent, cwd) or []):
+                parent_is_followup = LABEL in (_labels_of(parent, cwd) or [])
+                if not explicit and not parent_is_followup:
+                    continue  # label would only be inherited from a non-followup parent
+                if parent_is_followup:
                     print(
                         f"Blocked: parent {parent} is itself a {LABEL} issue; do not file "
                         "follow-ups of follow-ups. Surface the findings to the operator in the "
-                        "landing report, or ask the operator to waive it by adding "
-                        f"'review_followup_waiver={parent}' to .agent-mode.local.",
+                        "landing report; only the operator may waive this.",
                         file=sys.stderr,
                     )
                     return 2
@@ -172,12 +225,12 @@ def main() -> int:
                     print(
                         f"Blocked: {parent} already has a {LABEL} follow-up ({existing[0]}); "
                         "file at most one follow-up per landing. Add the finding to that "
-                        "issue's checklist instead, or ask the operator to waive it by adding "
-                        f"'review_followup_waiver={parent}' to .agent-mode.local.",
+                        "issue's checklist instead; only the operator may waive this.",
                         file=sys.stderr,
                     )
                     return 2
-    except Exception:
+    except Exception as exc:
+        print(f"bd-review-followup-guard: failing open: {exc!r}", file=sys.stderr)
         return 0
     return 0
 

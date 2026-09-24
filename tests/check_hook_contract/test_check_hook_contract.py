@@ -56,7 +56,8 @@ class RealHooksComplyTest(unittest.TestCase):
         reference the payload `cwd` field before the Subscript-recursion and
         temp-variable fixes must still reference it after. (bento-rdtn.15
         added require-worktree-git-guard.py, which reads payload["cwd"],
-        bumping both counts by one.)"""
+        bumping both counts by one; bento-c96u.9 added
+        bd-review-followup-guard.py the same way.)"""
         import ast
 
         scripts = checker.find_hook_scripts(REPO_ROOT)
