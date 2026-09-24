@@ -284,15 +284,11 @@ land-work/scripts/land.py --runtime <runtime>
     merge on interrupt. It stops at the first failed step and reports the
     step name, the error, and (for a verifier failure) the raw log path in
     its final JSON. Exit 0 means every step in the sequence succeeded,
-    including verify-landing; proceed straight to step 9. A nonzero exit
+    including verify-landing; proceed straight to step 8a. It never removes
+    the worktree — that is the explicit `--teardown-only` run in step 10. A nonzero exit
     means the failed step's own diagnostics are the source of truth — fix
     that specific problem and re-run `land.py` from the top; do not fall
     back to the manual flow below just because one run failed.
-
-    After verify-landing, `land.py` also tears down the feature worktree and
-    branch (step 10) unless `--no-teardown`, `--no-merge`, or a batch-mode
-    repo; see step 10 for its fail-closed behavior. Pass `--no-teardown` if
-    steps 8a/9b need the worktree intact first.
 
     Use the manual compare-and-set flow in step 8 instead only when
     `land.py` is missing from this checkout (an older bento install) or you
@@ -543,17 +539,25 @@ land-work/scripts/land-work-verify-landing.py --expected-tree <tree> --preview-d
     removing the worktree over unaccounted residue.
 10. Clean up the merged feature branch and its linked worktree directly. This
     is the routine post-landing path for the agent that just landed its own
-    work. `land.py` does this itself after verify-landing: from the primary
-    checkout it runs `git worktree remove` then `git branch -d` (never
-    `--force`), then sweeps LSP residue (e.g. rust-analyzer `target/flycheck*`,
-    extendable via `.agent-plugins/bento/bento/land-work/residue-globs.txt`)
-    that reappears at the removed path. Check the JSON `teardown`: `removed`
-    means `cd <teardown.cd>` (your shell is in a deleted directory; on Claude
-    use ExitWorktree); `skipped` (dirty/untracked files, batch mode,
-    `--no-teardown`) or a `warning` means finish by hand as below — the landing
-    itself is done. For the manual flow (or after `--no-teardown`), return to the repo root on the primary branch first (you cannot
-    remove the worktree you are standing in), then run, in order, as separate
-    commands:
+    work. Preferred, once steps 8a–9b are done: from the feature worktree run
+
+    ```bash
+    land-work/scripts/land.py --teardown-only
+    ```
+
+    It fetches, then removes the worktree (`git worktree remove`) and deletes
+    the branch (`git branch -d`) from the primary checkout, never with
+    `--force`, and sweeps rust-analyzer `target/flycheck*` residue that
+    reappears at the removed path (extra globs:
+    `.agent-plugins/bento/bento/land-work/residue-globs.txt`). It fails closed:
+    if the feature tip is not in `origin/<primary>`, or the worktree is dirty,
+    holds untracked files or ignored files outside `target/`, or is locked, it
+    exits 0 with `"status": "skipped"` and a `reason` — fix that and re-run,
+    or use the manual commands below. On `"removed"` your shell is in a
+    deleted directory: `cd` to the JSON's `cd` (the primary root; on Claude
+    use ExitWorktree). Manual fallback: return to the repo root on the primary
+    branch first (you cannot remove the worktree you are standing in), then run,
+    in order, as separate commands:
 
     ```bash
     git worktree remove <worktree-path>

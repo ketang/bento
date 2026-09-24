@@ -90,7 +90,7 @@ class LandDriverTestBase(unittest.TestCase):
         git(self.repo, "push", "origin", "main")
 
     def run_driver(self, *args: str, env: dict | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
-        run_env = dict(os.environ)
+        run_env = {k: v for k, v in os.environ.items() if not k.startswith("BENTO_LAND_")}
         if env:
             run_env.update(env)
         return subprocess.run(
@@ -118,7 +118,7 @@ class HappyPathTest(LandDriverTestBase):
         step_names = [s["step"] for s in payload["steps"]]
         self.assertEqual(
             step_names,
-            ["prepare", "fetch", "create_preview", "verify", "lease_check", "merge_push", "cleanup", "verify_landing", "teardown"],
+            ["prepare", "fetch", "create_preview", "verify", "lease_check", "merge_push", "cleanup", "verify_landing"],
         )
         self.assertTrue(all(s["status"] == "passed" for s in payload["steps"]))
         # The verify step's executed:true check must report "not cached".
@@ -207,6 +207,7 @@ class BehindFeatureBranchTest(LandDriverTestBase):
 
         self.assertEqual(result.returncode, 0, result.stderr)
         self.assertTrue(payload["ok"])
+        self.assertEqual(git(self.worktree, "rev-parse", "HEAD").stdout.strip(), feature_tip)
         parent2 = git(self.repo, "rev-parse", "HEAD^2").stdout.strip()
         self.assertEqual(parent2, feature_tip)
         self.assertTrue((self.repo / "other0.txt").exists())
@@ -779,168 +780,3 @@ class SigintDuringMergeTest(LandDriverTestBase):
 
 if __name__ == "__main__":
     unittest.main()
-
-
-class TeardownTest(LandDriverTestBase):
-    """bento-c96u.16: after a verified landing land.py removes the feature
-    worktree and branch (from the primary checkout) and sweeps LSP residue."""
-
-    def run_driver(self, *args: str, env: dict | None = None, check: bool = False) -> subprocess.CompletedProcess[str]:
-        clean = {k: v for k, v in os.environ.items() if not k.startswith("BENTO_LAND_")}
-        clean.update(env or {})
-        return subprocess.run(
-            [str(LAND_SCRIPT), *args], cwd=self.worktree, capture_output=True, text=True, env=clean,
-            check=check, stdin=subprocess.DEVNULL,
-        )
-
-    def branches(self) -> list[str]:
-        return git(self.repo, "branch", "--list", "--format=%(refname:short)", "feature/test").stdout.split()
-
-    def after_removal(self, action) -> threading.Thread:
-        """Run `action` as soon as the feature worktree directory disappears."""
-        def _watch() -> None:
-            deadline = time.monotonic() + 60
-            while time.monotonic() < deadline:
-                if not self.worktree.exists():
-                    action()
-                    return
-                time.sleep(0.005)
-        thread = threading.Thread(target=_watch)
-        thread.start()
-        return thread
-
-    def test_successful_landing_removes_worktree_and_branch(self) -> None:
-        result = self.run_driver()
-        payload = json.loads(result.stdout)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(payload["ok"])
-        self.assertFalse(self.worktree.exists())
-        self.assertEqual(self.branches(), [])
-        self.assertNotIn(str(self.worktree), git(self.repo, "worktree", "list").stdout)
-        teardown = payload["teardown"]
-        self.assertEqual(teardown["status"], "removed")
-        self.assertEqual(teardown["worktree"], str(self.worktree.resolve()))
-        self.assertEqual(teardown["branch"], "feature/test")
-        self.assertTrue(teardown["branch_deleted"])
-        self.assertEqual(teardown["cd"], str(self.repo.resolve()))
-        # The landing itself is intact.
-        self.assertEqual((self.repo / "feature.txt").read_text(encoding="utf-8"), "feature\n")
-
-    def test_dirty_worktree_is_kept_and_run_still_succeeds(self) -> None:
-        def _dirty_when_prepared() -> None:
-            deadline = time.monotonic() + 60
-            while time.monotonic() < deadline:
-                if self.registered_preview_worktrees():
-                    (self.worktree / "scratch.txt").write_text("keep me\n", encoding="utf-8")
-                    return
-                time.sleep(0.005)
-
-        thread = threading.Thread(target=_dirty_when_prepared)
-        thread.start()
-        result = self.run_driver(env={"BENTO_LAND_TEST_DELAY_MERGE": "1.5"})
-        thread.join()
-        payload = json.loads(result.stdout)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(payload["ok"])
-        self.assertTrue((self.worktree / "scratch.txt").exists())
-        self.assertEqual(self.branches(), ["feature/test"])
-        self.assertEqual(payload["teardown"]["status"], "skipped")
-        self.assertIn("scratch.txt", payload["teardown"]["reason"])
-        self.assertIn("teardown", result.stderr)
-        # Landed regardless.
-        self.assertTrue((self.repo / "feature.txt").exists())
-
-    def test_no_teardown_flag_keeps_worktree(self) -> None:
-        result = self.run_driver("--no-teardown")
-        payload = json.loads(result.stdout)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue(self.worktree.exists())
-        self.assertEqual(self.branches(), ["feature/test"])
-        self.assertEqual(payload["teardown"]["status"], "skipped")
-
-    def test_canary_never_tears_down(self) -> None:
-        result = self.run_driver("--no-merge")
-        payload = json.loads(result.stdout)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertNotIn("teardown", payload)
-        self.assertNotIn("teardown", [s["step"] for s in payload["steps"]])
-        self.assertTrue(self.worktree.exists())
-        self.assertEqual(self.branches(), ["feature/test"])
-
-    def test_failed_landing_never_tears_down(self) -> None:
-        self.install_verifier(FAILED_VERIFIER)
-        result = self.run_driver()
-        payload = json.loads(result.stdout)
-        self.assertNotEqual(result.returncode, 0)
-        self.assertNotIn("teardown", payload)
-        self.assertTrue(self.worktree.exists())
-        self.assertEqual(self.branches(), ["feature/test"])
-
-    def test_batch_mode_repo_never_tears_down(self) -> None:
-        (self.repo / "swarm-config.json").write_text(json.dumps({"landing": {"mode": "batch"}}), encoding="utf-8")
-        git(self.repo, "add", "swarm-config.json")
-        git(self.repo, "commit", "-m", "batch mode")
-        git(self.repo, "push", "origin", "main")
-        git(self.worktree, "rebase", "main")
-        result = self.run_driver()
-        payload = json.loads(result.stdout)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(payload["teardown"]["status"], "skipped")
-        self.assertTrue(self.worktree.exists())
-
-    def test_residue_only_leftover_is_swept(self) -> None:
-        def _recreate() -> None:
-            flycheck = self.worktree / "target" / "flycheck0"
-            flycheck.mkdir(parents=True)
-            (flycheck / "stdout").write_text("", encoding="utf-8")
-            (flycheck / "stderr").write_text("", encoding="utf-8")
-
-        thread = self.after_removal(_recreate)
-        result = self.run_driver(env={"BENTO_LAND_RESIDUE_WAIT": "1.5"})
-        thread.join()
-        payload = json.loads(result.stdout)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(self.worktree.exists())
-        self.assertTrue(payload["teardown"]["residue_removed"])
-        self.assertEqual(payload["teardown"]["residue_left"], [])
-
-    def test_leftover_with_real_files_is_not_swept(self) -> None:
-        def _recreate() -> None:
-            (self.worktree / "src").mkdir(parents=True)
-            (self.worktree / "src" / "x.rs").write_text("fn main() {}\n", encoding="utf-8")
-            flycheck = self.worktree / "target" / "flycheck0"
-            flycheck.mkdir(parents=True)
-            (flycheck / "stdout").write_text("", encoding="utf-8")
-
-        thread = self.after_removal(_recreate)
-        result = self.run_driver(env={"BENTO_LAND_RESIDUE_WAIT": "1.5"})
-        thread.join()
-        payload = json.loads(result.stdout)
-
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertTrue((self.worktree / "src" / "x.rs").exists())
-        self.assertFalse(payload["teardown"]["residue_removed"])
-        self.assertIn("src/x.rs", payload["teardown"]["residue_left"])
-
-    def test_extra_residue_globs_file_extends_allowlist(self) -> None:
-        globs = self.repo / ".agent-plugins/bento/bento/land-work/residue-globs.txt"
-        globs.write_text("# extra\n.idea/**\n", encoding="utf-8")
-        git(self.repo, "add", str(globs.relative_to(self.repo)))
-        git(self.repo, "commit", "-m", "residue globs")
-        git(self.repo, "push", "origin", "main")
-        git(self.worktree, "rebase", "main")
-
-        def _recreate() -> None:
-            (self.worktree / ".idea").mkdir(parents=True)
-            (self.worktree / ".idea" / "workspace.xml").write_text("", encoding="utf-8")
-
-        thread = self.after_removal(_recreate)
-        result = self.run_driver(env={"BENTO_LAND_RESIDUE_WAIT": "1.5", "XDG_CONFIG_HOME": self.temp_dir.name})
-        thread.join()
-        payload = json.loads(result.stdout)
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertFalse(self.worktree.exists())
-        self.assertTrue(payload["teardown"]["residue_removed"])
