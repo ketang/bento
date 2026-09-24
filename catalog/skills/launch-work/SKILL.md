@@ -39,9 +39,13 @@ step 8: after `start-task` creates the branch/worktree, enter it and verify
 with `expedition/scripts/expedition.py verify --expedition <name>
 --require-active-task` in place of `launch-work-verify.py` — the same hard gate step 8 requires, just the
 expedition-aware check instead of the plain one. Do not proceed to
-implementation until it passes. Once verified, this skill's remaining steps
-(dependency install, TDD discipline, hooks, checkpoint commits, ready-to-land
-summary) still apply as normal.
+implementation until it passes. `start-task` has no `--claim` flag, so if
+step 4 determined this is tracker-backed work, claim the issue manually via
+the tracker skill now — the same fallback step 4 already documents for a
+failed or skipped bootstrap-helper claim — since step 7's claim mechanism
+never runs in this path. Once verified and claimed, this skill's remaining
+steps (dependency install, TDD discipline, hooks, checkpoint commits,
+ready-to-land summary) still apply as normal.
 
 ## Inputs
 
