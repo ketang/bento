@@ -23,6 +23,7 @@ from pathlib import Path
 AGENT_COMMS = ("claude", "codex")
 
 
+# Mirrors agent_ancestor() in the check-landing-queue.py Stop hook; keep in sync.
 def agent_ancestor(pid: int | None = None) -> dict | None:
     """Nearest ancestor whose comm is claude or codex, as {pid, start_time}."""
     pid = os.getpid() if pid is None else pid
@@ -53,18 +54,24 @@ def queue_path(cwd: Path) -> Path:
 
 def load(path: Path) -> list[dict]:
     try:
-        return json.loads(path.read_text())["entries"]
+        return json.loads(path.read_text()).get("entries", [])
     except FileNotFoundError:
         return []
+    except (ValueError, AttributeError) as exc:
+        raise SystemExit(f"swarm-landing-queue: {path} is corrupt ({exc}); inspect it or clear --all --yes")
 
 
 def store(path: Path, entries: list[dict]) -> None:
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".landing-queue-")
-    with os.fdopen(fd, "w") as fh:
-        json.dump({"entries": entries}, fh, indent=2)
-        fh.flush()
-        os.fsync(fh.fileno())
-    os.replace(tmp, path)
+    try:
+        with os.fdopen(fd, "w") as fh:
+            json.dump({"entries": entries}, fh, indent=2)
+            fh.flush()
+            os.fsync(fh.fileno())
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
 
 
 def now() -> str:
@@ -120,7 +127,14 @@ def main() -> int:
             "signalled_at": now(),
             "lead_agent": agent_ancestor(),
         }
-        return mutate(path, lambda es: ([e for e in es if e["branch"] != args.branch] + [entry], 0))
+        code = mutate(path, lambda es: ([e for e in es if e["branch"] != args.branch] + [entry], 0))
+        result = {"queued": args.branch, "lead_agent": entry["lead_agent"]}
+        if entry["lead_agent"] is None:
+            result["warning"] = "lead agent not identified; the Stop hook will not block for this entry"
+            print(f"swarm-landing-queue: warning: {result['warning']}", file=sys.stderr)
+        json.dump(result, sys.stdout)
+        sys.stdout.write("\n")
+        return code
     if args.cmd == "pop":
         def do_pop(es):
             rest = [e for e in es if e["branch"] != args.branch]

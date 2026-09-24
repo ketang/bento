@@ -87,8 +87,13 @@ worktrees; not runtime- or session-scoped). Manage it only through
 - `list` prints entries; `clear --all --yes` is operator-only
 
 Each entry records `lead_agent` `{pid, start_time}` — the nearest `claude`/
-`codex` ancestor process — so `check-landing-queue.py` (Stop hook) blocks only
-that lead session while non-deferred, unmerged entries remain. A one-turn hold
-marker `bento-check-landing-queue-hold-<session_id>` in `$XDG_RUNTIME_DIR` (or
-`/tmp`) lets one Stop through. `agent-env-doctor` reports entries older than
-1 h whose branch is unmerged as "N ready-but-unlanded branches".
+`codex` ancestor process (read from `/proc`, Linux only; `add` warns on stderr
+and stores `null` when it cannot identify one, and such an entry never blocks).
+Only the lead runs `add`; a resumed session gets a new pid, so re-`add` its
+entries. `check-landing-queue.py` (Stop hook) nudges only that lead session
+while non-deferred entries remain — it blocks once per stop attempt (Stop
+re-entry is allowed), so land, `pop`, or `defer` to silence it. Entries whose
+worktree or branch is gone, or whose branch is merged into the primary branch,
+stop counting; a squash-merged branch needs an explicit `pop`.
+`agent-env-doctor` reports entries older than 1 h with an unmerged branch as
+"N ready-but-unlanded branches".

@@ -512,39 +512,6 @@ def check_worktree_root_orphans(
 # --- check 8: orphan dolt sql-server ------------------------------------------
 
 
-def check_unlanded_queue(root: Path, now: float | None = None) -> list[str]:
-    """Report swarm landing-queue entries older than 1h whose branch is unmerged."""
-    import importlib.util
-    from datetime import datetime, timezone
-
-    try:
-        spec = importlib.util.spec_from_file_location(
-            "check_landing_queue", Path(__file__).with_name("check-landing-queue.py")
-        )
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        common = module._git(str(root), "rev-parse", "--path-format=absolute", "--git-common-dir")
-        entries = json.loads((Path(common.stdout.strip()) / "bento" / "landing-queue.json").read_text())["entries"]
-        cutoff = (time.time() if now is None else now) - 3600
-        stale = []
-        for entry in entries:
-            signalled = datetime.strptime(entry["signalled_at"], "%Y-%m-%dT%H:%M:%SZ")
-            signalled_ts = signalled.replace(tzinfo=timezone.utc).timestamp()
-            if signalled_ts < cutoff and not module.is_landed(str(root), entry["branch"]):
-                stale.append((signalled_ts, entry))
-    except Exception:
-        return []
-    if not stale:
-        return []
-    stale.sort(key=lambda item: item[0])
-    oldest = stale[0][1]
-    return [
-        f"{len(stale)} ready-but-unlanded branches (oldest: {oldest['branch']}, "
-        f"{oldest['signalled_at']}) in the swarm landing queue — land them with bento:land-work "
-        "or run swarm-landing-queue.py defer <branch> --reason ..."
-    ]
-
-
 def check_orphan_dolt_server(root: Path) -> list[str]:
     beads_dir = root / ".beads"
     if not beads_dir.is_dir():
@@ -597,6 +564,57 @@ def check_orphan_dolt_server(root: Path) -> list[str]:
                 "is restored"
             )
     return warnings
+
+
+# --- check 9: swarm landing queue ---------------------------------------------
+
+
+def check_unlanded_queue(root: Path, now: float | None = None) -> list[str]:
+    """Report swarm landing-queue entries older than 1h whose branch is unmerged.
+
+    Mirrors the queue location and landed test of check-landing-queue.py
+    (kept inline so the doctor never execs a sibling hook).
+    """
+    from datetime import datetime, timezone
+
+    def git(*args: str) -> subprocess.CompletedProcess:
+        return subprocess.run(["git", *args], cwd=root, capture_output=True, text=True)
+
+    def landed(entry: dict) -> bool:
+        branch = entry["branch"]
+        if not Path(entry.get("worktree") or "/").exists():
+            return True
+        if git("rev-parse", "--verify", "-q", f"refs/heads/{branch}").returncode != 0:
+            return True
+        head = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        candidates = ([head.stdout.strip()] if head.returncode == 0 else []) + ["main", "master"]
+        for primary in candidates:
+            if git("rev-parse", "--verify", "-q", primary).returncode == 0:
+                return git("merge-base", "--is-ancestor", branch, primary).returncode == 0
+        return False
+
+    common = git("rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common.returncode != 0:
+        return []
+    try:
+        entries = json.loads((Path(common.stdout.strip()) / "bento" / "landing-queue.json").read_text()).get("entries", [])
+        cutoff = (time.time() if now is None else now) - 3600
+        stale = []
+        for entry in entries:
+            stamp = datetime.strptime(entry["signalled_at"], "%Y-%m-%dT%H:%M:%SZ")
+            ts = stamp.replace(tzinfo=timezone.utc).timestamp()
+            if ts < cutoff and not landed(entry):
+                stale.append((ts, entry))
+    except (OSError, ValueError, KeyError, TypeError):
+        return []
+    if not stale:
+        return []
+    oldest = min(stale, key=lambda item: item[0])[1]
+    return [
+        f"{len(stale)} ready-but-unlanded {'branch' if len(stale) == 1 else 'branches'} "
+        f"(oldest: {oldest['branch']}, {oldest['signalled_at']}) in the swarm landing queue — "
+        "land them with bento:land-work, or pop/defer them with swarm-landing-queue.py"
+    ]
 
 
 # --- orchestration ----------------------------------------------------------
