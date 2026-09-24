@@ -1,6 +1,6 @@
 ---
 name: launch-work
-description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Creates branch+worktree. Never skip for small changes. If superpowers is also installed, this replaces superpowers:using-git-worktrees.
+description: Hard trigger — always invoke before any edit to files inside a repository working tree; non-repo outputs (/tmp, scratch, memory dirs) and tracker-only mutations are exempt. Governs the full task lifecycle — branch+worktree setup, TDD discipline, hooks, and ready-to-land summaries — not just initial setup; reload it late in a task too. Inside an active expedition, branch/worktree creation defers to the expedition skill. Never skip for small changes. If superpowers is also installed, this replaces superpowers:using-git-worktrees.
 ---
 
 # Launch Work
@@ -26,6 +26,17 @@ These are exempt and do not require a branch or linked worktree:
 - agent memory directories
 - review reports and handoff files written outside the working tree
 - tracker-only mutations (create, claim, update, close issues)
+
+## Expedition Precedence
+
+Inside an active expedition (check with
+`expedition/scripts/expedition.py discover`), do not create the task branch
+and worktree with this skill's bootstrap helper. Task and experiment branches
+must be cut from the expedition base via
+`expedition/scripts/expedition.py start-task`, which enforces the expedition's
+shared base, landing lease, and numbering. Once that branch/worktree exists,
+this skill's remaining steps (dependency install, TDD discipline, hooks,
+checkpoint commits, ready-to-land summary) still apply as normal.
 
 ## Inputs
 
@@ -94,7 +105,8 @@ target branch and worktree path are confirmed correct.
    implementation begins.
 5. Determine the target branch name and linked-worktree path from repo docs.
    Follow `launch-work/references/worktree-location.md` for the default root,
-   prohibited locations, and override guidance.
+   prohibited locations, and override guidance. If inside an active
+   expedition, skip to Expedition Precedence above instead of steps 6-8.
 6. Preview the setup with:
 
 ```bash

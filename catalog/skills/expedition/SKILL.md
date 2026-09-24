@@ -97,6 +97,15 @@ the following subcommands:
 Use the helper by script path, not `python3 <script>`, so approvals stay
 scoped to the script.
 
+## Precedence Over launch-work
+
+Inside an active expedition, `start-task` — not `launch-work`'s bootstrap
+helper — creates task and experiment branches/worktrees; `launch-work`
+defaults to the primary branch and does not know about the expedition base or
+landing lease. `launch-work` still governs everything after the branch
+exists: dependency install, TDD discipline, hooks, checkpoint commits, and
+ready-to-land summaries inside that worktree.
+
 ## Session Start Protocol
 
 At the start of every fresh session:
