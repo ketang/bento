@@ -167,10 +167,8 @@ land-work/scripts/land-work-prepare.py
     and confirm the primary branch is green before landing (halt on a
     pre-existing red base). If no suite is discoverable after checking every
     listed surface, record that explicitly; never claim green.
-3. Evidence attaches to the verified preview tree. Verification that ran on a
-   different tree (before a cherry-pick, conflict resolution, or any change to
-   the candidate) is stale and does not authorize the landing. A rebase alone
-   does not make evidence stale if the preview tree is unchanged.
+3. Evidence attaches to the verified preview tree. Verification on a different
+   tree (after conflict resolution or any candidate change) is stale.
 4. Run an independent code review of the feature diff before merging.
 
    **Why independent:** the reviewer must see only the code and its stated
@@ -362,7 +360,7 @@ land-work/scripts/land-work-run-verifier.py \
      not proceed to the lease check or merge; remove the preview worktree (the
      cleanup command below) before stopping.
    - satisfy the gate requirement (step 6a) against that exact preview only; do
-     not reuse pre-rebase or pre-conflict results
+     not reuse results from a different candidate tree
    - re-check the lease with:
 
 ```bash
@@ -741,8 +739,8 @@ itself remains out of scope here — it lives in the `swarm` skill.
 - Do not fast-forward feature branches into the primary branch unless the repo
   explicitly requires it.
 - Always use regular merge commits (`--no-ff`). Never squash.
-- Do not treat pre-rebase, pre-merge, or pre-conflict verification as valid
-  for a changed landing candidate.
+- Do not treat verification of a different candidate tree as valid for the
+  landing candidate.
 - Do not merge if the leased primary-branch ref moved after verification.
 - Do not land from a dirty feature-branch checkout.
 - Do not remove the feature worktree while untracked files created during the
