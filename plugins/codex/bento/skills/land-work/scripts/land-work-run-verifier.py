@@ -28,9 +28,13 @@ from __future__ import annotations
 
 import argparse
 import collections
+import datetime
+import hashlib
 import json
+import os
 import subprocess
 import sys
+import tempfile
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
@@ -42,6 +46,9 @@ import process_group  # type: ignore  # noqa: E402
 
 
 GLOB_CHARS = set("*?[]")
+DEFAULT_REUSE_MAX_AGE_HOURS = 24.0
+# The verifier's default log lands in the candidate; it is not candidate content.
+LOG_DIR_PREFIX = ".land-work/"
 
 
 def _git(candidate: Path, *args: str) -> subprocess.CompletedProcess[str]:
@@ -173,6 +180,91 @@ def _tail_lines(text: str, count: int) -> list[str]:
     return list(tail)
 
 
+# ---- Tree-keyed green-result records (bento-c96u.2) ------------------------ #
+
+
+def _candidate_tree(candidate: Path) -> str | None:
+    """Tree hash of the candidate's index, or None if it is not a clean candidate.
+
+    A linked feature worktree must be clean (tree == HEAD^{tree}); a merge
+    preview may carry staged changes (its --no-commit merge) but nothing
+    unstaged or untracked. Unmerged entries make write-tree fail -> None.
+    """
+    status = _git(candidate, "status", "--porcelain=v1", "-z", "--untracked-files=all")
+    if status.returncode != 0:
+        return None
+    for entry in (e for e in status.stdout.split("\0") if e):
+        code, path = entry[:2], entry[3:]
+        if path.startswith(LOG_DIR_PREFIX):
+            continue
+        if code[1] != " " or code[0] == "?":
+            return None
+    tree = _git(candidate, "write-tree")
+    return tree.stdout.strip() if tree.returncode == 0 and tree.stdout.strip() else None
+
+
+def _evidence_dir(candidate: Path) -> Path | None:
+    common = _git(candidate, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    if common.returncode != 0 or not common.stdout.strip():
+        return None
+    return Path(common.stdout.strip()) / "bento" / "gate-evidence"
+
+
+def _record_path(store: Path, tree: str, manifest_sha256: str) -> Path:
+    return store / f"{tree}-{manifest_sha256[:8]}.json"
+
+
+def _max_age_hours(manifest_path: Path) -> tuple[float, str | None]:
+    """evidence_reuse_max_age_hours from the manifest (0 disables reuse)."""
+    try:
+        raw = json.loads(manifest_path.read_text(encoding="utf-8")).get("evidence_reuse_max_age_hours")
+    except (OSError, ValueError):
+        return DEFAULT_REUSE_MAX_AGE_HOURS, None
+    if raw is None:
+        return DEFAULT_REUSE_MAX_AGE_HOURS, None
+    if isinstance(raw, bool) or not isinstance(raw, (int, float)) or raw < 0:
+        return 0.0, f"verifier manifest evidence_reuse_max_age_hours must be a non-negative number: {manifest_path}"
+    return float(raw), None
+
+
+def _load_reusable_record(
+    path: Path, tree: str, manifest_sha256: str, relevant: list[str], max_age_hours: float
+) -> dict | None:
+    if max_age_hours <= 0:
+        return None
+    try:
+        record = json.loads(path.read_text(encoding="utf-8"))
+        recorded_at = datetime.datetime.fromisoformat(record["recorded_at"])
+    except (OSError, ValueError, KeyError, TypeError):
+        return None
+    if not isinstance(record, dict) or recorded_at.tzinfo is None:
+        return None
+    if record.get("tree") != tree or record.get("manifest_sha256") != manifest_sha256:
+        return None
+    if record.get("verifier_status") != "passed" or not isinstance(record.get("selected_checks"), list):
+        return None
+    paths = record.get("relevant_paths")
+    if not isinstance(paths, list) or not set(relevant) <= set(paths):
+        return None
+    age = datetime.datetime.now(datetime.timezone.utc) - recorded_at
+    if not datetime.timedelta(0) <= age <= datetime.timedelta(hours=max_age_hours):
+        return None
+    return record
+
+
+def _write_record(path: Path, record: dict) -> None:
+    """Atomic write: concurrent sessions see the whole record or none."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=".tmp-", suffix=".json")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(record, handle, indent=2)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def _parse_verifier_result(stdout: str, schema_version: int) -> tuple[dict | None, str | None]:
     """Parse the final stdout line as the verifier result JSON.
 
@@ -211,6 +303,12 @@ def parse_args() -> argparse.Namespace:
         default="",
         help="path to persist the verifier command's raw stdout+stderr; "
         "defaults to <candidate>/.land-work/verifier.log",
+    )
+    parser.add_argument(
+        "--reuse-evidence",
+        action="store_true",
+        help="reuse a fresh green record for the same candidate tree and manifest "
+        "digest instead of executing the verifier command",
     )
     return parser.parse_args()
 
@@ -339,6 +437,38 @@ def main() -> int:
     diagnostics["exemptions"] = used_exemptions
     relevant = [p for p in union if p not in normalized_exemptions]
     diagnostics["relevant_paths"] = relevant
+
+    # ---- Tree-keyed evidence: reuse a green record if one matches. --------- #
+    # Computed before the command runs so nothing the command writes into the
+    # candidate can change the key.
+    manifest_sha256 = hashlib.sha256(manifest.manifest_path.read_bytes()).hexdigest()
+    candidate_tree = _candidate_tree(candidate)
+    store = _evidence_dir(candidate) if candidate_tree else None
+    record_path = _record_path(store, candidate_tree, manifest_sha256) if store else None
+    evidence_paths = [p for p in relevant if not p.startswith(LOG_DIR_PREFIX)]
+    max_age, age_error = _max_age_hours(manifest.manifest_path)
+    if age_error:
+        return _fail(diagnostics, [age_error])
+    if args.reuse_evidence and record_path is not None:
+        record = _load_reusable_record(record_path, candidate_tree, manifest_sha256, evidence_paths, max_age)
+        if record is not None:
+            diagnostics.update(
+                {
+                    "reused": True,
+                    "executed": False,
+                    "reused_from": str(record_path),
+                    "reused_tree": candidate_tree,
+                    "reused_recorded_at": record["recorded_at"],
+                    "verifier_status": "passed",
+                    "selected_checks": record["selected_checks"],
+                    "selected_check_count": len(record["selected_checks"]),
+                    "ok": True,
+                    "errors": [],
+                }
+            )
+            json.dump(diagnostics, sys.stdout, indent=2)
+            sys.stdout.write("\n")
+            return 0
 
     # ---- Run the verifier command in the candidate worktree. --------------- #
     timeout_seconds: float | None = None
@@ -544,6 +674,26 @@ def main() -> int:
             status="failed",
             log_text=log_text,
         )
+
+    if record_path is not None:
+        try:
+            _write_record(
+                record_path,
+                {
+                    "tree": candidate_tree,
+                    "manifest_sha256": manifest_sha256,
+                    "relevant_paths": evidence_paths,
+                    "selected_checks": check_diagnostics,
+                    "verifier_status": "passed",
+                    "base_sha": args.base_sha,
+                    "head_sha": args.head_sha,
+                    "recorded_at": datetime.datetime.now(datetime.timezone.utc).isoformat(),
+                },
+            )
+            diagnostics["evidence_recorded"] = str(record_path)
+        except OSError as exc:
+            # Recording is an optimization; never fail a genuine pass over it.
+            diagnostics["evidence_record_error"] = str(exc)
 
     diagnostics["ok"] = True
     diagnostics["errors"] = []
