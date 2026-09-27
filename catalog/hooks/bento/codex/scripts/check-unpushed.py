@@ -65,6 +65,13 @@ repeat identically after every subsequent turn in the same session.
 Claude Code runs hook processes from $HOME, not the project root, so the
 session directory is read from the stdin JSON payload's ``cwd`` field, never
 from $PWD or the process CWD.
+
+This hook also no-ops unconditionally when ``CROSS_CHECK_ACTIVE=1`` is set in
+its environment (see ``cross_check_active()`` below): the cross-check skill
+runs the counterpart runtime as a read-only reviewer piping its final message
+to a file, and a block or advisory written to that reviewer's stderr/exit
+code would otherwise be captured as if it were the review itself, silently
+discarding the real one (bento-0tyd.11).
 """
 
 import fcntl
@@ -80,6 +87,20 @@ SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 TURN_HOLD_PREFIX = "bento-check-unpushed-hold-"
+
+# Mirrors catalog/skills/cross-check/scripts/cross_check_common.RECURSION_ENV
+# and its recursion_active() truthy semantics exactly (presence means active;
+# an explicit "0"/"false"/"no" is treated as inactive so a stray
+# CROSS_CHECK_ACTIVE=0 never wedges this exemption on). Kept as a small local
+# mirror rather than importing cross_check_common: a Stop hook must stay safe
+# to run even when the cross-check skill isn't installed alongside these
+# hooks, and the check is only ever this one line.
+CROSS_CHECK_ACTIVE_ENV = "CROSS_CHECK_ACTIVE"
+
+
+def cross_check_active(env: dict | None = None) -> bool:
+    env = os.environ if env is None else env
+    return env.get(CROSS_CHECK_ACTIVE_ENV, "").strip().lower() not in ("", "0", "false", "no")
 
 
 def _git(root: str, *args: str) -> subprocess.CompletedProcess:
@@ -803,6 +824,9 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
     exemptions between the two checks instead of recomputing them twice per
     Stop invocation (they read from the same repo state either way)."""
     if hook_input.get("stop_hook_active"):
+        return None, None
+
+    if cross_check_active():
         return None, None
 
     cwd = hook_input.get("cwd") or ""
