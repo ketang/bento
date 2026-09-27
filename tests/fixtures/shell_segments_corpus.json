@@ -1,0 +1,514 @@
+[
+  {
+    "command": "git commit -m\"fix: a; git merge b; c\"",
+    "expected": [
+      [
+        "git",
+        "commit",
+        "-mfix: a; git merge b; c"
+      ]
+    ]
+  },
+  {
+    "command": "echo a\\;git merge foo",
+    "expected": [
+      [
+        "echo",
+        "a;git",
+        "merge",
+        "foo"
+      ]
+    ]
+  },
+  {
+    "command": "echo x # comment with \"unmatched\ngit merge foo",
+    "expected": [
+      [
+        "echo",
+        "x"
+      ],
+      [
+        "git",
+        "merge",
+        "foo"
+      ]
+    ]
+  },
+  {
+    "command": "bd create --title=\"Fix X\" --description=\"a long description\"",
+    "expected": [
+      [
+        "bd",
+        "create",
+        "--title=Fix X",
+        "--description=a long description"
+      ]
+    ]
+  },
+  {
+    "command": "echo \";\" git merge feature",
+    "expected": [
+      [
+        "echo",
+        ";",
+        "git",
+        "merge",
+        "feature"
+      ]
+    ]
+  },
+  {
+    "command": "echo \"steps: fetch; git merge feature; push\"",
+    "expected": [
+      [
+        "echo",
+        "steps: fetch; git merge feature; push"
+      ]
+    ]
+  },
+  {
+    "command": "true && git reset --hard",
+    "expected": [
+      [
+        "true"
+      ],
+      [
+        "git",
+        "reset",
+        "--hard"
+      ]
+    ]
+  },
+  {
+    "command": "a;\nb",
+    "expected": [
+      [
+        "a"
+      ],
+      [
+        "b"
+      ]
+    ]
+  },
+  {
+    "command": "echo a#b; git merge x",
+    "expected": [
+      [
+        "echo",
+        "a#b"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "rtk git merge foo",
+    "expected": [
+      [
+        "git",
+        "merge",
+        "foo"
+      ]
+    ]
+  },
+  {
+    "command": "env -i A=1 git status",
+    "expected": [
+      [
+        "git",
+        "status"
+      ]
+    ]
+  },
+  {
+    "command": "command -v git",
+    "expected": [
+      [
+        "command",
+        "-v",
+        "git"
+      ]
+    ]
+  },
+  {
+    "command": "cat > /tmp/x.md <<'EOF'\nNever run:\ngit push --force origin main\nEOF",
+    "expected": [
+      [
+        "cat",
+        ">",
+        "/tmp/x.md"
+      ]
+    ]
+  },
+  {
+    "command": "cat > f <<'EOF'\nx\nEOF\ngit push --force",
+    "expected": [
+      [
+        "cat",
+        ">",
+        "f"
+      ],
+      [
+        "git",
+        "push",
+        "--force"
+      ]
+    ]
+  },
+  {
+    "command": "cat <<-EOF\n\tgit rebase main\n\tEOF\necho done",
+    "expected": [
+      [
+        "cat"
+      ],
+      [
+        "echo",
+        "done"
+      ]
+    ]
+  },
+  {
+    "command": "cat <<< 'git push --force'",
+    "expected": [
+      [
+        "cat",
+        "<<<",
+        "git push --force"
+      ]
+    ]
+  },
+  {
+    "command": "echo 'it'\\''s'; git merge x",
+    "expected": [
+      [
+        "echo",
+        "it's"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "echo \"a \\\"q\\\" b\"; git merge x",
+    "expected": [
+      [
+        "echo",
+        "a \"q\" b"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "echo a \\\n  b; git merge x",
+    "expected": [
+      [
+        "echo",
+        "a",
+        "b"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "echo x | git merge y",
+    "expected": [
+      [
+        "echo",
+        "x"
+      ],
+      [
+        "git",
+        "merge",
+        "y"
+      ]
+    ]
+  },
+  {
+    "command": "sleep 1 & git merge y",
+    "expected": [
+      [
+        "sleep",
+        "1"
+      ],
+      [
+        "git",
+        "merge",
+        "y"
+      ]
+    ]
+  },
+  {
+    "command": "cmd 2>&1; git merge x",
+    "expected": [
+      [
+        "cmd",
+        "2>&1"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "cmd &> log; git merge x",
+    "expected": [
+      [
+        "cmd",
+        "&>",
+        "log"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "cmd |& tee l; git merge x",
+    "expected": [
+      [
+        "cmd"
+      ],
+      [
+        "tee",
+        "l"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "echo 'unterminated",
+    "expected": "ERR"
+  },
+  {
+    "command": "echo ${unused_review_var:-a; git merge foo;}",
+    "expected": [
+      [
+        "echo",
+        "${unused_review_var:-a; git merge foo;}"
+      ]
+    ]
+  },
+  {
+    "command": "echo ${x:-\"a; b\"}; git merge y",
+    "expected": [
+      [
+        "echo",
+        "${x:-\"a; b\"}"
+      ],
+      [
+        "git",
+        "merge",
+        "y"
+      ]
+    ]
+  },
+  {
+    "command": "echo $(printf 'a; git merge b')",
+    "expected": [
+      [
+        "echo",
+        "$(printf 'a; git merge b')"
+      ],
+      [
+        "printf",
+        "a; git merge b"
+      ]
+    ]
+  },
+  {
+    "command": "echo $(git merge x)",
+    "expected": [
+      [
+        "echo",
+        "$(git merge x)"
+      ],
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "echo \"$(printf %s \"a)b\")\"; echo done",
+    "expected": [
+      [
+        "echo",
+        "$(printf %s \"a)b\")"
+      ],
+      [
+        "echo",
+        "done"
+      ],
+      [
+        "printf",
+        "%s",
+        "a)b"
+      ]
+    ]
+  },
+  {
+    "command": "echo `git merge z`",
+    "expected": [
+      [
+        "echo",
+        "`git merge z`"
+      ],
+      [
+        "git",
+        "merge",
+        "z"
+      ]
+    ]
+  },
+  {
+    "command": "echo $((1 + 2)); git merge q",
+    "expected": [
+      [
+        "echo",
+        "$((1 + 2))"
+      ],
+      [
+        "git",
+        "merge",
+        "q"
+      ]
+    ]
+  },
+  {
+    "command": "x=$(echo 'a)b'); git merge r",
+    "expected": [
+      [
+        "git",
+        "merge",
+        "r"
+      ],
+      [
+        "echo",
+        "a)b"
+      ]
+    ]
+  },
+  {
+    "command": "(git merge x)",
+    "expected": [
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "{ git merge x; }",
+    "expected": [
+      [
+        "git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "{git merge x",
+    "expected": [
+      [
+        "{git",
+        "merge",
+        "x"
+      ]
+    ]
+  },
+  {
+    "command": "arr=(git merge x); echo ok",
+    "expected": [
+      [
+        "echo",
+        "ok"
+      ]
+    ]
+  },
+  {
+    "command": "case $v in a) git merge y;; esac",
+    "expected": [
+      [
+        "case",
+        "$v",
+        "in",
+        "a"
+      ],
+      [
+        "git",
+        "merge",
+        "y"
+      ],
+      [
+        "esac"
+      ]
+    ]
+  },
+  {
+    "command": "! git merge z",
+    "expected": [
+      [
+        "git",
+        "merge",
+        "z"
+      ]
+    ]
+  },
+  {
+    "command": "echo $(case $v in a) git merge y;; esac)",
+    "expected": [
+      [
+        "echo",
+        "$(case $v in a) git merge y;; esac)"
+      ],
+      [
+        "case",
+        "$v",
+        "in",
+        "a"
+      ],
+      [
+        "git",
+        "merge",
+        "y"
+      ],
+      [
+        "esac"
+      ]
+    ]
+  },
+  {
+    "command": "echo $'a\\'b; git merge x'",
+    "expected": [
+      [
+        "echo",
+        "$'a\\'b; git merge x'"
+      ]
+    ]
+  }
+]
