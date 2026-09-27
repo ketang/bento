@@ -22,26 +22,29 @@ Two independent rules, both advisory-free hard blocks (exit 2):
    `--config core.hooksPath=...`) override on a git invocation are denied.
    Opt out with `hook_bypass=allow` in `.agent-mode.local`.
 
-This is a regex/token-level guard over the Bash command string, not a full
-shell parser: it can be defeated by sufficiently obfuscated shell (command
-substitution, sourced functions, etc.), matching the same trust model as
-`require-worktree.sh`. It fails open (never blocks) on any git/parse error,
-since the goal is to catch the common, unobfuscated case, not to be a
-security boundary.
+This guard parses the Bash command string with `shell_segments` (a sibling,
+character-level shell segmenter -- see that module's docstring), not a full
+shell parser: it can still be defeated by sufficiently obfuscated shell (the
+body of `bash -c`/`eval`, sourced functions, etc.), matching the same trust
+model as `require-worktree.sh`. It fails open (never blocks) on any git/parse
+error, since the goal is to catch the common, unobfuscated case -- including
+`git` behind a `rtk`/`command`/`env` wrapper -- not to be a security
+boundary. It does not, by design, match text inside quoted strings or
+heredoc bodies that merely *mentions* a git command (bento-l01v).
 """
 
 from __future__ import annotations
 
 import json
-import re
-import shlex
 import subprocess
 import sys
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+from shell_segments import SegmentError, command_segments  # noqa: E402
+
 LAND_WORK_MARKER = "BENTO_LAND_WORK=1"
 
-_SEGMENT_SPLIT_RE = re.compile(r"&&|\|\||[;&|\n]")
 _MUTATING_SUBCOMMANDS = frozenset({"merge", "rebase", "reset", "clean"})
 
 
@@ -129,22 +132,19 @@ def _parse_git_invocation(tokens: list[str]) -> tuple[str | None, list[str], lis
     return tokens[i], tokens[i + 1:], configs
 
 
-def _find_git_segments(command: str) -> list[str]:
-    """Each shell segment (split on ;, &&, ||, |, newline) that invokes git,
-    with the 'git' token and anything before it in that segment stripped."""
-    segments: list[str] = []
-    for segment in _SEGMENT_SPLIT_RE.split(command):
-        try:
-            tokens = shlex.split(segment)
-        except ValueError:
-            continue
-        # Skip leading VAR=value env-assignment tokens.
-        idx = 0
-        while idx < len(tokens) and re.match(r"^[A-Za-z_][A-Za-z0-9_]*=", tokens[idx]):
-            idx += 1
-        if idx < len(tokens) and tokens[idx] == "git":
-            segments.append(tokens[idx + 1:])
-    return segments
+def _find_git_segments(command: str) -> list[list[str]]:
+    """Each simple command in `command` that invokes git (directly, or via
+    a stripped `rtk`/`exec`/`command`/`env` wrapper prefix -- see
+    shell_segments.strip_wrapper_prefix), with the 'git' token itself
+    removed. Raises no exception: a SegmentError from the scanner means
+    "cannot fully parse this command" and is treated the same as "no git
+    segments found" (fail open) by the caller.
+    """
+    try:
+        segments = command_segments(command)
+    except SegmentError:
+        return []
+    return [segment[1:] for segment in segments if segment and segment[0] == "git"]
 
 
 def _hook_bypass_reason(git_tokens: list[str]) -> str | None:
