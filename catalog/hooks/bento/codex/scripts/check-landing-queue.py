@@ -10,6 +10,11 @@ sessions, deferred-only or empty queues, re-entrant Stop invocations
 (``bento-check-landing-queue-hold-<session_id>`` under ``$XDG_RUNTIME_DIR`` or
 /tmp, consumed on use) all exit 0. The working directory comes from the ``cwd``
 field of the stdin JSON payload, never ``$PWD``. Fails open on any error.
+
+Also no-ops unconditionally when ``CROSS_CHECK_ACTIVE=1`` is set (see
+``cross_check_active()`` below): a Stop block written to the cross-check
+skill's read-only counterpart reviewer would otherwise be captured as its
+final message instead of the real review (bento-0tyd.11).
 """
 
 import json
@@ -19,6 +24,18 @@ import sys
 from pathlib import Path
 
 AGENT_COMMS = ("claude", "codex")
+
+# Mirrors catalog/skills/cross-check/scripts/cross_check_common.RECURSION_ENV
+# and its recursion_active() truthy semantics exactly. Kept as a small local
+# mirror rather than importing cross_check_common: a Stop hook must stay safe
+# to run even when the cross-check skill isn't installed alongside these
+# hooks, and the check is only ever this one line.
+CROSS_CHECK_ACTIVE_ENV = "CROSS_CHECK_ACTIVE"
+
+
+def cross_check_active(env: dict | None = None) -> bool:
+    env = os.environ if env is None else env
+    return env.get(CROSS_CHECK_ACTIVE_ENV, "").strip().lower() not in ("", "0", "false", "no")
 
 
 # swarm-landing-queue.py mirrors agent_ancestor(); keep the two in sync.
@@ -78,6 +95,8 @@ def pending_entries(cwd: str) -> list[dict]:
 
 def evaluate(hook_input: dict) -> str | None:
     if hook_input.get("stop_hook_active"):
+        return None
+    if cross_check_active():
         return None
     cwd = hook_input.get("cwd") or ""
     if not cwd or not os.path.isdir(cwd):

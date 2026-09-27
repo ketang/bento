@@ -102,6 +102,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
         include_cwd: bool = True,
         session_id: str | None = None,
         runtime_base: Path | str | None = None,
+        extra_env: dict | None = None,
     ) -> subprocess.CompletedProcess[str]:
         if cwd is None:
             cwd = self.hook_cwd
@@ -135,6 +136,8 @@ class CheckUnpushedHookTest(unittest.TestCase):
             config_home = self.root / "config-home"
             config_home.mkdir(parents=True, exist_ok=True)
             env["XDG_CONFIG_HOME"] = str(config_home)
+            if extra_env:
+                env.update(extra_env)
             results.append(
                 subprocess.run(
                     [str(script)],
@@ -229,6 +232,59 @@ class CheckUnpushedHookTest(unittest.TestCase):
             self.assertTrue(marker.exists(), script)
 
     def test_blocks_untracked_file(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "stray.txt").write_text("stray\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+
+    def test_cross_check_active_exempts_dirty_tree(self) -> None:
+        # bento-0tyd.11: the cross-check skill spawns the counterpart runtime
+        # as a read-only reviewer with CROSS_CHECK_ACTIVE=1 exported. Without
+        # this exemption, a dirty reviewed worktree makes this Stop hook
+        # block the reviewer's own Stop, and the reviewer's answer to that
+        # block gets captured as if it were the review.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "stray.txt").write_text("stray\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo, extra_env={"CROSS_CHECK_ACTIVE": "1"})
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_cross_check_active_exempts_unpushed_commits(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("v2\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "second")
+
+        result = self._run(payload_cwd=repo, extra_env={"CROSS_CHECK_ACTIVE": "1"})
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertEqual(result.stderr, "")
+
+    def test_cross_check_active_falsey_values_still_block(self) -> None:
+        # Mirrors cross_check_common.recursion_active()'s truthy semantics:
+        # an explicit "0"/"false"/"no" must not wedge the exemption on.
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "stray.txt").write_text("stray\n", encoding="utf-8")
+
+        for falsey in ("0", "false", "False", "no", ""):
+            with self.subTest(falsey=falsey):
+                result = self._run(
+                    payload_cwd=repo, extra_env={"CROSS_CHECK_ACTIVE": falsey}
+                )
+                self.assertEqual(result.returncode, 2, msg=result.stderr)
+                self.assertIn("uncommitted changes", result.stderr)
+
+    def test_ordinary_session_without_marker_still_blocks(self) -> None:
+        # Control: absent the marker entirely, the ordinary blocking behavior
+        # is unaffected by this exemption.
         repo = self._init_repo()
         self._add_remote(repo)
         (repo / "stray.txt").write_text("stray\n", encoding="utf-8")
