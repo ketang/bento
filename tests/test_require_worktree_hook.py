@@ -57,6 +57,7 @@ class RequireWorktreeHookTest(unittest.TestCase):
         *,
         payload_cwd: Path | None = None,
         file_path: str | None = None,
+        notebook_path: str | None = None,
         tool_name: str = "Write",
     ) -> subprocess.CompletedProcess[str]:
         """Run the hook with a neutral non-git process CWD by default.
@@ -72,6 +73,8 @@ class RequireWorktreeHookTest(unittest.TestCase):
         even when the hook process itself starts from $HOME.
         file_path: if given, embed it as ``tool_input.file_path`` so the hook
         can evaluate the target path's repo rather than only the session cwd.
+        notebook_path: if given, embed it as ``tool_input.notebook_path``
+        (NotebookEdit's target field) instead of ``file_path``.
         """
         if cwd is None:
             cwd = self.hook_cwd
@@ -82,6 +85,9 @@ class RequireWorktreeHookTest(unittest.TestCase):
         if file_path is not None:
             payload["tool_name"] = tool_name
             payload["tool_input"] = {"file_path": file_path}
+        if notebook_path is not None:
+            payload["tool_name"] = tool_name
+            payload["tool_input"] = {"notebook_path": notebook_path}
         stdin = _json.dumps(payload) + "\n"
         return subprocess.run(
             [str(HOOK_SCRIPT)],
@@ -266,6 +272,60 @@ class RequireWorktreeHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
+    # --- Tests for NotebookEdit target resolution (bento-0wb) ---
+    # NotebookEdit carries its target in tool_input.notebook_path, not
+    # file_path. The hook must resolve the governing repo from that field too,
+    # not just fall back to the session cwd.
+
+    def test_allows_notebook_edit_outside_repo_on_main(self) -> None:
+        repo = self._init_repo()
+        outside = self.root / "scratch.ipynb"
+
+        result = self._run(
+            payload_cwd=repo, notebook_path=str(outside), tool_name="NotebookEdit"
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_blocks_notebook_edit_in_repo_path_on_main(self) -> None:
+        repo = self._init_repo()
+        target = repo / "notebooks" / "analysis.ipynb"
+
+        result = self._run(
+            payload_cwd=repo, notebook_path=str(target), tool_name="NotebookEdit"
+        )
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
+    def test_notebook_edit_in_other_repo_on_feature_is_allowed(self) -> None:
+        session = self._init_repo(branch="main", name="session")
+        other = self._init_repo(branch="feature-y", name="other")
+        target = other / "nb.ipynb"
+
+        result = self._run(
+            payload_cwd=session, notebook_path=str(target), tool_name="NotebookEdit"
+        )
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_embedded_newline_in_target_path_does_not_bypass_block(self) -> None:
+        # bento-0wb regression: the python->bash handoff for target_path and
+        # check_dir used to be two raw newline-delimited lines. A target path
+        # containing a literal embedded newline (legal in POSIX filenames)
+        # desynced that positional read, corrupting check_dir and silently
+        # falling through the exit-0 fallback below — bypassing the block for
+        # a target that plainly sits inside a main-branch repo. Base64-encode
+        # each field so an embedded newline in the target cannot smuggle an
+        # extra physical line into the handoff.
+        repo = self._init_repo()
+        target = repo / "notes\ninjected.py"
+
+        result = self._run(payload_cwd=repo, file_path=str(target))
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
     # --- Tests for markdown exemption (bento-6cc) ---
     # Plan files, specs, and notes (.md / .markdown) are low-risk and should be
     # writable on main without a feature branch. Other file types stay blocked.
@@ -428,6 +488,10 @@ class RequireWorktreeHookAuditTest(unittest.TestCase):
         self.assertEqual(record["branch"], "main")
         self.assertIn("repo_root", record)
         self.assertIn("tool_input", record)
+        # The rejection log must record the resolved *target* path, not just
+        # the session cwd (bento-0wb), so a review of the log can tell which
+        # file was blocked without cross-referencing tool_input by hand.
+        self.assertEqual(record["target_path"], str(repo / "catalog" / "foo.py"))
 
     def test_audit_log_strips_large_fields(self) -> None:
         repo = self._init_repo()

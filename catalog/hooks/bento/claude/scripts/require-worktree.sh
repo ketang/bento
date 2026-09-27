@@ -27,14 +27,22 @@ fi
 payload_raw="$(cat 2>/dev/null || true)"
 
 # Determine which directory's repo/branch governs this edit. Prefer the
-# directory that contains the *target* file (tool_input.file_path) so writes
-# to paths outside any protected repo (e.g. /tmp, another repo on a feature
-# branch) are not blocked just because the session cwd sits on main. Relative
-# target paths resolve against the payload cwd. When no target path is present
+# directory that contains the *target* file (tool_input.file_path for
+# Write/Edit, tool_input.notebook_path for NotebookEdit) so writes to paths
+# outside any protected repo (e.g. /tmp, another repo on a feature branch) are
+# not blocked just because the session cwd sits on main. Relative target
+# paths resolve against the payload cwd. When no target path is present
 # (non-file tools, malformed payload), fall back to the payload cwd so the
 # protective default is preserved.
-check_dir="$(echo "$payload_raw" | python3 -c "
-import json, os, sys
+#
+# Prints two base64-encoded lines: the resolved absolute target path (may be
+# empty), then the directory to run the git checks against. Base64 avoids
+# desyncing the positional line read below when a target path itself contains
+# an embedded newline (legal in POSIX filenames) — a raw newline-delimited
+# protocol would let such a path corrupt check_dir parsing and silently fall
+# through to the permissive fallback at the bottom of this block.
+resolved="$(echo "$payload_raw" | python3 -c "
+import base64, json, os, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -44,7 +52,7 @@ cwd = d.get('cwd') or ''
 target = ''
 ti = d.get('tool_input')
 if isinstance(ti, dict):
-    target = ti.get('file_path') or ''
+    target = ti.get('file_path') or ti.get('notebook_path') or ''
 
 
 def nearest_existing_dir(path):
@@ -68,9 +76,12 @@ if target:
 else:
     out = cwd
 
-if out:
-    print(out)
+print(base64.b64encode(target.encode()).decode())
+print(base64.b64encode((out or '').encode()).decode())
 " 2>/dev/null || true)"
+
+target_path="$(echo "$resolved" | sed -n '1p' | base64 -d 2>/dev/null || true)"
+check_dir="$(echo "$resolved" | sed -n '2p' | base64 -d 2>/dev/null || true)"
 
 # hook-cwd-exempt: last-resort default when the python block above produced no
 # directory (the payload cwd / target path are the primary sources).
@@ -131,6 +142,7 @@ MESSAGE
 BENTO_PAYLOAD="$payload_raw" \
 BENTO_REPO_ROOT="$repo_root" \
 BENTO_BRANCH="$branch" \
+BENTO_TARGET_PATH="$target_path" \
 python3 -c "
 import datetime, json, os
 from pathlib import Path
@@ -146,6 +158,7 @@ try:
         'session_id': d.get('session_id'),
         'tool_name': d.get('tool_name'),
         'cwd': d.get('cwd'),
+        'target_path': os.environ.get('BENTO_TARGET_PATH', '') or None,
         'repo_root': os.environ.get('BENTO_REPO_ROOT', ''),
         'branch': os.environ.get('BENTO_BRANCH', ''),
         'tool_input': tool_input,
