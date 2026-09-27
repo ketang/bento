@@ -27,13 +27,17 @@ fi
 payload_raw="$(cat 2>/dev/null || true)"
 
 # Determine which directory's repo/branch governs this edit. Prefer the
-# directory that contains the *target* file (tool_input.file_path) so writes
-# to paths outside any protected repo (e.g. /tmp, another repo on a feature
-# branch) are not blocked just because the session cwd sits on main. Relative
-# target paths resolve against the payload cwd. When no target path is present
+# directory that contains the *target* file (tool_input.file_path for
+# Write/Edit, tool_input.notebook_path for NotebookEdit) so writes to paths
+# outside any protected repo (e.g. /tmp, another repo on a feature branch) are
+# not blocked just because the session cwd sits on main. Relative target
+# paths resolve against the payload cwd. When no target path is present
 # (non-file tools, malformed payload), fall back to the payload cwd so the
 # protective default is preserved.
-check_dir="$(echo "$payload_raw" | python3 -c "
+#
+# Prints two lines: the resolved absolute target path (empty if none), then
+# the directory to run the git checks against. Bash reads them positionally.
+resolved="$(echo "$payload_raw" | python3 -c "
 import json, os, sys
 try:
     d = json.load(sys.stdin)
@@ -44,7 +48,7 @@ cwd = d.get('cwd') or ''
 target = ''
 ti = d.get('tool_input')
 if isinstance(ti, dict):
-    target = ti.get('file_path') or ''
+    target = ti.get('file_path') or ti.get('notebook_path') or ''
 
 
 def nearest_existing_dir(path):
@@ -68,9 +72,13 @@ if target:
 else:
     out = cwd
 
+print(target)
 if out:
     print(out)
 " 2>/dev/null || true)"
+
+target_path="$(echo "$resolved" | sed -n '1p')"
+check_dir="$(echo "$resolved" | sed -n '2p')"
 
 # hook-cwd-exempt: last-resort default when the python block above produced no
 # directory (the payload cwd / target path are the primary sources).
@@ -131,6 +139,7 @@ MESSAGE
 BENTO_PAYLOAD="$payload_raw" \
 BENTO_REPO_ROOT="$repo_root" \
 BENTO_BRANCH="$branch" \
+BENTO_TARGET_PATH="$target_path" \
 python3 -c "
 import datetime, json, os
 from pathlib import Path
@@ -146,6 +155,7 @@ try:
         'session_id': d.get('session_id'),
         'tool_name': d.get('tool_name'),
         'cwd': d.get('cwd'),
+        'target_path': os.environ.get('BENTO_TARGET_PATH', '') or None,
         'repo_root': os.environ.get('BENTO_REPO_ROOT', ''),
         'branch': os.environ.get('BENTO_BRANCH', ''),
         'tool_input': tool_input,
