@@ -35,10 +35,14 @@ payload_raw="$(cat 2>/dev/null || true)"
 # (non-file tools, malformed payload), fall back to the payload cwd so the
 # protective default is preserved.
 #
-# Prints two lines: the resolved absolute target path (empty if none), then
-# the directory to run the git checks against. Bash reads them positionally.
+# Prints two base64-encoded lines: the resolved absolute target path (may be
+# empty), then the directory to run the git checks against. Base64 avoids
+# desyncing the positional line read below when a target path itself contains
+# an embedded newline (legal in POSIX filenames) — a raw newline-delimited
+# protocol would let such a path corrupt check_dir parsing and silently fall
+# through to the permissive fallback at the bottom of this block.
 resolved="$(echo "$payload_raw" | python3 -c "
-import json, os, sys
+import base64, json, os, sys
 try:
     d = json.load(sys.stdin)
 except Exception:
@@ -72,13 +76,12 @@ if target:
 else:
     out = cwd
 
-print(target)
-if out:
-    print(out)
+print(base64.b64encode(target.encode()).decode())
+print(base64.b64encode((out or '').encode()).decode())
 " 2>/dev/null || true)"
 
-target_path="$(echo "$resolved" | sed -n '1p')"
-check_dir="$(echo "$resolved" | sed -n '2p')"
+target_path="$(echo "$resolved" | sed -n '1p' | base64 -d 2>/dev/null || true)"
+check_dir="$(echo "$resolved" | sed -n '2p' | base64 -d 2>/dev/null || true)"
 
 # hook-cwd-exempt: last-resort default when the python block above produced no
 # directory (the payload cwd / target path are the primary sources).

@@ -309,6 +309,23 @@ class RequireWorktreeHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
 
+    def test_embedded_newline_in_target_path_does_not_bypass_block(self) -> None:
+        # bento-0wb regression: the python->bash handoff for target_path and
+        # check_dir used to be two raw newline-delimited lines. A target path
+        # containing a literal embedded newline (legal in POSIX filenames)
+        # desynced that positional read, corrupting check_dir and silently
+        # falling through the exit-0 fallback below — bypassing the block for
+        # a target that plainly sits inside a main-branch repo. Base64-encode
+        # each field so an embedded newline in the target cannot smuggle an
+        # extra physical line into the handoff.
+        repo = self._init_repo()
+        target = repo / "notes\ninjected.py"
+
+        result = self._run(payload_cwd=repo, file_path=str(target))
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertEqual(result.stderr, BLOCKED_MESSAGE)
+
     # --- Tests for markdown exemption (bento-6cc) ---
     # Plan files, specs, and notes (.md / .markdown) are low-risk and should be
     # writable on main without a feature branch. Other file types stay blocked.
