@@ -510,5 +510,17 @@
         "$'a\\'b; git merge x'"
       ]
     ]
+  },
+  {
+    "command": "[[ $x == @(git merge foo) ]]",
+    "expected": [
+      [
+        "[[",
+        "$x",
+        "==",
+        "@(git merge foo)",
+        "]]"
+      ]
+    ]
   }
 ]

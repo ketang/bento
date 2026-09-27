@@ -78,6 +78,29 @@ class ShellSegmentsAdditionalCasesTest(unittest.TestCase):
         with self.assertRaises(SegmentError):
             command_segments(command)
 
+    def test_deep_plain_grouping_nesting_raises_segment_error(self) -> None:
+        # Code review: plain grouping '(...)' must count toward the same
+        # depth cap as $(...)/${...}, not recurse unboundedly and blow the
+        # Python call stack with a raw RecursionError.
+        command = "echo " + "(" * 2000 + "git merge x" + ")" * 2000
+        with self.assertRaises(SegmentError):
+            command_segments(command)
+
+    def test_paren_pattern_inside_double_bracket_test_is_not_a_subshell(self) -> None:
+        # Code review: '(...)' inside [[ ... ]] is extended-pattern/grouping
+        # syntax (an alternation pattern, e.g. after ==/!=), never a
+        # subshell -- nothing inside a [[ ]] test ever runs as a command.
+        # A prior version fabricated a ['git', 'merge'] segment here.
+        segments = command_segments("[[ $x == (git merge) ]]")
+        self.assertEqual(segments, [["[[", "$x", "==", "(git merge)", "]]"]])
+        self.assertNotIn(["git", "merge"], segments)
+
+    def test_extglob_pattern_inside_double_bracket_test_is_not_a_subshell(self) -> None:
+        segments = command_segments("[[ $x == @(git merge foo) ]]")
+        self.assertEqual(
+            segments, [["[[", "$x", "==", "@(git merge foo)", "]]"]],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

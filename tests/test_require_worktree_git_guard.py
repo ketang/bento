@@ -330,6 +330,16 @@ class RequireWorktreeGitGuardTest(unittest.TestCase):
         result = self.run_hook("env GIT_X=1 git merge foo", repo)
         self.assertEqual(result.returncode, 2)
 
+    def test_paren_pattern_inside_double_bracket_test_is_not_blocked(self) -> None:
+        # Code review regression: '(...)' inside [[ ... ]] is extended-
+        # pattern/grouping syntax, not a subshell -- it must not be
+        # misread as a fabricated 'git merge'.
+        repo = self._init_primary_repo()
+        result = self.run_hook("[[ $x == (git merge) ]]", repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_hook("[[ $x == @(git merge foo) ]]", repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
 
 if __name__ == "__main__":
     unittest.main()

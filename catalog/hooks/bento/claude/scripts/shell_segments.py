@@ -264,6 +264,7 @@ def _segment(command: str, depth: int) -> tuple[list[list[str]], list[list[str]]
     words: list[str] = []
     cur: list[str] | None = None
     pending_heredocs: list[tuple[str, bool]] = []  # (delimiter, strip_tabs)
+    bracket_depth = 0  # count of open, unmatched '[[' words (a [[ ... ]] test)
 
     def start_word() -> None:
         nonlocal cur
@@ -276,10 +277,20 @@ def _segment(command: str, depth: int) -> tuple[list[list[str]], list[list[str]]
         cur.append(text)
 
     def end_word() -> None:
-        nonlocal cur
+        nonlocal cur, bracket_depth
         if cur is not None:
-            words.append("".join(cur))
+            word = "".join(cur)
+            words.append(word)
             cur = None
+            # Inside [[ ... ]], '(' is extended-pattern/grouping syntax, not
+            # a subshell -- nothing in it ever runs. Track nesting by whole
+            # word so a bare "[[" or "]]" elsewhere in a word (e.g. inside a
+            # quoted string, already opaque by the time we get here) never
+            # trips this.
+            if word == "[[":
+                bracket_depth += 1
+            elif word == "]]" and bracket_depth > 0:
+                bracket_depth -= 1
 
     def end_segment() -> None:
         nonlocal words
@@ -528,12 +539,22 @@ def _segment(command: str, depth: int) -> tuple[list[list[str]], list[list[str]]
             i += len(matched_op)
             continue
 
-        # 13. leftover ( or ): grouping operator.
+        # 13. leftover ( or ): grouping operator -- except inside [[ ... ]],
+        # where '(' is extended-pattern/grouping syntax (e.g. `(git merge)`
+        # as an alternation pattern after ==/!=), never a subshell: nothing
+        # inside a [[ ]] test ever executes as a command.
+        if c == "(" and bracket_depth > 0:
+            close = matcher._match_parens(i + 1, start_depth=1)
+            append_lit(s[i:close])
+            i = close
+            continue
         if c == "(":
             end_segment()
             close = matcher._match_parens(i + 1, start_depth=1)
             inner = s[i + 1 : close - 1]
-            sub_segs, sub_extra = _segment(inner, depth)
+            if depth + 1 > MAX_DEPTH:
+                raise SegmentError("substitution nesting too deep")
+            sub_segs, sub_extra = _segment(inner, depth + 1)
             segments.extend(sub_segs)
             extra.extend(sub_extra)
             i = close
