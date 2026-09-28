@@ -16,6 +16,12 @@ HOOK_SCRIPT = (
     / "scripts"
     / "require-worktree-git-guard.py"
 )
+CORPUS_FIXTURE = REPO_ROOT / "tests" / "fixtures" / "shell_segments_corpus.json"
+
+
+def _corpus_command(row_number: int) -> str:
+    rows = json.loads(CORPUS_FIXTURE.read_text(encoding="utf-8"))
+    return rows[row_number - 1]["command"]
 
 
 class RequireWorktreeGitGuardTest(unittest.TestCase):
@@ -257,6 +263,82 @@ class RequireWorktreeGitGuardTest(unittest.TestCase):
         self._git(repo, "branch", "merge-tool")
         result = self.run_hook("git checkout merge-tool", repo)
         self.assertEqual(result.returncode, 0)
+
+    # -- bento-l01v: shared shell segmenter corpus, guard exit codes ---------
+
+    def test_corpus_rows_that_invent_no_merge_are_allowed(self) -> None:
+        # Quoted strings, heredoc bodies, a comment's dangling quote, and a
+        # here-string that merely *mention* git text must not be blocked.
+        repo = self._init_primary_repo()
+        for row in (1, 2, 5, 6, 13, 15, 16):
+            with self.subTest(row=row):
+                result = self.run_hook(_corpus_command(row), repo)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_corpus_rows_with_a_real_merge_are_blocked(self) -> None:
+        repo = self._init_primary_repo()
+        for row in (3, 9, 10, 14, 17, 18, 19, 20, 21, 22, 23, 24, 27, 29, 31, 32, 33):
+            with self.subTest(row=row):
+                result = self.run_hook(_corpus_command(row), repo)
+                self.assertEqual(result.returncode, 2, f"row {row}: {result.stderr}")
+
+    def test_corpus_rows_where_the_merge_is_hidden_are_allowed(self) -> None:
+        # Opaque ${...}, a substitution whose body never actually runs git,
+        # a `{git` literal command name, and an array literal.
+        repo = self._init_primary_repo()
+        for row in (26, 28, 30, 36, 37):
+            with self.subTest(row=row):
+                result = self.run_hook(_corpus_command(row), repo)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_corpus_rows_with_grouped_or_case_merges_are_blocked(self) -> None:
+        repo = self._init_primary_repo()
+        for row in (34, 35, 38, 39):
+            with self.subTest(row=row):
+                result = self.run_hook(_corpus_command(row), repo)
+                self.assertEqual(result.returncode, 2, f"row {row}: {result.stderr}")
+
+    def test_process_substitution_body_is_a_true_positive(self) -> None:
+        repo = self._init_primary_repo()
+        result = self.run_hook("cat <(git merge x)", repo)
+        self.assertEqual(result.returncode, 2)
+
+    def test_unterminated_heredoc_is_allowed(self) -> None:
+        repo = self._init_primary_repo()
+        result = self.run_hook("cat <<EOF\ngit push --force", repo)
+        self.assertEqual(result.returncode, 0)
+
+    def test_corpus_rows_allowed_in_a_linked_worktree(self) -> None:
+        repo = self._init_primary_repo()
+        worktree = self._add_linked_worktree(repo)
+        for row in (3, 10):
+            with self.subTest(row=row):
+                result = self.run_hook(_corpus_command(row), worktree)
+                self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_heredoc_no_verify_in_linked_worktree_allowed(self) -> None:
+        repo = self._init_primary_repo()
+        worktree = self._add_linked_worktree(repo)
+        command = "cat > /tmp/x.md <<'EOF'\ngit commit --no-verify\nEOF"
+        result = self.run_hook(command, worktree)
+        self.assertEqual(result.returncode, 0, result.stderr)
+
+    def test_wrapped_git_is_guarded(self) -> None:
+        repo = self._init_primary_repo()
+        result = self.run_hook("command git merge foo", repo)
+        self.assertEqual(result.returncode, 2)
+        result = self.run_hook("env GIT_X=1 git merge foo", repo)
+        self.assertEqual(result.returncode, 2)
+
+    def test_paren_pattern_inside_double_bracket_test_is_not_blocked(self) -> None:
+        # Code review regression: '(...)' inside [[ ... ]] is extended-
+        # pattern/grouping syntax, not a subshell -- it must not be
+        # misread as a fabricated 'git merge'.
+        repo = self._init_primary_repo()
+        result = self.run_hook("[[ $x == (git merge) ]]", repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
+        result = self.run_hook("[[ $x == @(git merge foo) ]]", repo)
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 if __name__ == "__main__":
