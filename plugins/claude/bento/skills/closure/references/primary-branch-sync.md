@@ -18,7 +18,7 @@ Treat `<primary-branch>` as the branch detected in the core skill.
 3. Push only if the project explicitly expects local cleanup to publish the
    synchronized branch:
    ```bash
-   git push origin <primary-branch>
+   BENTO_LAND_WORK=1 git push origin <primary-branch>
    ```
 
 ## Safety
