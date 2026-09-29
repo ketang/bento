@@ -1,9 +1,11 @@
 import importlib.machinery
 import importlib.util
+import io
 import json
 import os
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 
@@ -61,9 +63,11 @@ class RegisterRequireWorktreeHookTest(unittest.TestCase):
         old_home = os.environ.get("HOME")
         os.environ["HOME"] = str(self.fake_home)
         try:
-            return self.module.main(
-                ["register-require-worktree-hook.py", str(self.plugin_root)]
-            )
+            # main() drains stdin (hook payload); never inherit the runner's.
+            with mock.patch("sys.stdin", io.StringIO("")):
+                return self.module.main(
+                    ["register-require-worktree-hook.py", str(self.plugin_root)]
+                )
         finally:
             if old_home is None:
                 os.environ.pop("HOME", None)

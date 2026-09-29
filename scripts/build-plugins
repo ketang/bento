@@ -726,7 +726,8 @@ def run_verify_commands() -> None:
     subprocess.run(CHECK_SKILL_REFS_CMD, cwd=ROOT_DIR, check=True)
     subprocess.run(CHECK_TEMPORAL_CLAIMS_CMD, cwd=ROOT_DIR, check=True)
     subprocess.run(CHECK_HOOK_CONTRACT_CMD, cwd=ROOT_DIR, check=True)
-    subprocess.run(TEST_CMD, cwd=ROOT_DIR, check=True)
+    # Never inherit stdin: a never-EOF stdin must not be able to hang the suite.
+    subprocess.run(TEST_CMD, cwd=ROOT_DIR, check=True, stdin=subprocess.DEVNULL)
     if os.environ.get("BENTO_SKIP_CLAUDE_VALIDATE") == "1":
         return
     subprocess.run(CLAUDE_VALIDATE_CMD, cwd=ROOT_DIR, check=True)
