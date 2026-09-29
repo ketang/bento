@@ -35,6 +35,6 @@ The artifact below is a diff (and scope description). Review it on these axes:
 
 Output concrete, located findings. For each: a **severity** (BLOCKER / MAJOR /
 MINOR), a one-line title, the file:line or symbol it concerns, and 1–2 sentences
-of why it matters. Then a short overall verdict: is this change safe to land, and
+of why it matters. Then a short overall line starting `Verdict:` — is this change safe to land, and
 the top 2–3 things to fix first. If the artifact was trimmed, say what you could
 not see and mark affected findings as based on partial context.

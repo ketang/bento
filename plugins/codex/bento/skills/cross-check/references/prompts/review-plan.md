@@ -22,5 +22,5 @@ Review the plan below on these axes:
 
 Output concrete findings. For each: a **severity** (BLOCKER / MAJOR / MINOR), a
 one-line title, the part of the plan it concerns, and 1–2 sentences of why. Then
-a short verdict: is this plan sound enough to implement, and the top 2–3 things
+a line starting `Verdict:` — is this plan sound enough to implement, and the top 2–3 things
 to fix first.

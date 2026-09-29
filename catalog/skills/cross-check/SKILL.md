@@ -65,8 +65,9 @@ is **review-only** — it never edits code or applies fixes.
    nothing); `4` **fallback required** — the cross run failed (nonzero exit,
    empty output, timeout, or a review that failed identity validation — the
    reviewer must echo back an unguessable per-run id and the artifact's SHA-256,
-   so stale or misrouted responses are rejected), so perform the same-runtime
-   fallback (step 4).
+   so stale or misrouted responses are rejected — or that lacks a verdict, e.g.
+   a hook reply), so perform the same-runtime fallback (step 4). Rejected
+   output is kept in the `.rejected/` dir named on stderr.
    Use `--dry-run` to preview the exact counterpart command without running it.
    If you had to trim a large artifact to fit, add `--truncated` so the review
    file is marked as based on partial context.

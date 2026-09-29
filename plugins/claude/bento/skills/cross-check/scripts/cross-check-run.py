@@ -133,6 +133,29 @@ def extract_claude_error_summary(stdout: str) -> str:
     return _cap_diagnostic_summary(summary)
 
 
+def _preserve_rejected(
+    *, slug: str, now: datetime, token: str, stdout: str, stderr: str,
+    last_file: str | None,
+) -> Path | None:
+    """Keep the counterpart's raw output for a rejected run and return the
+    directory (None if it could not be written)."""
+    try:
+        base = common.output_path(
+            slug=slug, now=now, tmp_root=common.tmp_root(), token=token
+        )
+        d = base.with_name(base.stem + ".rejected")
+        d.mkdir(parents=True, exist_ok=True)
+        (d / "stdout.txt").write_text(stdout or "", encoding="utf-8")
+        (d / "stderr.txt").write_text(stderr or "", encoding="utf-8")
+        if last_file and Path(last_file).is_file():
+            (d / "last-message.md").write_text(
+                Path(last_file).read_text(encoding="utf-8"), encoding="utf-8"
+            )
+        return d
+    except OSError:
+        return None
+
+
 def run_cross(
     *,
     current_runtime: str,
@@ -174,6 +197,8 @@ def run_cross(
         artifact_type=artifact_type,
         artifact_id=artifact_id,
         artifact_digest=artifact_digest,
+        scope=scope,
+        repo_root=str(repo_root) if repo_root else None,
     )
 
     counterpart = common.counterpart_of(current_runtime)
@@ -213,6 +238,16 @@ def run_cross(
                 f"cross-check: {counterpart} not executable; use the same-runtime fallback."
             )
 
+        def reject(message: str) -> tuple[int, str]:
+            kept = _preserve_rejected(
+                slug=slug, now=now, token=artifact_id[:8],
+                stdout=proc.stdout, stderr=proc.stderr, last_file=last_file,
+            )
+            where = f"{kept}" if kept else "<could not be preserved>"
+            return EXIT_FALLBACK_REQUIRED, (
+                f"{message}\n  rejected output preserved at: {where}"
+            )
+
         if proc.returncode != 0:
             message = (
                 f"cross-check: {counterpart} exited {proc.returncode}; use the "
@@ -225,13 +260,13 @@ def run_cross(
                 summary = extract_claude_error_summary(proc.stdout)
                 if summary:
                     message += f"\ncross-check: claude diagnostics (stdout): {summary}"
-            return EXIT_FALLBACK_REQUIRED, message
+            return reject(message)
 
         verdict = extract_verdict(
             current_runtime, stdout=proc.stdout, last_message_file=last_file
         )
         if not verdict.strip():
-            return EXIT_FALLBACK_REQUIRED, (
+            return reject(
                 f"cross-check: {counterpart} produced no review text; use the "
                 f"same-runtime fallback.\n"
                 f"  runtime={current_runtime} counterpart={counterpart} "
@@ -242,9 +277,18 @@ def run_cross(
             verdict, expected_id=artifact_id, expected_digest=artifact_digest
         )
         if not ok:
-            return EXIT_FALLBACK_REQUIRED, (
+            return reject(
                 f"cross-check: {counterpart} review failed identity validation "
                 f"({reason}); use the same-runtime fallback.\n"
+                f"  runtime={current_runtime} counterpart={counterpart} "
+                f"artifact_sha256={artifact_digest} output=<none written>"
+            )
+
+        ok, reason = common.validate_review(body, artifact_type)
+        if not ok:
+            return reject(
+                f"cross-check: {counterpart} reply failed {artifact_type} review "
+                f"validation ({reason}); use the same-runtime fallback.\n"
                 f"  runtime={current_runtime} counterpart={counterpart} "
                 f"artifact_sha256={artifact_digest} output=<none written>"
             )
