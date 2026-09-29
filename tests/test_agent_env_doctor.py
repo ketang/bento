@@ -3,6 +3,7 @@ import importlib.machinery
 import importlib.util
 import json
 import os
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -37,6 +38,9 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.root = Path(self.temp.name).resolve()
         self.repo = self.root / "repo"
         self.repo.mkdir()
+        # The doctor stays silent outside a git repo, so the default fixture
+        # repo must be one.
+        subprocess.run(["git", "init", "-q", str(self.repo)], check=True)
         self.home = self.root / "home"
         self.home.mkdir()
         # Plugin registry the doctor reads; default empty so no plugin is
@@ -822,7 +826,12 @@ class AgentEnvDoctorTest(unittest.TestCase):
 
     # --- check 5: bare primary checkout with a working tree -----------------
 
+    def _remove_git_dir(self) -> None:
+        # These tests hand-build .git; drop the fixture's real one first.
+        shutil.rmtree(self.repo / ".git")
+
     def test_bare_primary_with_working_tree_detected(self) -> None:
+        self._remove_git_dir()
         git_dir = self.repo / ".git"
         git_dir.mkdir()
         (git_dir / "config").write_text(
@@ -834,6 +843,7 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIn(".git/config", context)
 
     def test_bare_config_without_working_tree_files_is_silent(self) -> None:
+        self._remove_git_dir()
         # A real bare repo has no working-tree files alongside .git — no bug.
         git_dir = self.repo / ".git"
         git_dir.mkdir()
@@ -843,6 +853,7 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIsNone(self._evaluate())
 
     def test_non_bare_git_config_is_silent(self) -> None:
+        self._remove_git_dir()
         git_dir = self.repo / ".git"
         git_dir.mkdir()
         (git_dir / "config").write_text(
@@ -852,6 +863,7 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIsNone(self._evaluate())
 
     def test_bare_true_outside_core_section_not_flagged(self) -> None:
+        self._remove_git_dir()
         # A same-named `bare = true` key in an unrelated section (e.g. a
         # submodule's) must not be mistaken for core.bare.
         git_dir = self.repo / ".git"
@@ -864,6 +876,7 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIsNone(self._evaluate())
 
     def test_linked_worktree_gitdir_file_not_flagged_as_bare(self) -> None:
+        self._remove_git_dir()
         # A linked worktree's .git is a file (gitdir pointer), not a
         # directory; the bare-primary check must not misfire on it.
         (self.repo / ".git").write_text(
@@ -897,9 +910,25 @@ class AgentEnvDoctorTest(unittest.TestCase):
         self.assertIsNone(self._evaluate())
 
     def test_non_git_repo_prune_check_is_silent(self) -> None:
-        # self.repo has no .git at all in most tests; the prune check must
-        # not misfire on git's "not a git repository" error output.
-        self.assertIsNone(self._evaluate())
+        # The prune check must not misfire on git's "not a git repository"
+        # error output.
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        self.assertIsNone(self._evaluate(cwd=str(scratch)))
+
+    def test_non_git_cwd_is_silent_and_writes_nothing(self) -> None:
+        # bento-rw9l: a scratch dir is not a repo root, so the dormant-plugin
+        # and superpowers-pointer checks must not fire or write
+        # .agent-mode.local there.
+        scratch = self.root / "scratch"
+        scratch.mkdir()
+        self._write_installed({
+            "storystore@bento": [{}],
+            "bugshot@bento": [{}],
+            "superpowers@claude-plugins-official": [{}],
+        })
+        self.assertIsNone(self._evaluate(cwd=str(scratch)))
+        self.assertFalse((scratch / ".agent-mode.local").exists())
 
     # --- check 7: stale previews and orphan worktree directories -----------
 
