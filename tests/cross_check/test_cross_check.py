@@ -907,6 +907,34 @@ class RunCrossIntegrationTest(unittest.TestCase):
         (d,) = self._rejected_dirs()
         self.assertIn("OUT", (d / "stdout.txt").read_text())
 
+    def test_timeout_preserves_partial_output(self) -> None:
+        self._install_stub("codex", (
+            "import sys, time\nsys.stdout.write('PARTIAL OUT')\nsys.stdout.flush()\n"
+            "sys.stderr.write('PARTIAL ERR')\nsys.stderr.flush()\ntime.sleep(30)\n"
+        ))
+        env = _clean_env(
+            PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
+            CROSS_CHECK_TMP_ROOT=str(self.out), XDG_CONFIG_HOME=str(self.xdg),
+            TMPDIR=str(self.systmp),
+        )
+        proc = subprocess.run(
+            [str(RUN), "--current-runtime", "claude", "--artifact-type", "plan",
+             "--slug", "demo", "--timeout", "2"],
+            input="PLAN", capture_output=True, text=True, check=False,
+            cwd=str(self.cwd), env=env,
+        )
+        self.assertEqual(proc.returncode, 4, msg=proc.stderr)
+        (d,) = self._rejected_dirs()
+        self.assertIn(str(d), proc.stderr)
+        self.assertIn("PARTIAL OUT", (d / "stdout.txt").read_text())
+        self.assertIn("PARTIAL ERR", (d / "stderr.txt").read_text())
+
+    def test_rejected_dir_is_private(self) -> None:
+        self._install_stub("codex", "import sys\nsys.exit(1)\n")
+        self._run("claude")
+        (d,) = self._rejected_dirs()
+        self.assertEqual(d.stat().st_mode & 0o777, 0o700)
+
     def test_success_leaves_no_rejected_dir(self) -> None:
         self._install_stub("codex", self._codex_stub("Verdict: ok"))
         proc = self._run("claude")
@@ -974,13 +1002,36 @@ class ValidateReviewTest(unittest.TestCase):
             self.assertTrue(ok, msg=f"{t}: {reason}")
 
     def test_code_accepts_safe_to_land_without_verdict_word(self) -> None:
-        ok, _ = common.validate_review("No serious findings. Safe to land.", "code")
+        ok, _ = common.validate_review("No serious findings.\nSafe to land.", "code")
         self.assertTrue(ok)
 
     def test_issue_and_plan_require_verdict_line(self) -> None:
         for t in ("issue", "plan"):
-            ok, _ = common.validate_review("No serious findings. Safe to land.", t)
+            ok, _ = common.validate_review("No serious findings.\nSafe to land.", t)
             self.assertFalse(ok, msg=t)
+
+    def test_hook_text_mentioning_verdict_or_merge_rejected(self) -> None:
+        for t in common.ARTIFACT_TYPES:
+            for text in (
+                "The stop hook verdict: continue.",
+                "The hook says this branch is ready to merge.",
+                "The hook reports the plan is sound enough to implement.",
+            ):
+                ok, _ = common.validate_review(text, t)
+                self.assertFalse(ok, msg=f"{t}: {text}")
+
+    def test_anchored_conclusion_lines_accepted(self) -> None:
+        cases = [
+            ("code", "No serious findings.\nSafe to land."),
+            ("code", "Overall: not safe to land until the parser is fixed."),
+            ("plan", "This plan is sound enough to implement."),
+            ("plan", "**Conclusion:** needs changes before implementation."),
+            ("issue", "This issue is ready to file as-is."),
+            ("issue", "Not ready to file: add a repro."),
+        ]
+        for t, text in cases:
+            ok, reason = common.validate_review(text, t)
+            self.assertTrue(ok, msg=f"{t}: {text}: {reason}")
 
     def test_no_serious_findings_alone_rejected_for_code(self) -> None:
         ok, _ = common.validate_review("No serious findings.", "code")
