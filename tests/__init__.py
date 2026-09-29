@@ -15,7 +15,7 @@ _orig_popen_init = subprocess.Popen.__init__
 
 
 def _popen_init(self, *args, **kwargs):
-    if kwargs.get("stdin") is None and len(args) < 3:
+    if kwargs.get("stdin") is None and len(args) < 4:
         kwargs["stdin"] = subprocess.DEVNULL
     _orig_popen_init(self, *args, **kwargs)
 
