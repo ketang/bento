@@ -1305,7 +1305,21 @@ def evaluate(
     cwd = hook_input.get("cwd") or ""
     if not cwd or not os.path.isdir(cwd):
         return None
-    root = Path(repo_root(cwd) or cwd)
+    # A non-git cwd (e.g. a scratch dir) is not a repo root: stay silent and
+    # write nothing rather than emit false dormancy warnings or create
+    # .agent-mode.local there.
+    toplevel = repo_root(cwd)
+    if toplevel is not None:
+        root = Path(toplevel)
+    else:
+        # `rev-parse --show-toplevel` itself fails once core.bare is flipped
+        # true on a checkout that still has a working tree -- the very
+        # condition check_bare_primary exists to catch -- so fall back to cwd
+        # for that condition only, not for every rev-parse failure.
+        config_text = _read_text_bounded(Path(cwd) / ".git" / "config")
+        if config_text is None or not _core_bare_true(config_text):
+            return None
+        root = Path(cwd)
 
     if _suppressed(root):
         return None
