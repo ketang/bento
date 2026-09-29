@@ -870,6 +870,69 @@ class RunCrossIntegrationTest(unittest.TestCase):
         )
         self.assertEqual(proc.returncode, 0, msg=proc.stdout + proc.stderr)
 
+    def _rejected_dirs(self) -> list:
+        return list(self.out.glob("cross-check-demo-*.rejected"))
+
+    def test_hook_reply_with_valid_identity_rejected_and_preserved(self) -> None:
+        self._install_stub("codex", self._codex_stub(
+            "The stop hook is reporting existing branch changes.",
+        ))
+        proc = self._run("claude")
+        self.assertEqual(proc.returncode, 4, msg=proc.stdout + proc.stderr)
+        self.assertEqual(list(self.out.glob("cross-check-demo-*.md")), [])
+        dirs = self._rejected_dirs()
+        self.assertEqual(len(dirs), 1)
+        self.assertIn(str(dirs[0]), proc.stderr)
+        self.assertIn("stop hook", (dirs[0] / "last-message.md").read_text())
+
+    def test_identity_failure_preserves_output(self) -> None:
+        self._install_stub("codex", (
+            "import sys\nprint('REVIEWER STDOUT')\n"
+            "sys.stderr.write('REVIEWER STDERR')\n"
+            "open(sys.argv[sys.argv.index('-o') + 1], 'w').write('FULL REVIEW no id')\n"
+        ))
+        proc = self._run("claude")
+        self.assertEqual(proc.returncode, 4)
+        (d,) = self._rejected_dirs()
+        self.assertIn(str(d), proc.stderr)
+        self.assertIn("REVIEWER STDOUT", (d / "stdout.txt").read_text())
+        self.assertIn("REVIEWER STDERR", (d / "stderr.txt").read_text())
+        self.assertIn("FULL REVIEW", (d / "last-message.md").read_text())
+        self.assertEqual(list(self.systmp.glob("cross-check-last-*")), [])
+
+    def test_nonzero_exit_preserves_output(self) -> None:
+        self._install_stub("codex", "import sys\nprint('OUT')\nsys.exit(1)\n")
+        proc = self._run("claude")
+        self.assertEqual(proc.returncode, 4)
+        (d,) = self._rejected_dirs()
+        self.assertIn("OUT", (d / "stdout.txt").read_text())
+
+    def test_success_leaves_no_rejected_dir(self) -> None:
+        self._install_stub("codex", self._codex_stub("Verdict: ok"))
+        proc = self._run("claude")
+        self.assertEqual(proc.returncode, 0, msg=proc.stderr)
+        self.assertEqual(self._rejected_dirs(), [])
+
+    def test_scope_reaches_counterpart_prompt(self) -> None:
+        self._install_stub("codex", (
+            "import sys\nprompt = sys.stdin.read()\n"
+            "assert 'SCOPE-MARKER-XYZ' in prompt, 'scope missing from prompt'\n"
+            "sys.exit(9 if 'SCOPE-MARKER-XYZ' not in prompt else 1)\n"
+        ))
+        env = _clean_env(
+            PATH=str(self.bin) + os.pathsep + os.environ.get("PATH", ""),
+            CROSS_CHECK_TMP_ROOT=str(self.out), XDG_CONFIG_HOME=str(self.xdg),
+            TMPDIR=str(self.systmp),
+        )
+        proc = subprocess.run(
+            [str(RUN), "--current-runtime", "claude", "--artifact-type", "plan",
+             "--slug", "demo", "--scope", "SCOPE-MARKER-XYZ"],
+            input="PLAN", capture_output=True, text=True, check=False,
+            cwd=str(self.cwd), env=env,
+        )
+        # stub exits 1 when scope present (fallback), 9 -> assertion path
+        self.assertIn("exited 1", proc.stderr, msg=proc.stderr)
+
     def test_recursion_guard_skips(self) -> None:
         self._install_stub("codex", "import sys\nsys.exit(0)\n")
         env = _clean_env(
@@ -885,6 +948,58 @@ class RunCrossIntegrationTest(unittest.TestCase):
             cwd=str(self.cwd), env=env,
         )
         self.assertEqual(proc.returncode, 3)
+
+
+HOOK_REPLY = (
+    "The review made no edits. The stop hook is reporting existing branch "
+    "changes; committing those would exceed the read-only review scope."
+)
+
+
+class ValidateReviewTest(unittest.TestCase):
+    def test_hook_reply_rejected_for_every_type(self) -> None:
+        for t in common.ARTIFACT_TYPES:
+            ok, reason = common.validate_review(HOOK_REPLY, t)
+            self.assertFalse(ok, msg=t)
+            self.assertIn("verdict", reason.lower())
+
+    def test_clean_reviews_accepted(self) -> None:
+        clean = {
+            "code": "No serious findings.\n\n**Verdict:** safe to land.",
+            "plan": "No blockers.\n\nVerdict: plan is sound enough to implement.",
+            "issue": "## Findings\nNone.\n\n## Verdict\nReady to file as-is.",
+        }
+        for t, text in clean.items():
+            ok, reason = common.validate_review(text, t)
+            self.assertTrue(ok, msg=f"{t}: {reason}")
+
+    def test_code_accepts_safe_to_land_without_verdict_word(self) -> None:
+        ok, _ = common.validate_review("No serious findings. Safe to land.", "code")
+        self.assertTrue(ok)
+
+    def test_issue_and_plan_require_verdict_line(self) -> None:
+        for t in ("issue", "plan"):
+            ok, _ = common.validate_review("No serious findings. Safe to land.", t)
+            self.assertFalse(ok, msg=t)
+
+    def test_no_serious_findings_alone_rejected_for_code(self) -> None:
+        ok, _ = common.validate_review("No serious findings.", "code")
+        self.assertFalse(ok)
+
+
+class ComposePromptScopeTest(unittest.TestCase):
+    def test_scope_and_repo_root_in_prompt(self) -> None:
+        prompt = common.compose_prompt(
+            "INSTR", "ART", artifact_type="code",
+            scope="branch foo vs main", repo_root="/work/repo",
+        )
+        self.assertIn("branch foo vs main", prompt)
+        self.assertIn("/work/repo", prompt)
+        self.assertLess(prompt.index("branch foo vs main"), prompt.index(common.ARTIFACT_OPEN))
+
+    def test_no_scope_no_scope_line(self) -> None:
+        prompt = common.compose_prompt("INSTR", "ART", artifact_type="code")
+        self.assertNotIn("Scope:", prompt)
 
 
 if __name__ == "__main__":
