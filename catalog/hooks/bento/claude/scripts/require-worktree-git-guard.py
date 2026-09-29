@@ -41,6 +41,7 @@ heredoc bodies that merely *mentions* a git command (bento-l01v).
 
 from __future__ import annotations
 
+import fnmatch
 import json
 import os
 import subprocess
@@ -77,7 +78,7 @@ def _is_primary_checkout(repo_root: str) -> bool:
     return (Path(repo_root) / ".git").is_dir()
 
 
-def _detect_primary_branch(repo_root: str) -> str | None:
+def _detect_primary_branch(repo_root: str, allow_current: bool = True) -> str | None:
     origin_head = _git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], repo_root)
     if origin_head is not None and origin_head.returncode == 0 and origin_head.stdout.strip():
         return origin_head.stdout.strip().removeprefix("origin/")
@@ -86,6 +87,8 @@ def _detect_primary_branch(repo_root: str) -> str | None:
             check = _git(["show-ref", "--verify", ref], repo_root)
             if check is not None and check.returncode == 0:
                 return candidate
+    if not allow_current:
+        return None
     current = _git(["branch", "--show-current"], repo_root)
     if current is not None and current.returncode == 0 and current.stdout.strip():
         return current.stdout.strip()
@@ -152,40 +155,62 @@ def _is_literal_path(path: str) -> bool:
     )
 
 
-def _resolve_dir(base: str, path: str) -> str | None:
+def _resolve_dir(base: str | None, path: str) -> str | None:
     """`path` applied to `base` as cd/-C would, or None when `path` is not a
-    literal we can resolve (variables, substitutions, ~user)."""
-    if not path or not _is_literal_path(path):
+    literal we can resolve (variables, substitutions, ~user, `cd -`) or `base`
+    is unknown and `path` is relative."""
+    if not path or path == "-" or not _is_literal_path(path):
         return None
-    return os.path.normpath(os.path.join(base, os.path.expanduser(path)))
+    expanded = os.path.expanduser(path)
+    if os.path.isabs(expanded):
+        return os.path.normpath(expanded)
+    if base is None:
+        return None
+    return os.path.normpath(os.path.join(base, expanded))
 
 
-def _find_git_segments(command: str, cwd: str) -> list[tuple[str, list[str]]]:
+def _cd_target(args: list[str]) -> str | None:
+    """The directory operand of `cd`/`pushd` args (flags such as -P/-L/--
+    skipped); a bare `cd` goes home; None when it cannot be determined."""
+    i = 0
+    while i < len(args) and args[i].startswith("-") and args[i] != "-":
+        i += 1
+        if args[i - 1] == "--":
+            break
+    rest = args[i:]
+    if not rest:
+        return "~"
+    return rest[0] if len(rest) == 1 else None
+
+
+def _find_git_segments(command: str, cwd: str) -> list[tuple[str | None, list[str]]]:
     """Each simple command in `command` that invokes git (directly, or via
     a stripped `rtk`/`exec`/`command`/`env` wrapper prefix -- see
     shell_segments.strip_wrapper_prefix), as (running_dir, tokens) with the
     'git' token itself removed. running_dir is the payload cwd advanced by
-    every preceding literal `cd <path>` segment (a non-literal or bare `cd`
-    leaves it unchanged). Raises no exception: a SegmentError from the
+    every preceding `cd`/`pushd` segment, or None once a preceding target
+    could not be resolved statically (`cd "$X"`, `cd -`, `popd`) until a
+    later literal absolute `cd`. Raises no exception: a SegmentError from the
     scanner means "cannot fully parse this command" and is treated the same
     as "no git segments found" (fail open) by the caller.
 
     Subshell bodies are flattened in source order, so `(cd x && ...); git ...`
-    over-applies the cd; the cwd fallback is the only defense there.
+    over-applies the cd.
     """
     try:
         segments = command_segments(command)
     except SegmentError:
         return []
-    running = cwd
-    found: list[tuple[str, list[str]]] = []
+    running: str | None = cwd or None
+    found: list[tuple[str | None, list[str]]] = []
     for segment in segments:
         if not segment:
             continue
-        if segment[0] == "cd" and len(segment) == 2 and cwd:
-            resolved = _resolve_dir(running, segment[1])
-            if resolved is not None:
-                running = resolved
+        if segment[0] in ("cd", "pushd"):
+            target = _cd_target(segment[1:])
+            running = _resolve_dir(running, target) if target is not None else None
+        elif segment[0] == "popd":
+            running = None
         elif segment[0] == "git":
             found.append((running, segment[1:]))
     return found
@@ -233,18 +258,23 @@ def _push_destinations(rest: list[str]) -> tuple[list[str], bool]:
 
 
 def _push_to_primary_reason(
-    git_tokens: list[str], primary_branch: str | None, current_branch: str | None,
+    git_tokens: list[str],
+    primary_branch: str | None,
+    current_branch: str | None,
+    upstream_dest: str | None,
 ) -> str | None:
     subcommand, rest, _configs, _dash_c = _parse_git_invocation(git_tokens)
     if subcommand != "push" or not primary_branch:
         return None
+    if "--all" in rest or "--mirror" in rest:
+        return f"'git push --all/--mirror' updates the primary branch '{primary_branch}'"
     dests, explicit = _push_destinations(rest)
     # 'HEAD' as a destination (or bare source) means the current branch.
     dests = [current_branch if d == "HEAD" else d for d in dests]
-    if primary_branch in dests:
+    if any(d and fnmatch.fnmatchcase(primary_branch, d) for d in dests):
         return f"'git push' updates the primary branch '{primary_branch}'"
-    if not explicit and "--tags" not in rest and current_branch == primary_branch:
-        return f"'git push' from the primary branch '{primary_branch}' updates it"
+    if not explicit and "--tags" not in rest and primary_branch in (current_branch, upstream_dest):
+        return f"'git push' would update the primary branch '{primary_branch}'"
     return None
 
 
@@ -279,21 +309,33 @@ class _RepoInfo:
         self.repo_root = repo_root
         self.agent_mode = _read_agent_mode_keys(repo_root)
         self.is_primary = _is_primary_checkout(repo_root)
+        # Lenient: falls back to the current branch (checkout/branch rules,
+        # primary checkout only). Strict: never guesses (push rule).
         self.primary_branch = _detect_primary_branch(repo_root)
+        self.strict_primary = _detect_primary_branch(repo_root, allow_current=False)
         current = _git(["branch", "--show-current"], repo_root)
         self.current_branch = (
             current.stdout.strip() if current is not None and current.returncode == 0 else None
         )
+        self.upstream_dest: str | None = None
+        if self.current_branch:
+            mode = _git(["config", "--get", "push.default"], repo_root)
+            merge = _git(["config", "--get", f"branch.{self.current_branch}.merge"], repo_root)
+            if (
+                mode is not None and mode.stdout.strip() in ("upstream", "tracking")
+                and merge is not None and merge.returncode == 0
+            ):
+                self.upstream_dest = merge.stdout.strip().removeprefix("refs/heads/")
 
 
-def _effective_dir(running: str, dash_c: list[str]) -> str:
-    """Directory git operates in: `running` with each -C applied in order. A
-    non-literal -C is skipped (fail toward the cwd-based decision)."""
+def _effective_dir(running: str | None, dash_c: list[str]) -> str | None:
+    """Directory git operates in: `running` with each -C applied in order, or
+    None when any step cannot be resolved statically."""
     directory = running
     for path in dash_c:
-        resolved = _resolve_dir(directory, path)
-        if resolved is not None:
-            directory = resolved
+        directory = _resolve_dir(directory, path)
+        if directory is None:
+            return None
     return directory
 
 
@@ -324,12 +366,11 @@ def main() -> int:
         if not git_segments:
             return 0
 
-        if not cwd or _repo_root(cwd) is None:
-            return 0
-
         infos: dict[str, _RepoInfo | None] = {}
 
-        def info_for(directory: str) -> _RepoInfo | None:
+        def info_for(directory: str | None) -> _RepoInfo | None:
+            if not directory:
+                return None
             if directory not in infos:
                 root = _repo_root(directory) if os.path.isdir(directory) else None
                 infos[directory] = _RepoInfo(root) if root else None
@@ -337,12 +378,25 @@ def main() -> int:
 
         for running, git_tokens in git_segments:
             _sub, _rest, _cfg, dash_c = _parse_git_invocation(git_tokens)
-            # An unresolvable target (missing dir, not a repo) falls back to
-            # the running directory -- never toward allowing.
-            info = info_for(_effective_dir(running, dash_c)) or info_for(running) or info_for(cwd)
-            if info is None:
-                continue
-            agent_mode = info.agent_mode
+            target = _effective_dir(running, dash_c)
+            unresolved = target is None
+            if unresolved:
+                # The target repo cannot be determined statically: judge the
+                # base directory's settings, but treat mutating commands as if
+                # they hit the primary checkout (fail closed).
+                info = info_for(running) or info_for(cwd)
+            else:
+                # A literal target that is missing or not a repo falls back to
+                # the running directory, then the payload cwd.
+                info = info_for(target) or info_for(running) or info_for(cwd)
+                if info is None:
+                    continue
+            agent_mode = info.agent_mode if info else {}
+            note = (
+                " (the target repository could not be determined from the command, "
+                "so it is treated as the primary checkout)"
+                if unresolved else ""
+            )
 
             bypass_reason = _hook_bypass_reason(git_tokens)
             if bypass_reason and agent_mode.get("hook_bypass") != "allow":
@@ -359,12 +413,17 @@ def main() -> int:
             if agent_mode.get("require_worktree") == "false":
                 continue
 
+            if unresolved:
+                mutation_branch = info.strict_primary if info else None
+            else:
+                mutation_branch = info.primary_branch
             mutation_reason = (
-                _mutation_reason(git_tokens, info.primary_branch) if info.is_primary else None
+                _mutation_reason(git_tokens, mutation_branch)
+                if unresolved or info.is_primary else None
             )
             if mutation_reason:
                 print(
-                    f"Blocked: {mutation_reason} in the primary checkout, which is not "
+                    f"Blocked: {mutation_reason} in the primary checkout{note}, which is not "
                     "allowed outside the land-work/launch-work flow.\n"
                     "Land and merge from a linked worktree via the land-work skill "
                     "(land-work/scripts/land.py) instead of mutating the primary "
@@ -374,12 +433,14 @@ def main() -> int:
                 )
                 return 2
 
+            if info is None:
+                continue
             push_reason = _push_to_primary_reason(
-                git_tokens, info.primary_branch, info.current_branch,
+                git_tokens, info.strict_primary, info.current_branch, info.upstream_dest,
             )
             if push_reason:
                 print(
-                    f"Blocked: {push_reason}, which is not allowed outside the "
+                    f"Blocked: {push_reason}{note}, which is not allowed outside the "
                     "land-work flow.\n"
                     "Push your feature branch and land via the land-work skill "
                     "(land-work/scripts/land.py). To disable this check for this "
