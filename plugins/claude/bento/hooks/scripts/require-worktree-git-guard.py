@@ -18,6 +18,12 @@ Two independent rules, both advisory-free hard blocks (exit 2):
    subprocess calls that never surface as a separate Bash tool call in the
    first place, so the marker exists only for the rare case of a raw git
    command that genuinely needs to run outside those scripts.
+   Each git segment is judged against its *effective* repo: the payload cwd
+   advanced by preceding literal `cd <path>` segments, then each `-C <path>`
+   in order (non-literal paths, and paths that are not a repo, fall back to
+   the running directory).
+   In ANY checkout, a `git push` whose destination is the primary branch
+   (`<src>:main`, `refs/heads/main`, or a bare push while on it) is denied.
 2. In any checkout -- `--no-verify` and a `-c core.hooksPath=...` (or
    `--config core.hooksPath=...`) override on a git invocation are denied.
    Opt out with `hook_bypass=allow` in `.agent-mode.local`.
@@ -36,6 +42,7 @@ heredoc bodies that merely *mentions* a git command (bento-l01v).
 from __future__ import annotations
 
 import json
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -101,8 +108,13 @@ def _read_agent_mode_keys(repo_root: str) -> dict[str, str]:
     return values
 
 
-def _parse_git_invocation(tokens: list[str]) -> tuple[str | None, list[str], list[str]]:
-    """From tokens after 'git', return (subcommand, remaining_args, config_values).
+def _parse_git_invocation(
+    tokens: list[str],
+) -> tuple[str | None, list[str], list[str], list[str]]:
+    """From tokens after 'git', return (subcommand, remaining_args,
+    config_values, dash_c_paths).
+
+    dash_c_paths collects every `-C <path>` in order (git composes them).
 
     config_values collects every `-c key=value` / `--config key=value`
     override seen before the subcommand, so a caller can check for
@@ -110,6 +122,7 @@ def _parse_git_invocation(tokens: list[str]) -> tuple[str | None, list[str], lis
     """
     i = 0
     configs: list[str] = []
+    dash_c: list[str] = []
     while i < len(tokens):
         tok = tokens[i]
         if tok in ("-c", "--config") and i + 1 < len(tokens):
@@ -121,6 +134,7 @@ def _parse_git_invocation(tokens: list[str]) -> tuple[str | None, list[str], lis
             i += 1
             continue
         if tok in ("-C",) and i + 1 < len(tokens):
+            dash_c.append(tokens[i + 1])
             i += 2
             continue
         if tok.startswith("-"):
@@ -128,27 +142,57 @@ def _parse_git_invocation(tokens: list[str]) -> tuple[str | None, list[str], lis
             continue
         break
     if i >= len(tokens):
-        return None, [], configs
-    return tokens[i], tokens[i + 1:], configs
+        return None, [], configs, dash_c
+    return tokens[i], tokens[i + 1:], configs, dash_c
 
 
-def _find_git_segments(command: str) -> list[list[str]]:
+def _is_literal_path(path: str) -> bool:
+    return not any(ch in path for ch in "$`*?[") and not (
+        path.startswith("~") and path not in ("~",) and not path.startswith("~/")
+    )
+
+
+def _resolve_dir(base: str, path: str) -> str | None:
+    """`path` applied to `base` as cd/-C would, or None when `path` is not a
+    literal we can resolve (variables, substitutions, ~user)."""
+    if not path or not _is_literal_path(path):
+        return None
+    return os.path.normpath(os.path.join(base, os.path.expanduser(path)))
+
+
+def _find_git_segments(command: str, cwd: str) -> list[tuple[str, list[str]]]:
     """Each simple command in `command` that invokes git (directly, or via
     a stripped `rtk`/`exec`/`command`/`env` wrapper prefix -- see
-    shell_segments.strip_wrapper_prefix), with the 'git' token itself
-    removed. Raises no exception: a SegmentError from the scanner means
-    "cannot fully parse this command" and is treated the same as "no git
-    segments found" (fail open) by the caller.
+    shell_segments.strip_wrapper_prefix), as (running_dir, tokens) with the
+    'git' token itself removed. running_dir is the payload cwd advanced by
+    every preceding literal `cd <path>` segment (a non-literal or bare `cd`
+    leaves it unchanged). Raises no exception: a SegmentError from the
+    scanner means "cannot fully parse this command" and is treated the same
+    as "no git segments found" (fail open) by the caller.
+
+    Subshell bodies are flattened in source order, so `(cd x && ...); git ...`
+    over-applies the cd; the cwd fallback is the only defense there.
     """
     try:
         segments = command_segments(command)
     except SegmentError:
         return []
-    return [segment[1:] for segment in segments if segment and segment[0] == "git"]
+    running = cwd
+    found: list[tuple[str, list[str]]] = []
+    for segment in segments:
+        if not segment:
+            continue
+        if segment[0] == "cd" and len(segment) == 2 and cwd:
+            resolved = _resolve_dir(running, segment[1])
+            if resolved is not None:
+                running = resolved
+        elif segment[0] == "git":
+            found.append((running, segment[1:]))
+    return found
 
 
 def _hook_bypass_reason(git_tokens: list[str]) -> str | None:
-    subcommand, rest, configs = _parse_git_invocation(git_tokens)
+    subcommand, rest, configs, _dash_c = _parse_git_invocation(git_tokens)
     if "--no-verify" in git_tokens:
         return "'--no-verify' skips git hooks"
     # '-n' is the documented short alias for --no-verify, but only for
@@ -162,8 +206,50 @@ def _hook_bypass_reason(git_tokens: list[str]) -> str | None:
     return None
 
 
+_PUSH_VALUE_OPTS = frozenset({"--repo", "-o", "--push-option", "--receive-pack", "--exec"})
+
+
+def _push_destinations(rest: list[str]) -> tuple[list[str], bool]:
+    """(destination branch names, has_explicit_refspec) for `git push` args.
+
+    The first positional is the remote; later ones are refspecs. A refspec's
+    destination is the part after ':' (else the source itself), minus a
+    leading '+' and 'refs/heads/'.
+    """
+    positional: list[str] = []
+    skip = False
+    for arg in rest:
+        if skip:
+            skip = False
+        elif arg in _PUSH_VALUE_OPTS:
+            skip = True
+        elif not arg.startswith("-"):
+            positional.append(arg)
+    dests: list[str] = []
+    for spec in positional[1:]:
+        dst = spec.removeprefix("+").rpartition(":")[2]
+        dests.append(dst.removeprefix("refs/heads/"))
+    return dests, len(positional) > 1
+
+
+def _push_to_primary_reason(
+    git_tokens: list[str], primary_branch: str | None, current_branch: str | None,
+) -> str | None:
+    subcommand, rest, _configs, _dash_c = _parse_git_invocation(git_tokens)
+    if subcommand != "push" or not primary_branch:
+        return None
+    dests, explicit = _push_destinations(rest)
+    # 'HEAD' as a destination (or bare source) means the current branch.
+    dests = [current_branch if d == "HEAD" else d for d in dests]
+    if primary_branch in dests:
+        return f"'git push' updates the primary branch '{primary_branch}'"
+    if not explicit and "--tags" not in rest and current_branch == primary_branch:
+        return f"'git push' from the primary branch '{primary_branch}' updates it"
+    return None
+
+
 def _mutation_reason(git_tokens: list[str], primary_branch: str | None) -> str | None:
-    subcommand, rest, _configs = _parse_git_invocation(git_tokens)
+    subcommand, rest, _configs, _dash_c = _parse_git_invocation(git_tokens)
     if subcommand is None:
         return None
     if subcommand in _MUTATING_SUBCOMMANDS:
@@ -186,6 +272,29 @@ def _mutation_reason(git_tokens: list[str], primary_branch: str | None) -> str |
     ):
         return "'git push --force*' (or a leading '+' force-push refspec) force-pushes"
     return None
+
+
+class _RepoInfo:
+    def __init__(self, repo_root: str) -> None:
+        self.repo_root = repo_root
+        self.agent_mode = _read_agent_mode_keys(repo_root)
+        self.is_primary = _is_primary_checkout(repo_root)
+        self.primary_branch = _detect_primary_branch(repo_root)
+        current = _git(["branch", "--show-current"], repo_root)
+        self.current_branch = (
+            current.stdout.strip() if current is not None and current.returncode == 0 else None
+        )
+
+
+def _effective_dir(running: str, dash_c: list[str]) -> str:
+    """Directory git operates in: `running` with each -C applied in order. A
+    non-literal -C is skipped (fail toward the cwd-based decision)."""
+    directory = running
+    for path in dash_c:
+        resolved = _resolve_dir(directory, path)
+        if resolved is not None:
+            directory = resolved
+    return directory
 
 
 def main() -> int:
@@ -211,19 +320,30 @@ def main() -> int:
         # invocations at all, and every git call below costs a subprocess --
         # skip all of them (repo-root resolution included) unless this
         # command actually contains one.
-        git_segments = _find_git_segments(command)
+        git_segments = _find_git_segments(command, cwd)
         if not git_segments:
             return 0
 
-        repo_root = _repo_root(cwd) if cwd else None
-        if repo_root is None:
+        if not cwd or _repo_root(cwd) is None:
             return 0
 
-        agent_mode = _read_agent_mode_keys(repo_root)
-        is_primary = _is_primary_checkout(repo_root)
-        primary_branch = _detect_primary_branch(repo_root) if is_primary else None
+        infos: dict[str, _RepoInfo | None] = {}
 
-        for git_tokens in git_segments:
+        def info_for(directory: str) -> _RepoInfo | None:
+            if directory not in infos:
+                root = _repo_root(directory) if os.path.isdir(directory) else None
+                infos[directory] = _RepoInfo(root) if root else None
+            return infos[directory]
+
+        for running, git_tokens in git_segments:
+            _sub, _rest, _cfg, dash_c = _parse_git_invocation(git_tokens)
+            # An unresolvable target (missing dir, not a repo) falls back to
+            # the running directory -- never toward allowing.
+            info = info_for(_effective_dir(running, dash_c)) or info_for(running) or info_for(cwd)
+            if info is None:
+                continue
+            agent_mode = info.agent_mode
+
             bypass_reason = _hook_bypass_reason(git_tokens)
             if bypass_reason and agent_mode.get("hook_bypass") != "allow":
                 print(
@@ -236,19 +356,37 @@ def main() -> int:
                 )
                 return 2
 
-            if is_primary and agent_mode.get("require_worktree") != "false":
-                mutation_reason = _mutation_reason(git_tokens, primary_branch)
-                if mutation_reason:
-                    print(
-                        f"Blocked: {mutation_reason} in the primary checkout, which is not "
-                        "allowed outside the land-work/launch-work flow.\n"
-                        "Land and merge from a linked worktree via the land-work skill "
-                        "(land-work/scripts/land.py) instead of mutating the primary "
-                        "checkout directly. To disable this check for this repo, add "
-                        "'require_worktree=false' to .agent-mode.local.",
-                        file=sys.stderr,
-                    )
-                    return 2
+            if agent_mode.get("require_worktree") == "false":
+                continue
+
+            mutation_reason = (
+                _mutation_reason(git_tokens, info.primary_branch) if info.is_primary else None
+            )
+            if mutation_reason:
+                print(
+                    f"Blocked: {mutation_reason} in the primary checkout, which is not "
+                    "allowed outside the land-work/launch-work flow.\n"
+                    "Land and merge from a linked worktree via the land-work skill "
+                    "(land-work/scripts/land.py) instead of mutating the primary "
+                    "checkout directly. To disable this check for this repo, add "
+                    "'require_worktree=false' to .agent-mode.local.",
+                    file=sys.stderr,
+                )
+                return 2
+
+            push_reason = _push_to_primary_reason(
+                git_tokens, info.primary_branch, info.current_branch,
+            )
+            if push_reason:
+                print(
+                    f"Blocked: {push_reason}, which is not allowed outside the "
+                    "land-work flow.\n"
+                    "Push your feature branch and land via the land-work skill "
+                    "(land-work/scripts/land.py). To disable this check for this "
+                    "repo, add 'require_worktree=false' to .agent-mode.local.",
+                    file=sys.stderr,
+                )
+                return 2
     except Exception:
         # Never block the session on an unexpected error in this guard.
         return 0
