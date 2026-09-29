@@ -149,7 +149,7 @@ class Store:
         return [self._lease(row) for row in rows]
 
     def reserve(self, *, uid: int, repo: str, label: str, requested_weight: int, capacity: int,
-                wait_seconds: float, exclusive: bool = False, bypass: bool = False,
+                wait_seconds: float, exclusive: bool = False, bypass: bool | str = False,
                 parent_lease_id: str | None = None, signals: Any = None,
                 operator_uid: int | None = None, operator_tty: str | None = None,
                 operator_reason: str | None = None) -> Lease | None:
@@ -170,9 +170,9 @@ class Store:
                 "INSERT INTO leases (lease_id, parent_lease_id, uid, repo, label, requested_weight,"
                 " effective_weight, wait_seconds, bypass) VALUES (?,?,?,?,?,?,?,?,?)",
                 (lease_id, parent_lease_id, uid, repo, label, requested_weight, effective,
-                 wait_seconds, "admission" if bypass else None))
+                 wait_seconds, (bypass if isinstance(bypass, str) else "admission") if bypass else None))
             if bypass:
-                self._insert_event(db, "bypass", lease_id=lease_id, outcome="admission",
+                self._insert_event(db, "bypass", lease_id=lease_id, outcome=bypass if isinstance(bypass, str) else "admission",
                                    operator_uid=operator_uid, operator_tty=operator_tty,
                                    operator_reason=operator_reason, **identity)
             else:
