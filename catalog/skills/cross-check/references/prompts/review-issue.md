@@ -21,5 +21,5 @@ Review the issue draft below on these axes:
   surfaces.
 
 Output concrete findings. For each: a **severity** (BLOCKER / MAJOR / MINOR), a
-one-line title, and 1–2 sentences of why. Then a short verdict: is this issue
+one-line title, and 1–2 sentences of why. Then a line starting `Verdict:` — is this issue
 ready to file as-is, and the top 2–3 fixes that would most improve it.
