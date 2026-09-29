@@ -102,10 +102,12 @@ class RequireWorktreeGitGuardTest(unittest.TestCase):
         result = self.run_hook("git push --force origin main", repo)
         self.assertEqual(result.returncode, 2)
 
-    def test_allows_plain_push(self) -> None:
+    def test_allows_push_to_non_primary_branch(self) -> None:
         repo = self._init_primary_repo()
-        result = self.run_hook("git push origin main", repo)
-        self.assertEqual(result.returncode, 0)
+        self._git(repo, "checkout", "-q", "-b", "other")
+        for cmd in ("git push origin other", "git push origin HEAD:other", "git push"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, repo).returncode, 0)
 
     def test_allows_non_mutating_git_commands(self) -> None:
         repo = self._init_primary_repo()
@@ -119,6 +121,189 @@ class RequireWorktreeGitGuardTest(unittest.TestCase):
         worktree = self._add_linked_worktree(repo)
         result = self.run_hook("git merge main", worktree)
         self.assertEqual(result.returncode, 0)
+
+    # -- effective repo: git -C and leading cd (bento-c96u.1, bento-c9c5) ----
+
+    def _pair(self) -> tuple[Path, Path]:
+        repo = self._init_primary_repo()
+        return repo, self._add_linked_worktree(repo)
+
+    def test_git_dash_c_primary_from_worktree_is_denied(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            f"git -C {repo} merge --no-ff feature/test",
+            f"git -C {repo} reset --hard HEAD~1",
+            f"cd {repo} && git merge --ff-only feature/test",
+            f"git -C {wt} status && git -C {repo} reset --hard",
+            f"git -C {repo}/. merge x",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 2)
+
+    def test_git_dash_c_worktree_from_primary_is_allowed(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            f"git -C {wt} rebase main",
+            f"cd {wt} && git rebase main",
+            f"git -C {wt} status",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, repo).returncode, 0)
+
+    def test_git_dash_c_relative_and_chained(self) -> None:
+        repo, wt = self._pair()
+        rel_wt = os.path.relpath(wt, repo)
+        self.assertEqual(self.run_hook(f"git -C {rel_wt} rebase main", repo).returncode, 0)
+        rel_repo = os.path.relpath(repo, wt)
+        self.assertEqual(self.run_hook(f"git -C {rel_repo} merge x", wt).returncode, 2)
+        # -C a -C b composes: b is resolved against a.
+        self.assertEqual(
+            self.run_hook(f"git -C {wt.parent} -C {repo.name} merge x", wt).returncode, 2,
+        )
+        self.assertEqual(
+            self.run_hook(f"git -C {wt.parent} -C {wt.name} merge x", repo).returncode, 0,
+        )
+
+    def test_cd_relative_resolves_against_running_dir(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(
+            self.run_hook(f"cd {os.path.relpath(repo, wt)} && git merge x", wt).returncode, 2,
+        )
+
+    def test_unresolvable_target_fails_closed_for_mutations(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            'cd "$X" && git merge y',
+            'git -C "$X" merge y',
+            'cd $(pwd) && git reset --hard',
+            'cd - && git merge y',
+            'cd "$X" && git push origin HEAD:main',
+        ):
+            for cwd in (repo, wt):
+                with self.subTest(cmd=cmd, cwd=cwd.name):
+                    self.assertEqual(self.run_hook(cmd, cwd).returncode, 2)
+        for cmd in ('cd "$X" && git status', 'git -C "$X" log -1', 'cd "$X" && git push origin feat'):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 0)
+
+    def test_cd_flags_are_parsed(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (f"cd -P {repo} && git merge x", f"cd -- {repo} && git merge x"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 2)
+        self.assertEqual(self.run_hook(f"cd -P {wt} && git rebase main", repo).returncode, 0)
+
+    def test_payload_cwd_outside_any_repo_still_checks_effective_repo(self) -> None:
+        repo, wt = self._pair()
+        outside = self.root / "outside"
+        outside.mkdir()
+        for cmd in (
+            f"git -C {repo} merge x",
+            f"cd {repo} && git merge x",
+            f"cd {repo} && git push origin main",
+            f"git -C {repo} push origin HEAD:main",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, outside).returncode, 2)
+        self.assertEqual(self.run_hook(f"git -C {wt} rebase main", outside).returncode, 0)
+        self.assertEqual(self.run_hook("git merge x", outside).returncode, 0)
+
+    def test_dash_c_nonexistent_falls_back_to_cwd(self) -> None:
+        repo, wt = self._pair()
+        missing = self.root / "nope"
+        self.assertEqual(self.run_hook(f"git -C {missing} merge x", repo).returncode, 2)
+        self.assertEqual(self.run_hook(f"git -C {missing} merge x", wt).returncode, 0)
+
+    def test_bypass_rule_still_applies_with_dash_c(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(
+            self.run_hook(f"git -C {wt} commit --no-verify -m x", repo).returncode, 2,
+        )
+
+    # -- push to the primary branch: any checkout ---------------------------
+
+    def test_denies_push_to_primary_branch_everywhere(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            "git push origin HEAD:main",
+            "git push origin feature/test:main",
+            "git push origin feature/test:refs/heads/main",
+            "git push origin main",
+            "git push origin :main",
+        ):
+            for cwd in (repo, wt):
+                with self.subTest(cmd=cmd, cwd=cwd.name):
+                    self.assertEqual(self.run_hook(cmd, cwd).returncode, 2)
+
+    def test_denies_bare_push_from_primary_branch(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(self.run_hook("git push", repo).returncode, 2)
+        self.assertEqual(self.run_hook("git push origin", repo).returncode, 2)
+        self.assertEqual(self.run_hook("git push origin HEAD", repo).returncode, 2)
+        self.assertEqual(self.run_hook("git push", wt).returncode, 0)
+        self.assertEqual(self.run_hook("git push origin HEAD", wt).returncode, 0)
+
+    def test_allows_push_to_feature_from_worktree(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            "git push origin feature/test",
+            "git push -u origin feature/test",
+            "git push origin HEAD:feature/test",
+            "git push origin main:feature/test",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 0)
+
+    def test_primary_push_uses_effective_repo_for_bare_push(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(self.run_hook(f"git -C {repo} push", wt).returncode, 2)
+        self.assertEqual(self.run_hook(f"git -C {wt} push", repo).returncode, 0)
+
+    def test_documented_land_work_push_forms_honour_marker(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            "BENTO_LAND_WORK=1 git push origin HEAD:refs/heads/main",
+            "BENTO_LAND_WORK=1 git -C /some/preview push origin HEAD:refs/heads/main",
+            "BENTO_LAND_WORK=1 git push origin main",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, repo).returncode, 0)
+
+    def test_push_primary_marker_and_opt_out(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(
+            self.run_hook("BENTO_LAND_WORK=1 git push origin HEAD:main", wt).returncode, 0,
+        )
+        (wt / ".agent-mode.local").write_text("require_worktree=false\n", encoding="utf-8")
+        self.assertEqual(self.run_hook("git push origin HEAD:main", wt).returncode, 0)
+
+    def test_denies_push_all_mirror_and_glob_refspecs(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            "git push --all origin",
+            "git push origin --mirror",
+            "git push origin 'refs/heads/*:refs/heads/*'",
+            "git push origin refs/heads/*:refs/heads/*",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 2)
+
+    def test_denies_bare_push_when_upstream_is_primary(self) -> None:
+        repo, wt = self._pair()
+        self._git(wt, "config", "push.default", "upstream")
+        self._git(wt, "config", "branch.feature/test.remote", "origin")
+        self._git(wt, "config", "branch.feature/test.merge", "refs/heads/main")
+        self.assertEqual(self.run_hook("git push", wt).returncode, 2)
+
+    def test_push_rule_skipped_when_primary_branch_undeterminable(self) -> None:
+        repo = self._init_primary_repo()
+        self._git(repo, "branch", "-m", "main", "trunk")
+        wt = self.root / "worktree"
+        self._git(repo, "worktree", "add", "-b", "feature/test", str(wt), "trunk")
+        # No origin/HEAD and no main/master ref: the rule must not guess the
+        # current branch (here the feature branch) as "primary".
+        self.assertEqual(self.run_hook("git push origin feature/test", wt).returncode, 0)
+        self.assertEqual(self.run_hook("git push origin HEAD", wt).returncode, 0)
 
     # -- land-work marker escape hatch ---------------------------------------
 

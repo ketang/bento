@@ -83,7 +83,7 @@ resolve the integration worktree, capture the lease, assemble, gate once at
 the tip, run the project verifier once at the tip (`land-work-run-verifier.py`
 — the same Non-Negotiable Rule the serial path enforces, not skipped in batch
 mode), lease-checked push, per-branch tracker close and teardown. The push
-itself is a plain `git push` (no `--force`), since the assembled tip is
+itself is a plain `BENTO_LAND_WORK=1 git push` (no `--force`), since the assembled tip is
 always a fast-forward descendant of the leased base by construction — git's
 own fast-forward rejection is a second, independent backstop behind the
 explicit `land-work-verify-lease.py` re-check, not a replacement for it.

@@ -17,7 +17,7 @@ it.
   checkout's local `<integration-branch>`, use the push-from-preview route
   (SKILL.md step 8) exactly as for `main`/`master`: commit the merge in the
   preview worktree, push straight from there with
-  `git push origin HEAD:refs/heads/<integration-branch>`, then sync the
+  `BENTO_LAND_WORK=1 git push origin HEAD:refs/heads/<integration-branch>`, then sync the
   primary with `git fetch origin` + `git merge --ff-only
   origin/<integration-branch>`. This is the standard route for that
   diagnostic regardless of which branch name is the real integration branch.

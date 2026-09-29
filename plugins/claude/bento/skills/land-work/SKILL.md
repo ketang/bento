@@ -410,7 +410,7 @@ land-work/scripts/land-work-verify-lease.py --expected-sha <sha>
        1. Finish the merge preview already started with `--no-commit` into a
           real commit, in the preview worktree: `git commit`.
        2. Push straight from the preview worktree to the leased remote,
-          non-force: `git push origin HEAD:refs/heads/<primary-branch>`
+          non-force: `BENTO_LAND_WORK=1 git push origin HEAD:refs/heads/<primary-branch>`
           (`origin` is the same remote `land-work-verify-lease.py` leases
           against).
        3. Sync the primary checkout the safe way — fetch, then fast-forward
@@ -735,8 +735,11 @@ queue and lands as part of the next assembled batch, gated once at the tip.
    primary branch:
 
    ```bash
-   git -C <integration-worktree> push origin HEAD:refs/heads/<primary-branch>
+   BENTO_LAND_WORK=1 git -C <integration-worktree> push origin HEAD:refs/heads/<primary-branch>
    ```
+
+   The `BENTO_LAND_WORK=1` prefix marks the push as land-work's, which the
+   git guard otherwise denies for a primary-branch destination.
 
    This is a plain (non-force) push: the worktree's HEAD is a strict
    fast-forward descendant of the leased base by construction (step 3 always
