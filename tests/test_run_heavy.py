@@ -7,17 +7,6 @@ from pathlib import Path
 REPO_ROOT = Path(__file__).resolve().parents[1]
 RUN_HEAVY = REPO_ROOT / "catalog" / "skills" / "launch-work" / "scripts" / "run-heavy"
 
-# run-heavy depends on Linux-only facilities (/proc/loadavg) and util-linux's
-# ionice. Skip the whole module cleanly where those are unavailable.
-_MISSING = [
-    tool for tool in ("nice", "ionice", "nproc") if shutil.which(tool) is None
-]
-_SKIP_REASON = (
-    "run-heavy requires Linux /proc/loadavg and " + ", ".join(_MISSING)
-    if _MISSING or not Path("/proc/loadavg").exists()
-    else ""
-)
-
 
 def run_heavy(*args: str, env_overrides: dict[str, str] | None = None):
     import os
@@ -34,48 +23,54 @@ def run_heavy(*args: str, env_overrides: dict[str, str] | None = None):
     )
 
 
-@unittest.skipIf(_SKIP_REASON, _SKIP_REASON)
-class RunHeavyTest(unittest.TestCase):
+class RunHeavyShimTest(unittest.TestCase):
+    """run-heavy is a fail-closed shim over the installed governor (contract v1)."""
+
+    def fake_governor(self, body: str) -> str:
+        import tempfile
+
+        directory = tempfile.mkdtemp()
+        self.addCleanup(shutil.rmtree, directory)
+        path = Path(directory) / "bento-governor-v1"
+        path.write_text("#!/usr/bin/env bash\n" + body)
+        path.chmod(0o755)
+        return str(path)
+
     def test_script_is_executable(self) -> None:
-        self.assertTrue(RUN_HEAVY.is_file())
         import os
 
         self.assertTrue(os.access(RUN_HEAVY, os.X_OK), "run-heavy must be executable")
 
-    def test_no_args_prints_usage_and_exits_nonzero(self) -> None:
+    def test_no_args_prints_usage_and_exits_64(self) -> None:
         result = run_heavy()
-        self.assertNotEqual(result.returncode, 0)
+        self.assertEqual(result.returncode, 64)
         self.assertIn("usage:", result.stderr)
 
-    def test_executes_command_when_load_below_threshold(self) -> None:
-        # A huge load factor keeps the threshold well above real load, so the
-        # wait loop is skipped and the command execs immediately.
-        result = run_heavy(
-            "printf", "%s-%s", "alpha", "beta",
-            env_overrides={"HEAVY_LOAD_FACTOR": "100000"},
-        )
+    def test_missing_governor_fails_closed_without_running_command(self) -> None:
+        result = run_heavy("echo", "ran", env_overrides={"BENTO_GOVERNOR_BIN": "/nonexistent/governor"})
+        self.assertEqual(result.returncode, 70)
+        self.assertNotIn("ran", result.stdout)
+
+    def test_delegates_with_default_repo_label_and_explicit_weight(self) -> None:
+        fake = self.fake_governor('printf "%s\\n" "$@"\n')
+        result = run_heavy("--weight", "3", "echo", "hi", env_overrides={"BENTO_GOVERNOR_BIN": fake})
         self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout, "alpha-beta")
+        args = result.stdout.split()
+        self.assertEqual(args[:2], ["run", "--weight"])
+        self.assertEqual(args[2], "3")
+        self.assertIn("--label", args)
+        self.assertEqual(args[args.index("--") + 1 :], ["echo", "hi"])
 
-    def test_propagates_command_exit_code(self) -> None:
-        result = run_heavy(
-            "sh", "-c", "exit 7",
-            env_overrides={"HEAVY_LOAD_FACTOR": "100000"},
-        )
-        self.assertEqual(result.returncode, 7)
-
-    def test_proceeds_after_max_wait_deadline(self) -> None:
-        # Factor 0 forces the threshold to 0 so measured load always exceeds it;
-        # MAX_WAIT 0 makes the deadline fire on the first iteration, so the loop
-        # breaks and execs without sleeping.
+    def test_propagates_governor_exit_status_and_ignores_heavy_max_wait(self) -> None:
+        fake = self.fake_governor("exit 69\n")
         result = run_heavy(
             "echo", "ran",
-            env_overrides={"HEAVY_LOAD_FACTOR": "0", "HEAVY_MAX_WAIT": "0"},
+            env_overrides={"BENTO_GOVERNOR_BIN": fake, "HEAVY_MAX_WAIT": "0"},
         )
-        self.assertEqual(result.returncode, 0, result.stderr)
-        self.assertEqual(result.stdout.strip(), "ran")
-        self.assertIn("proceeding anyway", result.stderr)
+        self.assertEqual(result.returncode, 69)
+        self.assertIn("HEAVY_MAX_WAIT is ignored", result.stderr)
+        self.assertNotIn("proceeding anyway", result.stderr)
 
 
 if __name__ == "__main__":
-    sys.exit(unittest.main())
+    unittest.main()

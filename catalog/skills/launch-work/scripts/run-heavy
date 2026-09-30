@@ -1,35 +1,51 @@
 #!/usr/bin/env bash
-# Run a heavy build/compile/test command at reduced priority, waiting if load is extreme.
+# Compatibility shim: run a heavy command through the host-wide admission governor (contract v1).
 #
-# Usage: scripts/run-heavy <cmd> [args...]
+# Usage: run-heavy [--weight N | --exclusive] [--repo REPO] [--label LABEL] [--max-wait SECONDS] [--] <cmd> [args...]
 #
-# Environment overrides:
-#   HEAVY_LOAD_FACTOR  multiplier on nproc for the load threshold (default: 1.5)
-#   HEAVY_MAX_WAIT     max seconds to wait before proceeding anyway (default: 600)
+# Fails closed: if the installed governor is missing or denies admission, the command does not run.
+# HEAVY_MAX_WAIT / HEAVY_LOAD_FACTOR are ignored; thresholds live in /etc/bento-governor/v1.toml.
+# BENTO_GOVERNOR_BIN overrides the entrypoint (tests only).
 
 set -euo pipefail
 
-if [[ $# -eq 0 ]]; then
-  echo "usage: scripts/run-heavy <cmd> [args...]" >&2
-  exit 1
-fi
+GOVERNOR="${BENTO_GOVERNOR_BIN:-/usr/local/bin/bento-governor-v1}"
+usage() {
+  echo "usage: run-heavy [--weight N | --exclusive] [--repo REPO] [--label LABEL] [--max-wait SECONDS] [--] <cmd> [args...]" >&2
+}
 
-LOAD_FACTOR="${HEAVY_LOAD_FACTOR:-1.5}"
-MAX_WAIT="${HEAVY_MAX_WAIT:-600}"
-SLEEP_INTERVAL=30
-
-nproc_count=$(nproc)
-threshold=$(awk -v n="$nproc_count" -v f="$LOAD_FACTOR" 'BEGIN { print n * f }')
-deadline=$((SECONDS + MAX_WAIT))
-
-while awk -v t="$threshold" 'NR==1 { exit !($1 > t) }' /proc/loadavg; do
-  load1=$(awk '{print $1}' /proc/loadavg)
-  if [[ $SECONDS -ge $deadline ]]; then
-    echo "run-heavy: load ${load1} still above ${threshold} after ${MAX_WAIT}s; proceeding anyway" >&2
-    break
-  fi
-  echo "run-heavy: load ${load1} > ${threshold} (nproc=${nproc_count} × ${LOAD_FACTOR}); waiting ${SLEEP_INTERVAL}s" >&2
-  sleep "$SLEEP_INTERVAL"
+opts=()
+repo="" label=""
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --weight|--max-wait) [[ $# -ge 2 ]] || { usage; exit 64; }; opts+=("$1" "$2"); shift 2 ;;
+    --exclusive) opts+=("$1"); shift ;;
+    --repo) [[ $# -ge 2 ]] || { usage; exit 64; }; repo="$2"; shift 2 ;;
+    --label) [[ $# -ge 2 ]] || { usage; exit 64; }; label="$2"; shift 2 ;;
+    --) shift; break ;;
+    -*) usage; exit 64 ;;
+    *) break ;;
+  esac
 done
 
-exec nice -n 10 ionice -c 3 "$@"
+if [[ $# -eq 0 ]]; then
+  usage
+  exit 64
+fi
+
+if [[ -n "${HEAVY_MAX_WAIT:-}" ]]; then
+  echo "run-heavy: HEAVY_MAX_WAIT is ignored; use --max-wait (the governor never proceeds after a timeout)" >&2
+fi
+
+if [[ ! -x "$GOVERNOR" ]]; then
+  echo "run-heavy: governor $GOVERNOR is not installed; refusing to run without admission control" >&2
+  exit 70
+fi
+
+if [[ -z "$repo" ]]; then
+  top=$(git rev-parse --show-toplevel 2>/dev/null || pwd)
+  repo=$(basename "$top")
+fi
+[[ -n "$label" ]] || label=$(basename "$1")
+
+exec "$GOVERNOR" run "${opts[@]}" --repo "$repo" --label "$label" -- "$@"
