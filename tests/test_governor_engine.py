@@ -57,6 +57,8 @@ class Scopes:
         handle.empty = self.abort_empty
         return handle
 
+    def release_executor(self, handle): handle.released = True
+
     def adopt(self, lease): return self.adoptable.get(lease.lease_id)
     def executor_gone(self, lease): return self.executor_is_gone
     def unit_absent(self, lease): return self.unit_is_absent
@@ -249,7 +251,7 @@ class EngineTest(unittest.TestCase):
                          ("admission", "ticket", "/dev/pts/1"))
 
     def test_bypass_uncontained_logged_before_start_without_scope(self):
-        ticket = self.engine.submit(self.req(bypass="uncontained", reason="no systemd"))
+        ticket = self.engine.submit(self.req(bypass="uncontained", reason="no systemd", operator_uid=0, operator_tty="/dev/pts/2"))
         self.assertEqual(ticket.state, "running")
         self.assertEqual(self.store.events()[-1]["outcome"], "uncontained")
         self.assertIsNone(self.store.active_leases()[0].scope_unit)
@@ -260,7 +262,7 @@ class EngineTest(unittest.TestCase):
             db.execute("CREATE TRIGGER f BEFORE INSERT ON events BEGIN SELECT RAISE(FAIL, 'x'); END")
         self.store = Store(self.store.path)
         self.engine.store = self.store
-        ticket = self.engine.submit(self.req(bypass="uncontained", reason="r"))
+        ticket = self.engine.submit(self.req(bypass="uncontained", reason="r", operator_uid=0, operator_tty="/dev/pts/2"))
         self.assertEqual((ticket.exit_code, self.scopes.handles), (70, []))
 
     def test_restart_reconciles_scopes_and_blocks_on_unverifiable(self):

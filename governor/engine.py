@@ -2,7 +2,7 @@
 
 All host interaction goes through injected providers so behavior is deterministic in tests:
   pressure(weight, exclusive, cwd, env) -> schema-v1 snapshot dict (see governor.pressure)
-  scopes: launch(lease, request) -> handle; adopt(lease) -> handle | None; abort(lease) -> handle | None;
+  scopes: launch(lease, request) -> handle; release_executor(handle); adopt(lease) -> handle | None; abort(lease) -> handle | None;
           executor_gone(lease) -> bool; unit_absent(lease) -> bool
   handle: unit, cgroup_path, is_empty(), oom_kills(), peak_memory(), exit_status(), kill(), contains_pid(pid)
   authorize_bypass(request) -> bool
@@ -36,6 +36,7 @@ class Request:
     operator_uid: int | None = None
     operator_tty: str | None = None
     peer_pid: int | None = None
+    gid: int = 0
     parent_token: str | None = None
 
 
@@ -100,7 +101,8 @@ class Engine:
         if req.weight < 1 or (req.max_wait is not None and req.max_wait < 0):
             self._finish(ticket, "invalid-args", detail="invalid weight or max-wait")
             return ticket
-        if req.bypass and not self.authorize_bypass(req):
+        if req.bypass and not (req.operator_uid is not None and req.operator_tty and (req.reason or "").strip()
+                               and self.authorize_bypass(req)):
             self._audit("deny", ticket, "denied", "bypass-not-authorized")
             self._finish(ticket, "denied", detail="bypass not authorized")
             return ticket
@@ -241,14 +243,24 @@ class Engine:
             lease = self.store.reserve(
                 uid=req.uid, repo=req.repo, label=req.label, requested_weight=req.weight,
                 capacity=self.capacity, wait_seconds=round(self._wait(ticket), 3),
-                exclusive=req.exclusive, bypass=(req.bypass or False) if bypass else False, signals=signals,
+                exclusive=req.exclusive, bypass=bypass, signals=signals,
                 operator_uid=req.operator_uid, operator_tty=req.operator_tty, operator_reason=req.reason)
-        except StoreError as exc:
+        except (StoreError, ValueError) as exc:
             self.queue.remove(ticket)
             self._finish(ticket, "infra-error", detail=str(exc))
             return True
         if lease is None:
             return self._blocked(ticket, "capacity", signals)
+        if req.bypass == "uncontained":
+            try:  # durable, before any command starts
+                self.store.record_event("bypass", lease_id=lease.lease_id, outcome="uncontained",
+                                        operator_uid=req.operator_uid, operator_tty=req.operator_tty,
+                                        operator_reason=req.reason)
+            except StoreError as exc:
+                self.queue.remove(ticket)
+                ticket.lease = lease
+                self._abort_reserved_only(ticket, str(exc))
+                return True
         self.queue.remove(ticket)
         ticket.lease = lease
         try:
@@ -257,6 +269,7 @@ class Engine:
             self.store.attach_executor(lease.lease_id, handle.executor_pid)
             if handle.unit is not None:
                 self.store.attach_scope(lease.lease_id, handle.unit, handle.cgroup_path)
+            self.scopes.release_executor(handle)  # only now may the command exec
         except Exception as exc:
             self._abort(ticket, str(exc))
             return True
@@ -264,6 +277,15 @@ class Engine:
         ticket.token = secrets.token_hex(16)
         self.running[ticket.token] = ticket
         return True
+
+    def _abort_reserved_only(self, ticket: Ticket, detail: str) -> None:
+        """Audit failed before any process existed: release the never-used reservation if possible."""
+        try:
+            self.store.release(ticket.lease.lease_id, verified_empty=True, outcome="infra-error",
+                               reason="audit-failed")
+        except StoreError:
+            pass  # stays reserved; recovery will prove it unattached
+        self._finish(ticket, "infra-error", detail=detail)
 
     def _abort(self, ticket: Ticket, detail: str) -> None:
         lease = ticket.lease

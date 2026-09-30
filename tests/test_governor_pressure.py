@@ -116,3 +116,35 @@ def test_missing_required_directory_fails_closed(tmp_path: Path, monkeypatch: py
     result = sample_signals({}, str(tmp_path / "missing"), 1, 2, {}, proc)
     assert result["status"] == "error"
     assert by_name(result, "disk_free_bytes")[0]["reason"] == "missing"
+
+
+@pytest.mark.parametrize(
+    ("source", "contents", "signal", "reason"),
+    [
+        ("meminfo", "MemAvailable: 1024 kB\n", "mem_available_bytes", "below_min"),
+        ("pressure/io", "some avg10=21.00 avg60=0 total=0\n", "io_some_avg10", "above_max"),
+        ("pressure/memory", "full avg10=1.01 avg60=0 total=0\n", "memory_full_avg10", "above_max"),
+        ("pressure/cpu", "some avg10=NaN avg60=0 total=0\n", "cpu_some_avg10", "malformed"),
+    ],
+)
+def test_memory_io_and_malformed_pressure(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, contents: str,
+    signal: str, reason: str,
+) -> None:
+    proc = proc_fixture(tmp_path)
+    (proc / source).write_text(contents)
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+    result = sample(tmp_path, proc)
+    assert result["status"] == ("error" if reason == "malformed" else "blocked")
+    assert by_name(result, signal)[0]["reason"] == reason
+
+
+def test_relative_target_path_is_resolved_from_request_cwd(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    proc = proc_fixture(tmp_path)
+    monkeypatch.setattr(os, "cpu_count", lambda: 4)
+    result = sample_signals({}, str(tmp_path), 1, 2, {"CARGO_TARGET_DIR": "build"}, proc)
+    paths = [path for signal in by_name(result, "disk_free_bytes") for path in signal.get("paths", [])]
+    assert str(tmp_path / "build") in paths
+    assert "/tmp" in paths

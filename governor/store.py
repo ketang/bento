@@ -1,256 +1,272 @@
-"""Durable lease registry and append-only event log (SQLite, WAL, synchronous=FULL)."""
+"""SQLite lease registry and durable audit stream for governor protocol v1.
+
+``Store(path)`` opens a WAL/FULL database. ``reserve(...)`` atomically checks
+weighted capacity, inserts a live lease, and commits its acquire/bypass event;
+it returns ``None`` after an audited capacity denial. ``get_lease`` and
+``active_leases`` support restart reconciliation. ``attach_executor`` and
+``attach_scope`` persist launch identity before the executor is unblocked.
+``release`` requires the caller's verified-empty assertion and commits the
+release event with the state change. ``recover_unattached`` requires evidence
+that both the blocked executor is gone and the deterministic unit is absent.
+``record_event``, ``events``, and ``events_jsonl`` expose the audit stream.
+
+The service owns OS-level evidence: this module never infers cgroup emptiness
+from a child exit or frees a lease on an SQLite/audit failure. Store errors are
+raised as ``StoreError``; callers must fail closed.
+"""
 
 from __future__ import annotations
 
-import contextlib
 import json
 import sqlite3
+import threading
 import uuid
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Iterator
-
-from . import CONTRACT_VERSION
-
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS leases (
-    lease_id TEXT PRIMARY KEY,
-    parent_lease_id TEXT,
-    uid INTEGER NOT NULL,
-    repo TEXT NOT NULL,
-    label TEXT NOT NULL,
-    requested_weight INTEGER NOT NULL,
-    effective_weight INTEGER NOT NULL,
-    wait_seconds REAL NOT NULL,
-    bypass TEXT,
-    executor_pid INTEGER,
-    scope_unit TEXT,
-    cgroup_path TEXT
-);
-CREATE TABLE IF NOT EXISTS events (
-    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
-    timestamp TEXT NOT NULL,
-    kind TEXT NOT NULL,
-    lease_id TEXT,
-    parent_lease_id TEXT,
-    uid INTEGER,
-    repo TEXT,
-    label TEXT,
-    requested_weight INTEGER,
-    effective_weight INTEGER,
-    wait_seconds REAL,
-    outcome TEXT,
-    reason TEXT,
-    scope_unit TEXT,
-    peak_memory_bytes INTEGER,
-    signals TEXT,
-    child_exit_code INTEGER,
-    operator_uid INTEGER,
-    operator_tty TEXT,
-    operator_reason TEXT
-);
-"""
-
-EVENT_FIELDS = (
-    "lease_id", "parent_lease_id", "uid", "repo", "label", "requested_weight", "effective_weight",
-    "wait_seconds", "outcome", "reason", "scope_unit", "peak_memory_bytes", "signals",
-    "child_exit_code", "operator_uid", "operator_tty", "operator_reason",
-)
+from typing import Iterator
 
 
-class StoreError(Exception):
-    """The state or audit store cannot safely record a decision."""
+class StoreError(RuntimeError):
+    """Durable state could not be trusted or changed."""
 
 
 @dataclass(frozen=True)
 class Lease:
     lease_id: str
-    parent_lease_id: str | None
     uid: int
     repo: str
     label: str
     requested_weight: int
     effective_weight: int
-    wait_seconds: float
-    bypass: str | None
+    exclusive: bool
+    bypass: bool
     executor_pid: int | None
     scope_unit: str | None
-    cgroup_path: str | None
+    scope_cgroup: str | None
+    released_at: str | None
+
+
+_SCHEMA = """
+CREATE TABLE IF NOT EXISTS leases (
+    lease_id TEXT PRIMARY KEY,
+    uid INTEGER NOT NULL,
+    repo TEXT NOT NULL,
+    label TEXT NOT NULL,
+    requested_weight INTEGER NOT NULL CHECK (requested_weight > 0),
+    effective_weight INTEGER NOT NULL CHECK (effective_weight > 0),
+    exclusive INTEGER NOT NULL,
+    bypass INTEGER NOT NULL,
+    executor_pid INTEGER,
+    scope_unit TEXT,
+    scope_cgroup TEXT,
+    acquired_at TEXT NOT NULL,
+    released_at TEXT
+);
+CREATE INDEX IF NOT EXISTS active_leases ON leases(released_at);
+CREATE TABLE IF NOT EXISTS events (
+    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+    timestamp TEXT NOT NULL,
+    event_type TEXT NOT NULL,
+    payload_json TEXT NOT NULL
+);
+"""
 
 
 def _now() -> str:
-    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.%fZ")
+    return datetime.now(timezone.utc).isoformat(timespec="microseconds").replace("+00:00", "Z")
 
 
 class Store:
-    def __init__(self, path: Path | str):
+    def __init__(self, path: str | Path):
         self.path = Path(path)
+        self._lock = threading.RLock()
         try:
-            self._db = sqlite3.connect(self.path, isolation_level=None, timeout=30)
+            self.path.parent.mkdir(parents=True, exist_ok=True)
+            self._db = sqlite3.connect(self.path, timeout=30, isolation_level=None,
+                                       check_same_thread=False)
             self._db.row_factory = sqlite3.Row
-            if self._db.execute("PRAGMA journal_mode=WAL").fetchone()[0].lower() != "wal":
-                raise StoreError("cannot enable WAL journaling")
+            mode = self._db.execute("PRAGMA journal_mode=WAL").fetchone()[0]
             self._db.execute("PRAGMA synchronous=FULL")
-            self._db.executescript(SCHEMA)
-        except sqlite3.Error as exc:
-            raise StoreError(f"cannot open state store {self.path}: {exc}") from exc
+            if mode.lower() != "wal" or self._db.execute("PRAGMA synchronous").fetchone()[0] != 2:
+                raise StoreError("WAL/FULL durability unavailable")
+            self._db.executescript(_SCHEMA)
+        except (OSError, sqlite3.Error) as exc:
+            raise StoreError(f"cannot open governor state: {exc}") from exc
 
     def close(self) -> None:
-        with contextlib.suppress(sqlite3.Error):
-            self._db.close()
+        with self._lock:
+            if self._db is not None:
+                self._db.close()
+                self._db = None
 
-    @contextlib.contextmanager
+    @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
-        try:
-            self._db.execute("BEGIN IMMEDIATE")
-        except sqlite3.Error as exc:
-            raise StoreError(f"cannot begin transaction: {exc}") from exc
-        try:
-            yield self._db
-            self._db.execute("COMMIT")
-        except sqlite3.Error as exc:
-            with contextlib.suppress(sqlite3.Error):
+        with self._lock:
+            if self._db is None:
+                raise StoreError("governor state is closed")
+            try:
+                self._db.execute("BEGIN IMMEDIATE")
+                yield self._db
+                self._db.execute("COMMIT")
+            except sqlite3.Error as exc:
                 self._db.execute("ROLLBACK")
-            raise StoreError(f"state store failure: {exc}") from exc
-        except BaseException:
-            with contextlib.suppress(sqlite3.Error):
+                raise StoreError(f"governor state transaction failed: {exc}") from exc
+            except BaseException:
                 self._db.execute("ROLLBACK")
-            raise
-
-    @staticmethod
-    def _insert_event(db: sqlite3.Connection, kind: str, **fields: Any) -> None:
-        unknown = set(fields) - set(EVENT_FIELDS)
-        if unknown:
-            raise StoreError(f"unknown event fields: {sorted(unknown)}")
-        if isinstance(fields.get("signals"), (dict, list)):
-            fields["signals"] = json.dumps(fields["signals"], separators=(",", ":"))
-        columns = ["timestamp", "kind", *fields]
-        db.execute(
-            f"INSERT INTO events ({', '.join(columns)}) VALUES ({', '.join('?' * len(columns))})",
-            [_now(), kind, *fields.values()],
-        )
+                raise
 
     @staticmethod
     def _lease(row: sqlite3.Row) -> Lease:
-        return Lease(**{name: row[name] for name in Lease.__dataclass_fields__})
+        return Lease(row["lease_id"], row["uid"], row["repo"], row["label"],
+                     row["requested_weight"], row["effective_weight"],
+                     bool(row["exclusive"]), bool(row["bypass"]),
+                     row["executor_pid"], row["scope_unit"], row["scope_cgroup"],
+                     row["released_at"])
 
     @staticmethod
-    def _identity(lease: sqlite3.Row) -> dict[str, Any]:
-        return {name: lease[name] for name in (
-            "lease_id", "parent_lease_id", "uid", "repo", "label", "requested_weight",
-            "effective_weight", "wait_seconds", "scope_unit")}
+    def _event(db: sqlite3.Connection, event_type: str, *, lease: Lease | None = None,
+               **fields: object) -> None:
+        identity = dict(lease_id=None, parent_lease_id=None, uid=None, repo=None,
+                        label=None, requested_weight=None, effective_weight=None,
+                        wait_seconds=None, outcome=event_type, reason=None)
+        if lease is not None:
+            identity.update(lease_id=lease.lease_id, uid=lease.uid, repo=lease.repo,
+                            label=lease.label, requested_weight=lease.requested_weight,
+                            effective_weight=lease.effective_weight,
+                            scope_unit=lease.scope_unit)
+        identity.update(fields)
+        db.execute("INSERT INTO events(timestamp, event_type, payload_json) VALUES (?, ?, ?)",
+                   (_now(), event_type, json.dumps(identity, separators=(",", ":"),
+                                                  allow_nan=False)))
+
+    def reserve(self, *, uid: int, repo: str, label: str, requested_weight: int,
+                capacity: int, wait_seconds: float = 0.0, exclusive: bool = False,
+                bypass: bool = False, operator_uid: int | None = None,
+                operator_tty: str | None = None, operator_reason: str | None = None,
+                signals: object | None = None) -> Lease | None:
+        if requested_weight <= 0 or capacity <= 0 or uid < 0 or not repo or not label:
+            raise ValueError("invalid lease identity, weight, or capacity")
+        if bypass and (operator_uid is None or not operator_tty or not operator_reason):
+            raise ValueError("bypass requires authenticated operator audit fields")
+        effective = capacity if exclusive else min(requested_weight, capacity)
+        with self._transaction() as db:
+            used = db.execute("SELECT COALESCE(SUM(effective_weight), 0) FROM leases "
+                              "WHERE released_at IS NULL").fetchone()[0]
+            if not bypass and (used + effective > capacity or (exclusive and used != 0)):
+                self._event(db, "deny", uid=uid, repo=repo, label=label,
+                            requested_weight=requested_weight, effective_weight=effective,
+                            wait_seconds=wait_seconds, outcome="denied", reason="capacity",
+                            signals=signals)
+                return None
+            lease = Lease(uuid.uuid4().hex, uid, repo, label, requested_weight,
+                          effective, exclusive, bypass, None, None, None, None)
+            db.execute("INSERT INTO leases(lease_id, uid, repo, label, requested_weight, "
+                       "effective_weight, exclusive, bypass, acquired_at) "
+                       "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)",
+                       (lease.lease_id, uid, repo, label, requested_weight, effective,
+                        int(exclusive), int(bypass), _now()))
+            audit = dict(wait_seconds=wait_seconds, signals=signals,
+                         clamped=requested_weight > capacity or exclusive)
+            if bypass:
+                audit.update(outcome="admission", operator_uid=operator_uid,
+                             operator_tty=operator_tty, operator_reason=operator_reason)
+            self._event(db, "bypass" if bypass else "acquire", lease=lease, **audit)
+            return lease
+
+    def get_lease(self, lease_id: str) -> Lease | None:
+        with self._lock:
+            try:
+                row = self._db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
+            except (AttributeError, sqlite3.Error) as exc:
+                raise StoreError(f"cannot read lease: {exc}") from exc
+            return self._lease(row) if row else None
 
     def active_leases(self) -> list[Lease]:
-        try:
-            rows = self._db.execute("SELECT * FROM leases ORDER BY rowid").fetchall()
-        except sqlite3.Error as exc:
-            raise StoreError(str(exc)) from exc
-        return [self._lease(row) for row in rows]
-
-    def reserve(self, *, uid: int, repo: str, label: str, requested_weight: int, capacity: int,
-                wait_seconds: float, exclusive: bool = False, bypass: bool | str = False,
-                parent_lease_id: str | None = None, signals: Any = None,
-                operator_uid: int | None = None, operator_tty: str | None = None,
-                operator_reason: str | None = None) -> Lease | None:
-        """Atomically reserve weight and commit the acquire event, or record a denial."""
-        effective = capacity if exclusive else min(requested_weight, capacity)
-        if effective < 1:
-            raise StoreError("effective weight must be positive")
-        identity = dict(uid=uid, repo=repo, label=label, requested_weight=requested_weight,
-                        effective_weight=effective, wait_seconds=wait_seconds,
-                        parent_lease_id=parent_lease_id, signals=signals)
-        with self._transaction() as db:
-            used = db.execute("SELECT COALESCE(SUM(effective_weight), 0) FROM leases").fetchone()[0]
-            if not bypass and used + effective > capacity:
-                self._insert_event(db, "deny", outcome="denied", reason="capacity", **identity)
-                return None
-            lease_id = uuid.uuid4().hex
-            db.execute(
-                "INSERT INTO leases (lease_id, parent_lease_id, uid, repo, label, requested_weight,"
-                " effective_weight, wait_seconds, bypass) VALUES (?,?,?,?,?,?,?,?,?)",
-                (lease_id, parent_lease_id, uid, repo, label, requested_weight, effective,
-                 wait_seconds, (bypass if isinstance(bypass, str) else "admission") if bypass else None))
-            if bypass:
-                self._insert_event(db, "bypass", lease_id=lease_id, outcome=bypass if isinstance(bypass, str) else "admission",
-                                   operator_uid=operator_uid, operator_tty=operator_tty,
-                                   operator_reason=operator_reason, **identity)
-            else:
-                self._insert_event(db, "acquire", lease_id=lease_id, outcome="acquire", **identity)
-            row = db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
-        return self._lease(row)
+        with self._lock:
+            try:
+                rows = self._db.execute("SELECT * FROM leases WHERE released_at IS NULL "
+                                        "ORDER BY acquired_at, lease_id").fetchall()
+            except (AttributeError, sqlite3.Error) as exc:
+                raise StoreError(f"cannot read leases: {exc}") from exc
+            return [self._lease(row) for row in rows]
 
     def attach_executor(self, lease_id: str, pid: int) -> None:
+        if pid <= 0:
+            raise ValueError("executor PID must be positive")
         with self._transaction() as db:
-            self._require(db, lease_id)
-            db.execute("UPDATE leases SET executor_pid=? WHERE lease_id=?", (pid, lease_id))
+            cursor = db.execute("UPDATE leases SET executor_pid=? WHERE lease_id=? "
+                                "AND released_at IS NULL AND executor_pid IS NULL", (pid, lease_id))
+            if cursor.rowcount != 1:
+                raise StoreError("lease is missing, released, or already has an executor")
 
-    def attach_scope(self, lease_id: str, unit: str, cgroup_path: str) -> None:
+    set_executor = attach_executor
+
+    def attach_scope(self, lease_id: str, unit: str, cgroup: str) -> None:
+        if not unit or not cgroup:
+            raise ValueError("scope identity is required")
         with self._transaction() as db:
-            self._require(db, lease_id)
-            db.execute("UPDATE leases SET scope_unit=?, cgroup_path=? WHERE lease_id=?",
-                       (unit, cgroup_path, lease_id))
-
-    @staticmethod
-    def _require(db: sqlite3.Connection, lease_id: str) -> sqlite3.Row:
-        row = db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
-        if row is None:
-            raise StoreError(f"unknown or already released lease {lease_id}")
-        return row
+            cursor = db.execute("UPDATE leases SET scope_unit=?, scope_cgroup=? "
+                                "WHERE lease_id=? AND released_at IS NULL AND scope_unit IS NULL",
+                                (unit, cgroup, lease_id))
+            if cursor.rowcount != 1:
+                raise StoreError("lease is missing, released, or already has a scope")
 
     def release(self, lease_id: str, *, verified_empty: bool, outcome: str,
-                child_exit_code: int | None = None, peak_memory_bytes: int | None = None,
+                child_exit_code: int | None = None,
+                peak_memory_bytes: int | None = None,
                 reason: str | None = None) -> None:
-        """Free a lease. Refuses unless the caller has proven the scope cgroup is empty."""
-        if not verified_empty:
-            raise StoreError("refusing to release a lease whose scope is not verified empty")
         with self._transaction() as db:
-            lease = self._require(db, lease_id)
-            self._insert_event(db, "release", outcome=outcome, reason=reason,
-                               child_exit_code=child_exit_code,
-                               peak_memory_bytes=peak_memory_bytes, **self._identity(lease))
-            db.execute("DELETE FROM leases WHERE lease_id=?", (lease_id,))
+            row = db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
+            if row is None:
+                raise StoreError("unknown lease")
+            lease = self._lease(row)
+            if lease.released_at is not None:
+                return
+            if not verified_empty:
+                raise StoreError("scope emptiness has not been verified")
+            self._event(db, "release", lease=lease, outcome=outcome, reason=reason,
+                        child_exit_code=child_exit_code,
+                        peak_memory_bytes=peak_memory_bytes)
+            db.execute("UPDATE leases SET released_at=? WHERE lease_id=?", (_now(), lease_id))
 
-    def recover_unattached(self, lease_id: str, *, executor_gone: bool, unit_absent: bool) -> None:
-        """Release a reservation that never got a persisted scope, only with proof of absence."""
+    def recover_unattached(self, lease_id: str, *, executor_gone: bool,
+                           unit_absent: bool) -> None:
+        lease = self.get_lease(lease_id)
+        if lease is None:
+            raise StoreError("unknown lease")
+        if lease.scope_unit is not None:
+            raise StoreError("scope identity exists; verify its cgroup instead")
+        if not executor_gone or not unit_absent:
+            raise StoreError("unattached reservation cannot be proven empty")
+        self.release(lease_id, verified_empty=True, outcome="infra-error",
+                     reason="recovered-unattached")
+
+    def record_event(self, event_type: str, *, lease_id: str | None = None,
+                     **fields: object) -> None:
         with self._transaction() as db:
-            lease = self._require(db, lease_id)
-            if lease["scope_unit"] is not None:
-                raise StoreError("lease has a persisted scope; reconcile the scope instead")
-            if not (executor_gone and unit_absent):
-                raise StoreError("cannot prove the executor and scope unit are gone; lease stays reserved")
-            self._insert_event(db, "release", outcome="recovered", reason="unattached-recovery",
-                               **self._identity(lease))
-            db.execute("DELETE FROM leases WHERE lease_id=?", (lease_id,))
+            row = (db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
+                   if lease_id else None)
+            if lease_id and row is None:
+                raise StoreError("unknown lease")
+            self._event(db, event_type, lease=self._lease(row) if row else None, **fields)
 
-    def record_event(self, kind: str, *, lease_id: str | None = None, **fields: Any) -> None:
-        with self._transaction() as db:
-            if lease_id is not None:
-                lease = db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
-                if lease is not None:
-                    fields = {**self._identity(lease), **fields}
-                else:
-                    fields["lease_id"] = lease_id
-            self._insert_event(db, kind, **fields)
+    def events(self, *, since: str | None = None) -> list[dict[str, object]]:
+        with self._lock:
+            try:
+                sql = "SELECT * FROM events"
+                args: tuple[str, ...] = ()
+                if since is not None:
+                    sql += " WHERE timestamp >= ?"
+                    args = (since,)
+                rows = self._db.execute(sql + " ORDER BY event_id", args).fetchall()
+            except (AttributeError, sqlite3.Error) as exc:
+                raise StoreError(f"cannot read events: {exc}") from exc
+        return [dict(schema_version=1, event_id=row["event_id"],
+                     timestamp=row["timestamp"], event=row["event_type"],
+                     **json.loads(row["payload_json"])) for row in rows]
 
-    def events(self, since: str | None = None) -> list[dict[str, Any]]:
-        query, args = "SELECT * FROM events", []
-        if since:
-            query += " WHERE timestamp >= ?"
-            args.append(since)
-        try:
-            rows = self._db.execute(query + " ORDER BY event_id", args).fetchall()
-        except sqlite3.Error as exc:
-            raise StoreError(str(exc)) from exc
-        result = []
-        for row in rows:
-            event = {"schema_version": CONTRACT_VERSION, **dict(row)}
-            event["event"] = event.pop("kind")
-            if event["signals"] is not None:
-                event["signals"] = json.loads(event["signals"])
-            result.append(event)
-        return result
-
-    def events_jsonl(self, since: str | None = None) -> str:
-        return "".join(json.dumps(e, separators=(",", ":"), sort_keys=True) + "\n"
-                       for e in self.events(since))
+    def events_jsonl(self, *, since: str | None = None) -> str:
+        return "".join(json.dumps(event, separators=(",", ":")) + "\n"
+                       for event in self.events(since=since))
