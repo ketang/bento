@@ -2,7 +2,7 @@
 
 **Date:** 2026-09-23
 
-**Status:** Design complete; implementation pending in `bento-dyp7.2`
+**Status:** Implemented in `bento-dyp7.2`; real-host smoke and installation pending
 
 **Contract version:** 1 (`bento-governor-v1`)
 **Owner:** Bento (`bento-dyp7.1`)
