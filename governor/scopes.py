@@ -154,6 +154,8 @@ class SystemdScopes:
                 os.setgid(request.gid)
                 os.setuid(request.uid)
                 os.chdir(request.cwd)
+                for target, source in enumerate(request.fds[:3]):
+                    os.dup2(source, target)
                 if os.read(read_end, 1) != b"1":
                     os._exit(70)
                 os.close(read_end)
@@ -179,6 +181,21 @@ class SystemdScopes:
         handle = ScopeHandle(unit, str(path), pid, child_pid=pid)
         handle.gate = gate
         return handle
+
+    def run_nested(self, handle: ScopeHandle, request) -> int:
+        """Start a re-entrant child inside the outer job's live scope (no second reservation)."""
+        pid, gate = self._spawn_blocked(request)
+        try:
+            (handle.path / "cgroup.procs").write_text(str(pid))
+            if str(pid) not in (handle.path / "cgroup.procs").read_text().split():
+                raise ScopeError("nested child not in outer scope")
+            os.write(gate, b"1")
+        except Exception:
+            self._kill_executor(pid)
+            raise
+        finally:
+            os.close(gate)
+        return pid
 
     def release_executor(self, handle: ScopeHandle) -> None:
         """Step 5: let the executor exec, only after the lease row is durable."""

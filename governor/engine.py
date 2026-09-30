@@ -17,6 +17,7 @@ from typing import Any, Callable
 from . import CONTRACT_VERSION
 from .store import Lease, Store, StoreError
 
+TOKEN_ENV = "BENTO_GOVERNOR_LEASE_TOKEN"
 EXIT = {"invalid-args": 64, "denied": 69, "infra-error": 70, "timeout": 75, "oom-killed": 137}
 
 
@@ -37,6 +38,7 @@ class Request:
     operator_tty: str | None = None
     peer_pid: int | None = None
     gid: int = 0
+    fds: list[int] = field(default_factory=list)  # caller stdin/stdout/stderr (SCM_RIGHTS)
     parent_token: str | None = None
 
 
@@ -263,6 +265,8 @@ class Engine:
                 return True
         self.queue.remove(ticket)
         ticket.lease = lease
+        ticket.token = secrets.token_hex(16)
+        req.env[TOKEN_ENV] = ticket.token  # nested calls present it; peer cgroup membership is still verified
         try:
             launch = self.scopes.launch_uncontained if req.bypass == "uncontained" else self.scopes.launch
             handle = launch(lease, req)
@@ -274,7 +278,6 @@ class Engine:
             self._abort(ticket, str(exc))
             return True
         ticket.handle, ticket.state = handle, "running"
-        ticket.token = secrets.token_hex(16)
         self.running[ticket.token] = ticket
         return True
 

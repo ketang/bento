@@ -1,0 +1,13 @@
+# /etc/bento-governor/v1.toml — administrator-owned; callers cannot change it.
+# capacity = 8              # default: min(cpus/4, (MemTotal-8GiB)/4GiB); required on hosts < 12 GiB
+allowed_uids = [1000]       # deny by default
+operator_uids = [1000]      # may request --bypass (also needs polkit auth + a real TTY)
+poll_seconds = 10
+# Thresholds (defaults shown; see docs/specs/2026-09-23-host-governor-design.md):
+# min_mem_bytes = 8589934592
+# max_memory_full_avg10 = 1.0
+# max_io_some_avg10 = 20.0
+# max_cpu_some_avg10 = 20.0
+# min_disk_bytes = 10737418240
+# max_load_factor = 1.5
+# extra_disk_paths = []

@@ -1,0 +1,17 @@
+[Unit]
+Description=Bento host-wide admission governor (contract v1)
+After=local-fs.target
+ConditionPathExists=/etc/bento-governor/v1.toml
+
+[Service]
+Type=simple
+ExecStart=/opt/bento-governor/v1/current/bin/bento-governor-v1 serve --config /etc/bento-governor/v1.toml
+Restart=on-failure
+# Scopes are transient units outside this service's cgroup, so restarting it never kills running jobs.
+KillMode=process
+StateDirectory=bento-governor/v1
+RuntimeDirectory=bento-governor
+RuntimeDirectoryPreserve=yes
+
+[Install]
+WantedBy=multi-user.target

@@ -7,6 +7,7 @@ import array
 import json
 import os
 from pathlib import Path
+import signal
 import socket
 import sys
 import tempfile
@@ -133,14 +134,31 @@ def _request(message: dict[str, Any], *, forward_stdio: bool = False) -> dict[st
             connection.sendmsg([payload], [(socket.SOL_SOCKET, socket.SCM_RIGHTS, descriptors)])
         else:
             connection.sendall(payload)
-        response = bytearray()
-        while b"\n" not in response:
-            chunk = connection.recv(65536)
-            if not chunk:
-                raise OSError("governor service disconnected without a result")
-            response.extend(chunk)
-            if len(response) > MAX_RESPONSE_BYTES:
-                raise OSError("governor response exceeded size limit")
+        previous = {}
+        if forward_stdio:  # forward SIGINT/SIGTERM to the scope; the service keeps the lease until it empties
+            def forward(signum, _frame):
+                try:
+                    connection.send(b"TERM\n" if signum == signal.SIGTERM else b"INT\n")
+                except OSError:
+                    pass
+            for signum in (signal.SIGINT, signal.SIGTERM):
+                previous[signum] = signal.signal(signum, forward)
+        try:
+            return _read_response(connection)
+        finally:
+            for signum, handler in previous.items():
+                signal.signal(signum, handler)
+
+
+def _read_response(connection: socket.socket) -> dict[str, Any]:
+    response = bytearray()
+    while b"\n" not in response:
+        chunk = connection.recv(65536)
+        if not chunk:
+            raise OSError("governor service disconnected without a result")
+        response.extend(chunk)
+        if len(response) > MAX_RESPONSE_BYTES:
+            raise OSError("governor response exceeded size limit")
     value = json.loads(response.split(b"\n", 1)[0])
     if not isinstance(value, dict) or value.get("schema_version") != CONTRACT_VERSION:
         raise OSError("incompatible governor response")
@@ -169,6 +187,7 @@ def _run(args: argparse.Namespace) -> int:
         "cwd": os.getcwd(),
         "environment": dict(os.environ),
         "has_tty": sys.stdin.isatty(),
+        "tty": os.ttyname(0) if sys.stdin.isatty() else None,
     }
     try:
         response = _request(message, forward_stdio=True)
