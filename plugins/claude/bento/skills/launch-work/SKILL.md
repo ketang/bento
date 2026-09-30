@@ -266,26 +266,29 @@ hygiene whenever concurrent activity is possible:
 ### Heavy Job Protocol
 
 When running a heavy job — a compiler, linker, full test suite, or bundler on
-a non-trivial codebase — prefix the command with `launch-work/scripts/run-heavy`:
+a non-trivial codebase — run it through the host-wide admission governor,
+`/usr/local/bin/bento-governor-v1` (contract `docs/specs/2026-09-23-host-governor-design.md`):
 
 ```bash
-launch-work/scripts/run-heavy cargo build --release
-launch-work/scripts/run-heavy scripts/build-plugins
-launch-work/scripts/run-heavy pnpm build
+bento-governor-v1 run --weight 2 --repo bento --label build-plugins -- scripts/build-plugins
+bento-governor-v1 run --exclusive --repo myrepo --label full-test -- cargo test
 ```
 
-`run-heavy` waits until the 1-minute load average drops below
-`nproc × HEAVY_LOAD_FACTOR` (default 1.5×), then execs the command under
-`nice -n 10 ionice -c 3`. It gives up waiting after `HEAVY_MAX_WAIT`
-seconds (default 600) and proceeds at low priority regardless.
+`--repo`/`--label` are required and stable names. `--weight N` (default 1)
+reserves N × 4 GiB of the shared host pool; size it for the whole process tree,
+since nested calls inside the job reuse its lease. The governor waits until CPU,
+memory, I/O, disk, and load signals are ready, then runs the command in a
+memory-limited scope at `nice -n 10 ionice -c 3`. It never proceeds after a
+timeout or infrastructure error: exit 69 = denied, 70 = governor/infra error
+(command did not run), 75 = `--max-wait` elapsed, 137 = OOM-killed; otherwise
+the child's status. Do not retry by bypassing; report 69/70/75 to the operator.
+`bento-governor-v1 signals --json` shows why a run would block.
 
-`run-heavy` ships as a bundled script inside the `launch-work` skill, so it is
-available in any repo the skill is installed into. Resolve its path relative
-to this `SKILL.md` file, the same way as the other helpers in this skill: if
-you opened `/.../skills/launch-work/SKILL.md`, run
-`/.../skills/launch-work/scripts/run-heavy <cmd>`. It targets the current
-machine's load, not the target repo, so it works the same whether the repo
-being built is bento itself or an unrelated target project.
+`launch-work/scripts/run-heavy [--weight N] <cmd>` remains as a shim that
+calls the installed governor (repo/label default to the repo name and command)
+and fails closed if it is not installed. It targets host load, not the target
+repo, so it works the same for bento or any unrelated project. `HEAVY_MAX_WAIT`
+and `HEAVY_LOAD_FACTOR` are ignored.
 
 Heavy jobs: `cargo build/test/clippy`, `rustc`, `scripts/build-plugins`,
 `npm/pnpm/yarn build`, `webpack`, `vite build`, `tsc --build` (large projects),

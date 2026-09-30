@@ -243,14 +243,15 @@ close to it:
 > - If a long gate or background job is in flight, message the team lead before
 >   going idle.
 
-Teammates must use `../launch-work/scripts/run-heavy` when invoking build
-commands in their worktrees (see the Heavy Job Protocol in `launch-work`
-SKILL.md). Include this in every teammate prompt:
+Teammates must run build commands in their worktrees through the host-wide
+governor, `/usr/local/bin/bento-governor-v1 run` (see the Heavy Job Protocol in
+`launch-work` SKILL.md). Include this in every teammate prompt:
 
 > **For heavy build commands (`cargo build/test`, `scripts/build-plugins`,
-> bundlers, etc.) use the `launch-work` skill's `scripts/run-heavy <cmd>` so
-> concurrent workers don't pile CPU and memory pressure on the shared
-> machine.**
+> bundlers, etc.) run `bento-governor-v1 run [--weight N] --repo <repo>
+> --label <name> -- <cmd>` so concurrent workers don't pile CPU and memory
+> pressure on the shared machine. Exit 69/70/75 means the command did not
+> run; report it, never bypass.**
 
 Teammates do not land their own work. The lead runs `bento:land-work` for
 every completed branch. The teammate prompt must instruct the teammate to stop
