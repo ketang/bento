@@ -94,6 +94,24 @@ class StoreTests(unittest.TestCase):
             self.reserve()
         self.assertEqual(self.store.active_leases(), [])
 
+    def test_capacity_serializes_across_store_connections(self):
+        second_store = Store(self.path)
+        self.addCleanup(second_store.close)
+        self.assertIsNotNone(self.reserve(requested_weight=3))
+        self.assertIsNone(second_store.reserve(uid=1002, repo="shatter", label="build",
+                                                requested_weight=2, capacity=4))
+        self.assertEqual(len(second_store.active_leases()), 1)
+
+    def test_release_audit_failure_preserves_reservation(self):
+        lease = self.reserve()
+        with sqlite3.connect(self.path) as connection:
+            connection.execute("CREATE TRIGGER fail_release BEFORE INSERT ON events "
+                               "WHEN NEW.event_type = 'release' "
+                               "BEGIN SELECT RAISE(FAIL, 'audit failed'); END")
+        with self.assertRaises(StoreError):
+            self.store.release(lease.lease_id, verified_empty=True, outcome="completed")
+        self.assertEqual(self.store.get_lease(lease.lease_id).released_at, None)
+
 
 if __name__ == "__main__":
     unittest.main()

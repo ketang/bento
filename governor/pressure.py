@@ -31,9 +31,14 @@ class SignalError(Exception):
 def _positive_number(config: dict, key: str) -> float | int:
     value = config.get(key, DEFAULTS[key])
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise SignalError("invalid_override", f"{key} must be a finite positive number")
-    if not math.isfinite(value) or value <= 0:
-        raise SignalError("invalid_override", f"{key} must be a finite positive number")
+        raise SignalError("invalid_override", f"{key} must be a finite number")
+    if not math.isfinite(value):
+        raise SignalError("invalid_override", f"{key} must be a finite number")
+    if key.endswith("_avg10"):
+        if not 0 <= value <= 100:
+            raise SignalError("invalid_override", f"{key} must be between 0 and 100 percent")
+    elif value <= 0:
+        raise SignalError("invalid_override", f"{key} must be positive")
     if key.endswith("_bytes") and (not isinstance(value, int) or value < 1):
         raise SignalError("invalid_override", f"{key} must be a positive integer number of bytes")
     return value

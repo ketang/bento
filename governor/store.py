@@ -233,15 +233,20 @@ class Store:
 
     def recover_unattached(self, lease_id: str, *, executor_gone: bool,
                            unit_absent: bool) -> None:
-        lease = self.get_lease(lease_id)
-        if lease is None:
-            raise StoreError("unknown lease")
-        if lease.scope_unit is not None:
-            raise StoreError("scope identity exists; verify its cgroup instead")
-        if not executor_gone or not unit_absent:
-            raise StoreError("unattached reservation cannot be proven empty")
-        self.release(lease_id, verified_empty=True, outcome="infra-error",
-                     reason="recovered-unattached")
+        with self._transaction() as db:
+            row = db.execute("SELECT * FROM leases WHERE lease_id=?", (lease_id,)).fetchone()
+            if row is None:
+                raise StoreError("unknown lease")
+            lease = self._lease(row)
+            if lease.released_at is not None:
+                return
+            if lease.scope_unit is not None:
+                raise StoreError("scope identity exists; verify its cgroup instead")
+            if not executor_gone or not unit_absent:
+                raise StoreError("unattached reservation cannot be proven empty")
+            self._event(db, "release", lease=lease, outcome="infra-error",
+                        reason="recovered-unattached")
+            db.execute("UPDATE leases SET released_at=? WHERE lease_id=?", (_now(), lease_id))
 
     def record_event(self, event_type: str, *, lease_id: str | None = None,
                      **fields: object) -> None:

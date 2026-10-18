@@ -90,6 +90,10 @@ def test_bad_override_fails_closed(tmp_path: Path, monkeypatch: pytest.MonkeyPat
     result = sample(tmp_path, proc, max_cpu_some_avg10=float("nan"))
     assert result["status"] == "error"
     assert by_name(result, "cpu_some_avg10")[0]["reason"] == "invalid_override"
+    above_percent = sample(tmp_path, proc, max_cpu_some_avg10=101)
+    assert by_name(above_percent, "cpu_some_avg10")[0]["reason"] == "invalid_override"
+    zero = sample(tmp_path, proc, max_cpu_some_avg10=0)
+    assert by_name(zero, "cpu_some_avg10")[0]["status"] == "ready"
 
 
 def test_disk_paths_deduplicate_device_and_keep_paths(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
