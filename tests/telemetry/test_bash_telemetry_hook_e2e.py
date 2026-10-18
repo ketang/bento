@@ -81,7 +81,7 @@ class BashTelemetryHookE2ETest(E2ETestCase):
                         ],
                     }
                 ],
-                "PostToolUse": [
+                **{event: [
                     {
                         "matcher": "Bash",
                         "hooks": [
@@ -91,7 +91,8 @@ class BashTelemetryHookE2ETest(E2ETestCase):
                             }
                         ],
                     }
-                ],
+                ]
+                for event in ("PostToolUse", "PostToolUseFailure")},
             }
         }
         (repo / ".claude").mkdir()
@@ -116,6 +117,10 @@ class BashTelemetryHookE2ETest(E2ETestCase):
         script_dir.mkdir(parents=True)
         (script_dir / "noop.py").write_text(
             "# noop script for e2e telemetry test\n", encoding="utf-8"
+        )
+        (script_dir / "fail.py").write_text(
+            "import sys\nsys.stderr.write('kaboom\\n')\nsys.exit(3)\n",
+            encoding="utf-8",
         )
 
         return repo
@@ -146,6 +151,36 @@ class BashTelemetryHookE2ETest(E2ETestCase):
         self.assertEqual(last["class"], "ok")
         self.assertEqual(last["exit"], 0)
         self.assertEqual(last["v"], 1)
+        self.assertZolemHit()
+
+
+@unittest.skipUnless(
+    _have("zolem") and _have("claude"),
+    "zolem and claude must both be on PATH",
+)
+class BashTelemetryFailureHookE2ETest(BashTelemetryHookE2ETest):
+    """A failing helper reaches record-bash via PostToolUseFailure."""
+
+    FIXTURE_NS = "e2e-telemetry-fail"
+
+    def test_hook_records_bash_event(self) -> None:
+        pass  # inherited success-path test uses the other fixture
+
+    def test_hook_records_failed_bash_event(self) -> None:
+        repo = self._init_repo_with_hook()
+        self._run_claude(
+            repo,
+            "say ok",
+            extra_env={"XDG_STATE_HOME": str(self.xdg_state)},
+        )
+        today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
+        jsonl = self.xdg_state / "bento" / "telemetry" / f"{today}.jsonl"
+        self.assertTrue(jsonl.exists(), f"telemetry JSONL not found: {jsonl}")
+        last = json.loads(jsonl.read_text(encoding="utf-8").strip().splitlines()[-1])
+        self.assertEqual(last["script"], "fail.py")
+        self.assertEqual(last["exit"], 3)
+        self.assertEqual(last["class"], "error")
+        self.assertNotIn("exit_parsed", last)
         self.assertZolemHit()
 
 

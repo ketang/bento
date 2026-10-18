@@ -106,10 +106,15 @@ def make_script_record(
     duration_ms: int | None,
     realpath: str,
     session_id: str | None = None,
+    exit_parsed: bool = True,
     home: str | None = None,
     now: datetime | None = None,
 ) -> dict[str, Any] | None:
-    """Build a script telemetry record, or None for unwatched paths."""
+    """Build a script telemetry record, or None for unwatched paths.
+
+    ``exit_parsed=False`` marks a failure whose exit code could not be
+    recovered; ``exit`` is then a placeholder and the record says so.
+    """
     if not argv:
         return None
 
@@ -118,7 +123,7 @@ def make_script_record(
         return None
 
     sid = session_id if session_id is not None else _read_session_id()
-    return {
+    record = {
         "v": 1,
         "kind": "script",
         "id": str(uuid.uuid4()),
@@ -135,6 +140,9 @@ def make_script_record(
         "duration_ms": duration_ms,
         "stderr_tail": redact_stderr(stderr, home=home),
     }
+    if not exit_parsed:
+        record["exit_parsed"] = False
+    return record
 
 
 def jsonl_path_for(now: datetime | None = None) -> Path:

@@ -22,6 +22,11 @@
 #       "hooks": [{ "type": "command",
 #                   "command": "PROBE_EVENT=PostToolUse_Bash /path/to/probe-stdin.sh" }] }
 #   ],
+#   "PostToolUseFailure": [
+#     { "matcher": "Bash",
+#       "hooks": [{ "type": "command",
+#                   "command": "PROBE_EVENT=PostToolUseFailure_Bash /path/to/probe-stdin.sh" }] }
+#   ],
 #   "SessionStart": [
 #     { "matcher": "",
 #       "hooks": [{ "type": "command",
@@ -66,6 +71,8 @@ FIELD_NOTES = {
     "tool_name":         "Which Claude tool fired (Bash, Edit, Write, …)",
     "tool_input":        "The arguments Claude passed to the tool",
     "tool_response":     "PostToolUse only — the tool's return value",
+    "error":             "PostToolUseFailure only — failure text, e.g. \"Exit code 7\\n<stderr>\"",
+    "is_interrupt":      "PostToolUseFailure only — true if the call was interrupted",
     "cwd":               "Project directory at time of tool call (NOT the hook's PWD)",
     "transcript_path":   "Path to the session's JSONL transcript on disk",
     "stop_hook_active":  "Stop only — true if a Stop hook is already running",

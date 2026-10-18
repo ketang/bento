@@ -91,6 +91,50 @@ class PayloadParsingTest(unittest.TestCase):
         self.assertEqual(event.session_id, "s1")
 
 
+class FailurePayloadParsingTest(unittest.TestCase):
+    """Payload shape captured from a real Claude Code PostToolUseFailure."""
+
+    def setUp(self) -> None:
+        self.hook = load_hook()
+
+    def payload(self, error: str, **extra: object) -> dict:
+        return {
+            "session_id": "s1",
+            "hook_event_name": "PostToolUseFailure",
+            "tool_name": "Bash",
+            "tool_input": {"command": "sh -c 'echo oops >&2; exit 7'"},
+            "error": error,
+            "is_interrupt": False,
+            "duration_ms": 120,
+            **extra,
+        }
+
+    def test_exit_code_and_stderr_parsed_from_error_text(self) -> None:
+        event = self.hook.event_from_payload(self.payload("Exit code 7\noops"))
+        self.assertEqual(event.exit_code, 7)
+        self.assertTrue(event.exit_parsed)
+        self.assertEqual(event.stderr, "oops")
+        self.assertEqual(event.duration_ms, 120)
+        self.assertFalse(event.interrupted)
+
+    def test_unparseable_failure_defaults_to_exit_1(self) -> None:
+        event = self.hook.event_from_payload(self.payload("something broke"))
+        self.assertEqual(event.exit_code, 1)
+        self.assertFalse(event.exit_parsed)
+        self.assertEqual(event.stderr, "something broke")
+
+    def test_is_interrupt_sets_interrupted(self) -> None:
+        event = self.hook.event_from_payload(self.payload("Exit code 130", is_interrupt=True))
+        self.assertTrue(event.interrupted)
+
+    def test_success_payload_still_defaults_to_zero(self) -> None:
+        event = self.hook.event_from_payload(
+            {"tool_input": {"command": "echo hi"}, "tool_response": {"stdout": "hi"}}
+        )
+        self.assertEqual(event.exit_code, 0)
+        self.assertTrue(event.exit_parsed)
+
+
 class HookMainTest(unittest.TestCase):
     def setUp(self) -> None:
         self.temp = tempfile.TemporaryDirectory()
@@ -212,6 +256,38 @@ class HookMainTest(unittest.TestCase):
         self.assertEqual(result.returncode, 0)
         errors = self.state / "bento" / "telemetry" / "hook-errors.log"
         self.assertIn("forced append error", errors.read_text(encoding="utf-8"))
+
+
+    def test_failure_record(self) -> None:
+        result = self.run_hook(
+            {
+                "session_id": "s1",
+                "hook_event_name": "PostToolUseFailure",
+                "tool_input": {"command": f"{self.script} --base main"},
+                "error": "Exit code 3\nbad base",
+                "is_interrupt": False,
+                "duration_ms": 12,
+            }
+        )
+        self.assertEqual(result.returncode, 0)
+        rec = self.records()[0]
+        self.assertEqual(rec["exit"], 3)
+        self.assertEqual(rec["class"], "error")
+        self.assertNotIn("exit_parsed", rec)
+        self.assertEqual(rec["stderr_tail"], ["bad base"])
+
+    def test_failure_record_without_code(self) -> None:
+        self.run_hook(
+            {
+                "hook_event_name": "PostToolUseFailure",
+                "tool_input": {"command": f"{self.script}"},
+                "error": "weird",
+            }
+        )
+        rec = self.records()[0]
+        self.assertEqual(rec["exit"], 1)
+        self.assertEqual(rec["class"], "error")
+        self.assertIs(rec["exit_parsed"], False)
 
 
 if __name__ == "__main__":

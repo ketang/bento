@@ -50,6 +50,10 @@ includes `cwd` on every event, including `SessionStart`.** Fields observed:
 | `PreToolUse` | above (minus `source`) + `turn_id`, `tool_name`, `tool_input`, `tool_use_id` |
 | `PostToolUse` | `PreToolUse` fields + `tool_response` |
 
+No `PostToolUseFailure` equivalent has been observed or probed on codex, so
+bento's codex telemetry hook (`record-bash.py`) is registered on `PostToolUse`
+only and does not see failed helper calls. Re-probe before relying on it.
+
 Notes:
 
 - `permission_mode` reflects the run's sandbox/approval posture (e.g.

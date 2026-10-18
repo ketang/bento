@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-"""Claude PostToolUse(Bash) hook for bento helper telemetry."""
+"""Claude PostToolUse/PostToolUseFailure(Bash) hook for bento helper telemetry."""
 
 from __future__ import annotations
 
 import json
 import os
+import re
 import shlex
 import sys
 from datetime import datetime, timezone
@@ -32,8 +33,10 @@ class BashEvent(NamedTuple):
     interrupted: bool
     duration_ms: int | None
     session_id: str | None
+    exit_parsed: bool = True
 
 
+EXIT_CODE_RE = re.compile(r"^\s*Exit code (\d+)\s*\n?")
 INTERPRETERS = {"python", "python3", "bash", "sh"}
 
 
@@ -74,6 +77,8 @@ def event_from_payload(payload: dict[str, Any]) -> BashEvent:
     # hook-cwd-exempt: payload cwd/working_directory are the primary sources;
     # os.getcwd() is only a last-resort fallback when neither is present.
     cwd = _string(tool_input.get("cwd") or tool_input.get("working_directory") or os.getcwd())
+    if _is_failure(payload):
+        return _failure_event(payload, command, cwd)
     return BashEvent(
         command=command,
         cwd=cwd,
@@ -103,6 +108,27 @@ def event_from_payload(payload: dict[str, Any]) -> BashEvent:
     )
 
 
+def _is_failure(payload: dict[str, Any]) -> bool:
+    return payload.get("hook_event_name") == "PostToolUseFailure"
+
+
+def _failure_event(payload: dict[str, Any], command: str, cwd: str) -> BashEvent:
+    # PostToolUseFailure carries no exit-code field: the status is the leading
+    # "Exit code N" line of the top-level `error` string.
+    error = _string(payload.get("error"))
+    match = EXIT_CODE_RE.match(error)
+    return BashEvent(
+        command=command,
+        cwd=cwd,
+        exit_code=int(match.group(1)) if match else 1,
+        stderr=error[match.end():] if match else error,
+        interrupted=_bool_value(payload.get("is_interrupt")),
+        duration_ms=_optional_int(payload.get("duration_ms")),
+        session_id=_optional_string(payload.get("session_id") or os.environ.get("CLAUDE_SESSION_ID")),
+        exit_parsed=match is not None,
+    )
+
+
 def main() -> int:
     try:
         payload = _read_payload()
@@ -120,6 +146,7 @@ def main() -> int:
             duration_ms=event.duration_ms,
             realpath=parsed.realpath,
             session_id=event.session_id,
+            exit_parsed=event.exit_parsed,
             now=_now(),
         )
         if record is None:

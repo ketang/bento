@@ -138,6 +138,7 @@ class BentoTelemetryCliTest(unittest.TestCase):
                 "by_plugin": {},
                 "by_skill": {},
                 "by_day": {},
+                "failures_by_helper": {},
             },
         )
 
@@ -168,6 +169,7 @@ class BentoTelemetryCliTest(unittest.TestCase):
                 "by_plugin": {"bento": 3},
                 "by_skill": {"land-work": 3},
                 "by_day": {"2026-04-25": 2, "2026-04-26": 1},
+                "failures_by_helper": {"land-work/helper.py": {"failed": 1, "total": 3}},
             },
         )
 
