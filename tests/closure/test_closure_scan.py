@@ -6,7 +6,7 @@ import tempfile
 import time
 import unittest
 import unittest.mock
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
@@ -1383,3 +1383,103 @@ class TrackerMismatchTest(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class StaleClaimsTest(unittest.TestCase):
+    """bento-0tyd.8: report in_progress beads claims that no live work backs --
+    branch already merged into the primary branch, or no branch/worktree at
+    all after --stale-claim-days."""
+
+    def setUp(self) -> None:
+        self.temp_dir = tempfile.TemporaryDirectory()
+        self.repo = Path(self.temp_dir.name) / "repo"
+        self.repo.mkdir()
+        git(self.repo, "init", "-b", "main")
+        git(self.repo, "config", "user.name", "Closure Test")
+        git(self.repo, "config", "user.email", "closure@example.com")
+        (self.repo / "README.md").write_text("root\n", encoding="utf-8")
+        git(self.repo, "add", "README.md")
+        git(self.repo, "commit", "-m", "initial commit")
+        (self.repo / ".beads").mkdir()
+
+    def tearDown(self) -> None:
+        self.temp_dir.cleanup()
+
+    def _branch(self, name: str, merge: bool = False) -> None:
+        git(self.repo, "checkout", "-b", name)
+        (self.repo / f"{name}.txt").write_text("x\n", encoding="utf-8")
+        git(self.repo, "add", f"{name}.txt")
+        git(self.repo, "commit", "-m", f"work on {name}")
+        git(self.repo, "checkout", "main")
+        if merge:
+            git(self.repo, "merge", "--no-ff", name, "-m", f"merge {name}")
+
+    def _bd(self, issues: list[dict] | None, exit_code: int = 0) -> Path:
+        bin_dir = Path(self.temp_dir.name) / "fakebin"
+        bin_dir.mkdir(exist_ok=True)
+        path = bin_dir / "bd"
+        if issues is None:
+            body = "#!/bin/sh\necho boom >&2\nexit 1\n"
+        else:
+            payload = Path(self.temp_dir.name) / "bd.json"
+            payload.write_text(json.dumps(issues), encoding="utf-8")
+            body = f"#!/bin/sh\ncat '{payload}'\nexit {exit_code}\n"
+        path.write_text(body, encoding="utf-8")
+        path.chmod(0o755)
+        return bin_dir
+
+    @staticmethod
+    def _issue(issue_id: str, status: str = "in_progress", age_days: float = 30) -> dict:
+        ts = (datetime.now(timezone.utc) - timedelta(days=age_days)).strftime("%Y-%m-%dT%H:%M:%SZ")
+        return {"id": issue_id, "status": status, "started_at": ts, "updated_at": ts}
+
+    def _scan(self, bin_dir: Path, *args: str) -> dict:
+        env = {"PATH": os.pathsep.join([str(bin_dir), os.environ.get("PATH", "")])}
+        result = run(
+            [str(SCRIPT), "--no-liveness", "--tracker", "beads", *args], self.repo, env=env
+        )
+        return json.loads(result.stdout)
+
+    def _by_id(self, scan: dict) -> dict:
+        return {e["issue_id"]: e for e in scan["stale_claims"]}
+
+    def test_merged_branch_claim_is_reported(self) -> None:
+        self._branch("proj-1-done", merge=True)
+        scan = self._scan(self._bd([self._issue("proj-1", age_days=1)]))
+        entry = self._by_id(scan)["proj-1"]
+        self.assertEqual(entry["class"], "merged")
+        self.assertIn("proj-1-done", entry["evidence"])
+        self.assertIn("bd close proj-1", entry["suggested_action"])
+        self.assertIn("age_days", entry)
+
+    def test_unmerged_live_branch_is_not_reported(self) -> None:
+        self._branch("proj-2-live")
+        scan = self._scan(self._bd([self._issue("proj-2", age_days=60)]))
+        self.assertEqual(scan["stale_claims"], [])
+
+    def test_no_branch_older_than_threshold_is_reported(self) -> None:
+        scan = self._scan(self._bd([self._issue("proj-3", age_days=10)]))
+        entry = self._by_id(scan)["proj-3"]
+        self.assertEqual(entry["class"], "no_live_work")
+        self.assertIn("no branch/worktree found", entry["evidence"])
+        self.assertIn("bd update proj-3 --status open", entry["suggested_action"])
+
+    def test_no_branch_newer_than_threshold_is_not_reported(self) -> None:
+        scan = self._scan(self._bd([self._issue("proj-4", age_days=2)]))
+        self.assertEqual(scan["stale_claims"], [])
+
+    def test_stale_claim_days_flag_overrides_default(self) -> None:
+        bin_dir = self._bd([self._issue("proj-5", age_days=2)])
+        scan = self._scan(bin_dir, "--stale-claim-days", "1")
+        self.assertIn("proj-5", self._by_id(scan))
+
+    def test_non_in_progress_issues_are_ignored(self) -> None:
+        scan = self._scan(self._bd([self._issue("proj-6", status="open")]))
+        self.assertEqual(scan["stale_claims"], [])
+
+    def test_bd_failure_skips_section_with_warning(self) -> None:
+        self._branch("proj-7-x")
+        scan = self._scan(self._bd(None))
+        self.assertIsNone(scan["stale_claims"])
+        self.assertTrue(any("bd list" in w for w in scan["warnings"]))
+        self.assertIn("local_branches", scan)
