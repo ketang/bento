@@ -268,12 +268,20 @@ class RequireWorktreeGitGuardTest(unittest.TestCase):
         wt_gitdir = repo / ".git" / "worktrees" / wt.name
         for cmd in (
             f"git --git-dir={wt_gitdir} --work-tree={wt} rebase main",
-            f"git --work-tree={wt} rebase main",
-            f"git --git-dir={wt_gitdir} rebase main",
             f"GIT_DIR={wt_gitdir} GIT_WORK_TREE={wt} git rebase main",
         ):
             with self.subTest(cmd=cmd):
                 self.assertEqual(self.run_hook(cmd, repo).returncode, 0)
+
+    def test_half_specified_repo_pair_also_judges_the_running_dir(self) -> None:
+        # --work-tree alone finds its git dir from the cwd; --git-dir alone
+        # defaults the work tree to the cwd. Either way the cwd repo is hit.
+        repo, wt = self._pair()
+        wt_gitdir = repo / ".git" / "worktrees" / wt.name
+        for cmd in (f"git --work-tree={wt} rebase main", f"git --git-dir={wt_gitdir} rebase main"):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, repo).returncode, 2)
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 0)
 
     def test_git_dir_unresolvable_fails_closed(self) -> None:
         repo, wt = self._pair()

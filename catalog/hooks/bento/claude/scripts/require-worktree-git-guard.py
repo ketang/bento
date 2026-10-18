@@ -394,7 +394,9 @@ def _git_targets(
     git_dir = opts.get("--git-dir", env.get("GIT_DIR"))
     if work_tree is None and git_dir is None:
         return [base]
-    targets: list[str | None] = []
+    # Whichever of the pair is absent is discovered from the running
+    # directory (git dir) or defaults to it (work tree), so it is a target too.
+    targets: list[str | None] = [base] if work_tree is None or git_dir is None else []
     if work_tree is not None:
         targets.append(_resolve_dir(base, work_tree))
     if git_dir is not None:
