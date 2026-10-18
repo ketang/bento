@@ -1465,8 +1465,8 @@ def resolve_branch_issue_id(branch: str, tracker: str) -> str | None:
     return extract_issue_id(match.group(1), pattern)
 
 
-def bulk_beads_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
-    """One `bd list --all --json` call -> {issue_id: status}. Never raises;
+def bulk_beads_records(cwd: Path) -> tuple[list[dict] | None, str | None]:
+    """One `bd list --all --json` call -> raw issue records. Never raises;
     a failure is reported as a warning string, not an exception."""
     if not shutil.which("bd"):
         return None, "bd list --all --json skipped: bd not found on PATH"
@@ -1482,11 +1482,20 @@ def bulk_beads_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
         return None, "bd list --all --json returned unparseable JSON"
     if not isinstance(parsed, list):
         return None, "bd list --all --json returned an unexpected shape (not a list)"
-    statuses: dict[str, str] = {}
-    for item in parsed:
-        if isinstance(item, dict) and item.get("id") and item.get("status"):
-            statuses[str(item["id"])] = str(item["status"])
-    return statuses, None
+    return [item for item in parsed if isinstance(item, dict)], None
+
+
+def beads_statuses(records: list[dict]) -> dict[str, str]:
+    return {
+        str(item["id"]): str(item["status"])
+        for item in records
+        if item.get("id") and item.get("status")
+    }
+
+
+def bulk_beads_statuses(cwd: Path) -> tuple[dict[str, str] | None, str | None]:
+    records, error = bulk_beads_records(cwd)
+    return (None if records is None else beads_statuses(records)), error
 
 
 GH_BULK_ISSUE_LIST_LIMIT = 1000
@@ -1560,6 +1569,7 @@ def annotate_branches_with_tracker_mismatch(
     tracker: str,
     cwd: Path,
     warnings: list[str],
+    prefetched: tuple[dict[str, str] | None, str | None] | None = None,
 ) -> list[dict[str, object]] | None:
     """Report-only: tags every branch whose name resolves to a tracker issue
     id with issue_status (open/in_progress/closed/unknown), and returns the
@@ -1569,7 +1579,7 @@ def annotate_branches_with_tracker_mismatch(
     if tracker not in (TRACKER_BEADS, TRACKER_GH):
         return None
 
-    bulk_statuses, bulk_error = bulk_tracker_statuses(tracker, cwd)
+    bulk_statuses, bulk_error = prefetched or bulk_tracker_statuses(tracker, cwd)
     if bulk_error:
         warnings.append(bulk_error)
     if bulk_statuses is None:
@@ -1592,6 +1602,97 @@ def annotate_branches_with_tracker_mismatch(
                 }
             )
     return mismatches
+
+
+DEFAULT_STALE_CLAIM_DAYS = 7
+
+
+def _parse_iso_ts(value: object) -> float | None:
+    if not isinstance(value, str) or not value:
+        return None
+    try:
+        return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except ValueError:
+        return None
+
+
+def remote_branch_names(cwd: Path) -> list[tuple[str, str]]:
+    """(remote-qualified ref, short branch name) for every remote branch."""
+    out = try_git_stdout("for-each-ref", "--format=%(refname:short)", "refs/remotes", cwd=cwd)
+    refs = []
+    for ref in (out or "").splitlines():
+        if "/" in ref and not ref.endswith("/HEAD"):
+            refs.append((ref, ref.split("/", 1)[1]))
+    return refs
+
+
+def detect_stale_claims(
+    records: list[dict],
+    local: list[str],
+    worktree_branches: set[str],
+    primary_branch: str,
+    cwd: Path,
+    stale_days: float,
+    now_ts: float,
+) -> list[dict[str, object]]:
+    """Report-only: in_progress beads issues no live work backs.
+
+    merged: a branch resolving to the issue is an ancestor of
+    <remote>/<primary> (or the local primary) and is not checked out in a
+    worktree (a fresh branch at main's tip is also an ancestor).
+    no_live_work: claimed more than stale_days ago with no local branch,
+    worktree, or remote branch resolving to the issue.
+    """
+    primary_ref = primary_branch
+    for ref, short in remote_branch_names(cwd):
+        if short == primary_branch:
+            primary_ref = ref
+            break
+    remotes = remote_branch_names(cwd)
+    stale: list[dict[str, object]] = []
+    for item in records:
+        if item.get("status") != "in_progress" or not item.get("id"):
+            continue
+        issue_id = str(item["id"])
+        claimed_ts = _parse_iso_ts(item.get("started_at")) or _parse_iso_ts(item.get("updated_at"))
+        age_days = None if claimed_ts is None else round((now_ts - claimed_ts) / 86400, 1)
+
+        def matches(name: str) -> bool:
+            return resolve_branch_issue_id(name, TRACKER_BEADS) == issue_id
+
+        local_hits = [b for b in local if matches(b)]
+        remote_hits = [(ref, short) for ref, short in remotes if matches(short)]
+        wt_hits = [b for b in worktree_branches if matches(b)]
+
+        merged_hits = [
+            ref
+            for ref in [*local_hits, *(ref for ref, _ in remote_hits)]
+            if ref != primary_ref
+            and git("merge-base", "--is-ancestor", ref, primary_ref, cwd=cwd, check=False).returncode == 0
+            and ref not in wt_hits
+        ]
+        if merged_hits and not wt_hits:
+            branch = merged_hits[0]
+            stale.append({
+                "issue_id": issue_id,
+                "class": "merged",
+                "age_days": age_days,
+                "evidence": f"branch {branch} is an ancestor of {primary_ref} (git merge-base --is-ancestor)",
+                "suggested_action": (
+                    f'bd close {issue_id} --reason "<sha> landed" '
+                    "(per land-work's closure contract; confirm the landing first)"
+                ),
+            })
+        elif not (local_hits or remote_hits or wt_hits):
+            if age_days is not None and age_days > stale_days:
+                stale.append({
+                    "issue_id": issue_id,
+                    "class": "no_live_work",
+                    "age_days": age_days,
+                    "evidence": "no branch/worktree found",
+                    "suggested_action": f"bd update {issue_id} --status open",
+                })
+    return stale
 
 
 def tracker_lookup_for(tracker: str):
@@ -1694,6 +1795,15 @@ def parse_args() -> argparse.Namespace:
             "regex for extracting an issue id from branch names. The first "
             "capture group (or the full match) becomes the candidate id. "
             "Defaults to the detected tracker's convention."
+        ),
+    )
+    parser.add_argument(
+        "--stale-claim-days",
+        type=float,
+        default=DEFAULT_STALE_CLAIM_DAYS,
+        help=(
+            "report in_progress beads claims with no branch/worktree once "
+            f"older than this many days (default: {DEFAULT_STALE_CLAIM_DAYS})"
         ),
     )
     parser.add_argument(
@@ -1809,8 +1919,29 @@ def main() -> int:
                     branch, primary_branch, resolved_tracker, issue_pattern, repo_root,
                 )
 
+        beads_records: list[dict] | None = None
+        prefetched = None
+        if resolved_tracker == TRACKER_BEADS:
+            beads_records, beads_error = bulk_beads_records(repo_root)
+            prefetched = (
+                None if beads_records is None else beads_statuses(beads_records),
+                beads_error,
+            )
         tracker_mismatch = annotate_branches_with_tracker_mismatch(
-            branches, resolved_tracker, repo_root, warnings,
+            branches, resolved_tracker, repo_root, warnings, prefetched,
+        )
+        stale_claims = (
+            None
+            if beads_records is None
+            else detect_stale_claims(
+                beads_records,
+                [str(b["name"]) for b in branches],
+                {str(wt["branch"]) for wt in raw_worktrees if wt.get("branch")},
+                primary_branch,
+                repo_root,
+                args.stale_claim_days,
+                now_ts,
+            )
         )
 
         untracked_debris = (
@@ -1869,6 +2000,7 @@ def main() -> int:
             "local_branches": branches,
             "untracked_debris": untracked_debris,
             "tracker_mismatch": tracker_mismatch,
+            "stale_claims": stale_claims,
             "summary": summary,
             "apply_mode": args.apply,
             "applied_actions": applied_actions,

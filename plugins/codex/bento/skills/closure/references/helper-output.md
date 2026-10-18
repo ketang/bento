@@ -244,6 +244,35 @@ result at the `--limit` cap (`GH_BULK_ISSUE_LIST_LIMIT`, 1000) also adds a
 truncation warning, since older/lower-numbered issues may be missing from a
 repo with more issues than that.
 
+## Stale Claims (`stale_claims`)
+
+Beads only; `null` for other trackers or when `bd list --all --json` failed
+(warning added; the rest of the scan is unaffected). Reuses the
+`tracker_mismatch` bulk query -- no extra `bd` call. Lists `in_progress`
+issues that no live work backs, by class:
+
+- `merged`: a local/remote branch resolving to the issue (same branch-to-issue
+  rule as `tracker_mismatch`) is an ancestor of `<remote>/<primary>`, and no
+  worktree has it checked out.
+- `no_live_work`: claimed (`started_at`, else `updated_at`) more than
+  `--stale-claim-days` (default 7) ago, with no matching local branch,
+  worktree, or remote branch.
+
+```json
+"stale_claims": [
+  {
+    "issue_id": "proj-1",
+    "class": "no_live_work",
+    "age_days": 12.3,
+    "evidence": "no branch/worktree found",
+    "suggested_action": "bd update proj-1 --status open"
+  }
+]
+```
+
+Report only: never releases or closes a claim. A fresh branch at the primary
+tip is also an ancestor, so confirm a `merged` entry actually landed.
+
 ## Recency Calculation
 
 The helper calculates `active_seconds_since_activity` using an overnight-aware

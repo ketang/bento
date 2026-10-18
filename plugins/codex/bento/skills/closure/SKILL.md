@@ -157,6 +157,14 @@ alongside `review_required` branches as a distinct "tracker says otherwise"
 signal — a mismatch can happen on any branch classification, not just
 `review_required`.
 
+### Stale Claims
+
+Beads scans also emit `stale_claims`: `in_progress` issues whose branch is
+already merged (`merged`) or that have no branch/worktree after
+`--stale-claim-days` (default 7, `no_live_work`). Present each with its
+`suggested_action` (`bd close ...` / `bd update <id> --status open`); never
+run it. See `references/helper-output.md`.
+
 ### Branch Correlation (review_required triage)
 
 When a `review_required` branch needs disposition (genuine outstanding work vs.
