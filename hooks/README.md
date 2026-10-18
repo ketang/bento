@@ -117,7 +117,16 @@ while Codex uses `PermissionRequest` with Codex's decision shape.
   instead gets a non-blocking advisory line on stderr pointing at
   `land-work`/`closure` (bento-rdtn.11) — throttled to once per session per
   branch via a marker under `$XDG_RUNTIME_DIR` (or `/tmp`), and suppressed
-  independently with `require_landed=false`.
+  independently with `require_landed=false`. Unpushed commits are counted
+  against all remotes (`git rev-list HEAD --not --remotes`), not `@{u}`, so a
+  rebase onto a newer `origin/main` does not overcount. On the primary branch
+  in the primary checkout the hook only reports (stderr, exit 0): commits
+  there are blocked at commit time by the git guard (bento-i76i). While a live
+  `land.py` is landing the current branch (marker
+  `<git-common-dir>/bento/landing-in-progress/<slug>.json`: host, pid and
+  `/proc` start time must match), the unpushed-commit block is lifted;
+  uncommitted changes still block, stale markers are removed, and a bare
+  background `git push` is not covered (bento-0tyd.4).
 - `session-id` — persists the Claude Code session id and a per-session scratch
   directory (`SessionStart`).
 - `telemetry` — opt-in Bash telemetry capture.

@@ -32,6 +32,12 @@ verifier evidence record -- the tree is throwaway and a canary must exercise
 the real verifier. Errors raised before the driver starts (not a work tree)
 carry no mode/merged fields.
 
+A real (non --no-merge) landing publishes a per-branch marker,
+<git-common-dir>/bento/landing-in-progress/<slug>.json, once prepare succeeds and
+removes it in a finally block, so the check-unpushed Stop hook can tell a live
+landing from abandoned work (bento-0tyd.4). A second land.py for a branch whose
+marker is live fails fast at step `landing_marker`; a stale one is replaced.
+
 --teardown-only is a separate, explicit invocation for land-work step 10, run
 after the post hooks and untracked accounting: it fetches, then removes the
 feature worktree and deletes its branch from the primary checkout, and sweeps
@@ -47,11 +53,13 @@ from __future__ import annotations
 
 import argparse
 import fnmatch
+import hashlib
 import json
 import os
 import re
 import shutil
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -283,6 +291,80 @@ def teardown(cwd: Path, worktree_arg: str | None, branch_arg: str | None) -> dic
     return report
 
 
+def _proc_start_time(pid: int) -> str | None:
+    """Field 22 of /proc/<pid>/stat, or `ps -o lstart=` where /proc is absent.
+    Mirrors the check-unpushed hook's reader."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return stat[stat.rindex(")") + 2:].split()[19]
+    except (OSError, ValueError, IndexError):
+        pass
+    result = subprocess.run(["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, check=False)
+    out = result.stdout.strip()
+    return out if result.returncode == 0 and out else None
+
+
+def _marker_is_live(record: dict) -> bool:
+    pid = record.get("pid")
+    if record.get("host") != socket.gethostname() or not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass
+    start = _proc_start_time(pid)
+    return start is not None and start == str(record.get("pid_start_time"))
+
+
+def _marker_slug(branch: str) -> str:
+    return re.sub(r"[^A-Za-z0-9._-]", "_", branch) + "-" + hashlib.sha1(branch.encode()).hexdigest()[:8]
+
+
+def acquire_landing_marker(common_dir: Path, branch: str, worktree: Path) -> Path:
+    """Atomically publish the landing marker for `branch`. The record is written
+    to an exclusively created temp file, then hard-linked into place: link fails
+    if a marker already exists, so two starters cannot both win. A live marker
+    raises StepFailure; a stale one is removed and replaced."""
+    directory = common_dir / "bento" / "landing-in-progress"
+    directory.mkdir(parents=True, exist_ok=True)
+    final = directory / f"{_marker_slug(branch)}.json"
+    pid = os.getpid()
+    record = {
+        "branch": branch,
+        "worktree": str(worktree),
+        "pid": pid,
+        "pid_start_time": _proc_start_time(pid),
+        "host": socket.gethostname(),
+        "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+    }
+    tmp = directory / f".{final.name}.{pid}.tmp"
+    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as handle:
+            json.dump(record, handle)
+        for _attempt in range(2):
+            try:
+                os.link(tmp, final)
+                return final
+            except FileExistsError:
+                try:
+                    existing = json.loads(final.read_text(encoding="utf-8"))
+                except (OSError, ValueError):
+                    existing = {}
+                if isinstance(existing, dict) and _marker_is_live(existing):
+                    raise StepFailure(
+                        "landing_marker",
+                        f"another land.py (pid {existing.get('pid')}) is already landing branch "
+                        f"'{branch}'; wait for it to finish",
+                    )
+                final.unlink(missing_ok=True)
+        raise StepFailure("landing_marker", f"could not publish the landing marker for '{branch}'")
+    finally:
+        tmp.unlink(missing_ok=True)
+
+
 class Driver:
     def __init__(self, cwd: Path, runtime: str, timeout: str | None, no_merge: bool = False):
         self.cwd = cwd
@@ -296,6 +378,12 @@ class Driver:
         self.persistent_preview = False
         self.generated_untracked_before: set[str] = set()
         self.generated_untracked_to_clean: list[str] = []
+        self.landing_marker: Path | None = None
+
+    def release_landing_marker(self) -> None:
+        if self.landing_marker is not None:
+            self.landing_marker.unlink(missing_ok=True)
+            self.landing_marker = None
 
     # -- bookkeeping ------------------------------------------------------- #
 
@@ -713,6 +801,10 @@ class Driver:
         self.primary_root = primary_root
         primary_local_vs_remote = prepare.get("primary_local_vs_remote")
 
+        if not self.no_merge:
+            common_dir = Path(git_stdout("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=self.cwd))
+            self.landing_marker = acquire_landing_marker(common_dir, feature_branch, self.cwd)
+
         start = time.monotonic()
         git("fetch", "origin", primary_branch, cwd=self.cwd, check=False)
         remote_ref = f"refs/remotes/origin/{primary_branch}"
@@ -827,6 +919,13 @@ def main() -> int:
     signal.signal(signal.SIGINT, _on_signal)
     signal.signal(signal.SIGTERM, _on_signal)
 
+    try:
+        return _run_driver(driver)
+    finally:
+        driver.release_landing_marker()
+
+
+def _run_driver(driver: Driver) -> int:
     try:
         result = driver.run()
     except StepFailure as exc:

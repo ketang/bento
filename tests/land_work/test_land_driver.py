@@ -644,6 +644,103 @@ class VerifierFailureTest(LandDriverTestBase):
         self.assertEqual(self.registered_preview_worktrees(), [])
 
 
+class LandingMarkerTest(LandDriverTestBase):
+    """bento-0tyd.4: land.py publishes <git-common-dir>/bento/landing-in-progress/
+    <slug>.json for the branch it is landing, so the check-unpushed Stop hook
+    can tell a live landing from abandoned work."""
+
+    def marker_files(self) -> list[Path]:
+        return sorted((self.repo / ".git/bento/landing-in-progress").glob("*.json"))
+
+    def install_sleeping_verifier(self, started: Path, seconds: int = 4) -> None:
+        body = PASS_VERIFIER.split("\n", 1)[1]
+        self.install_verifier(f"#!/usr/bin/env bash\ntouch {started}\nsleep {seconds}\n{body}")
+
+    def start_driver(self) -> subprocess.Popen:
+        return subprocess.Popen(
+            [str(LAND_SCRIPT)], cwd=self.worktree, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+
+    def wait_for(self, path: Path) -> None:
+        deadline = time.monotonic() + 15
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(path.exists())
+
+    def test_marker_exists_while_verifier_runs_and_is_gone_after_success(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started)
+        proc = self.start_driver()
+        self.wait_for(started)
+
+        markers = self.marker_files()
+        self.assertEqual(len(markers), 1)
+        record = json.loads(markers[0].read_text(encoding="utf-8"))
+        self.assertEqual(record["branch"], "feature/test")
+        self.assertEqual(Path(record["worktree"]).resolve(), self.worktree.resolve())
+        self.assertEqual(record["pid"], proc.pid)
+        self.assertTrue(record["pid_start_time"])
+        self.assertTrue(record["host"])
+        self.assertTrue(record["started_at"])
+
+        stdout, stderr = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, stdout + stderr)
+        self.assertEqual(self.marker_files(), [])
+
+    def test_marker_is_gone_after_failure(self) -> None:
+        self.install_verifier(FAILED_VERIFIER)
+
+        result = self.run_driver()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(self.marker_files(), [])
+
+    def test_second_land_for_same_live_branch_fails_fast(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started)
+        first = self.start_driver()
+        self.wait_for(started)
+
+        second = self.run_driver()
+        payload = json.loads(second.stdout)
+
+        self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
+        self.assertEqual(payload["failed_step"], "landing_marker")
+        self.assertIn("already landing", payload["error"])
+        self.assertIn(str(first.pid), payload["error"])
+        # The first lander's marker survives the second's failure.
+        self.assertEqual(len(self.marker_files()), 1)
+        stdout, stderr = first.communicate(timeout=60)
+        self.assertEqual(first.returncode, 0, stdout + stderr)
+
+    def test_stale_marker_is_replaced(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started, seconds=30)
+        crashed = self.start_driver()
+        self.wait_for(started)
+        crashed.kill()  # SIGKILL: no finally, so the marker is left behind
+        crashed.communicate(timeout=30)
+        self.assertEqual(len(self.marker_files()), 1)
+        self.install_verifier(PASS_VERIFIER)
+
+        result = self.run_driver()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.marker_files(), [])
+
+    def test_no_merge_canary_writes_no_marker(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started, seconds=2)
+        proc = subprocess.Popen(
+            [str(LAND_SCRIPT), "--no-merge"], cwd=self.worktree, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.wait_for(started)
+        self.assertEqual(self.marker_files(), [])
+        proc.communicate(timeout=60)
+
+
 class VerifierTreeReuseDriverTest(LandDriverTestBase):
     """bento-c96u.2: a green record for the candidate tree is reused."""
 

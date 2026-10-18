@@ -1,5 +1,6 @@
 import json
 import os
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -30,19 +31,26 @@ class CheckUnpushedHookTest(unittest.TestCase):
     def _git(self, cwd: Path, *args: str) -> None:
         subprocess.run(["git", *args], cwd=cwd, check=True, capture_output=True, text=True)
 
-    def _init_repo(self, branch: str = "main", name: str = "repo") -> Path:
+    def _init_repo(self, branch: str | None = None, name: str = "repo") -> Path:
+        """Init a repo with one commit. By default HEAD ends up on a non-primary
+        ``work`` branch (``main`` still exists as the primary), because the hook
+        only reports, never blocks, on the primary branch in the primary
+        checkout. Pass ``branch`` to pick the checked-out branch exactly."""
         repo = self.root / name
         repo.mkdir()
-        self._git(repo, "init", "-q", "-b", branch)
+        self._git(repo, "init", "-q", "-b", branch or "main")
         self._git(repo, "config", "user.name", "Check Unpushed Test")
         self._git(repo, "config", "user.email", "check-unpushed@example.com")
         (repo / "README.md").write_text("test\n", encoding="utf-8")
         self._git(repo, "add", "README.md")
         self._git(repo, "commit", "-q", "-m", "init")
+        if branch is None:
+            self._git(repo, "checkout", "-q", "-b", "work")
         return repo
 
-    def _add_remote(self, repo: Path, branch: str = "main") -> Path:
-        """Create a bare remote and push branch, setting upstream tracking."""
+    def _add_remote(self, repo: Path, branch: str | None = None) -> Path:
+        """Create a bare remote and push branch (default: the current branch),
+        setting upstream tracking. ``main`` is pushed too when it exists."""
         remote = self.root / (repo.name + "-remote.git")
         subprocess.run(
             ["git", "init", "--bare", "-q", str(remote)],
@@ -51,8 +59,17 @@ class CheckUnpushedHookTest(unittest.TestCase):
             text=True,
         )
         self._git(repo, "remote", "add", "origin", str(remote))
+        if branch is None:
+            branch = self._current_branch(repo)
+        if self._current_branch(repo) != "main" and branch != "main":
+            self._git(repo, "push", "-q", "origin", "main")
         self._git(repo, "push", "-q", "-u", "origin", branch)
         return remote
+
+    def _current_branch(self, repo: Path) -> str:
+        return subprocess.run(
+            ["git", "branch", "--show-current"], cwd=repo, check=True, capture_output=True, text=True
+        ).stdout.strip()
 
     def _write_beads_state(self, repo: Path, relative_path: str) -> Path:
         path = repo / relative_path
@@ -103,6 +120,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
         session_id: str | None = None,
         runtime_base: Path | str | None = None,
         extra_env: dict | None = None,
+        scripts: tuple[Path, ...] = HOOK_SCRIPTS,
     ) -> subprocess.CompletedProcess[str]:
         if cwd is None:
             cwd = self.hook_cwd
@@ -115,7 +133,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
             payload["session_id"] = session_id
         stdin = json.dumps(payload) + "\n"
         results = []
-        for script in HOOK_SCRIPTS:
+        for script in scripts:
             # Each peer script (claude/codex) gets its own throttle-marker
             # directory, keyed by its own parent dir name -- otherwise the
             # first script's write would silently suppress the second
@@ -150,7 +168,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
                 )
             )
         reference = results[0]
-        for script, result in zip(HOOK_SCRIPTS[1:], results[1:]):
+        for script, result in zip(scripts[1:], results[1:]):
             self.assertEqual(result.returncode, reference.returncode, script)
             self.assertEqual(result.stderr, reference.stderr, script)
         return reference
@@ -179,7 +197,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
             msg="exit 1 is non-blocking for Stop; hook must exit 2",
         )
         self.assertIn("uncommitted changes", result.stderr)
-        self.assertIn("main", result.stderr)
+        self.assertIn("work", result.stderr)
 
     def test_allows_one_turn_hold_for_coordinating_subagent(self) -> None:
         # A lead can direct one teammate to create this session-scoped marker
@@ -305,7 +323,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 2, msg=result.stderr)
         self.assertIn("1 unpushed commit", result.stderr)
-        self.assertIn("main", result.stderr)
+        self.assertIn("work", result.stderr)
 
     def test_blocks_multiple_ahead_plural(self) -> None:
         repo = self._init_repo()
@@ -649,8 +667,8 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self._commit_all(repo, "add swarm config")
         self._git(repo, "push", "-q")
 
-        self._git(repo, "worktree", "add", "--detach", str(integration_dir), "main")
-        self._git(integration_dir, "merge", "--no-ff", "--no-commit", "main")
+        self._git(repo, "worktree", "add", "--detach", str(integration_dir), "work")
+        self._git(integration_dir, "merge", "--no-ff", "--no-commit", "work")
         (integration_dir / "stray.txt").write_text("staged\n", encoding="utf-8")
         self._git(integration_dir, "add", "stray.txt")
 
@@ -1022,7 +1040,7 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertIn("end of every turn", first.stderr)
 
         self.assertEqual(clean.returncode, 0, msg=clean.stderr)
-        self.assertEqual(clean.stderr, "")
+        self.assertNotIn("Session end", clean.stderr)
 
         self.assertEqual(recurred.returncode, 2, msg=recurred.stderr)
         self.assertIn("end of every turn", recurred.stderr)
@@ -1185,6 +1203,213 @@ class CheckUnpushedHookTest(unittest.TestCase):
 
         self.assertEqual(result.returncode, 0, msg=result.stderr)
         self.assertEqual(result.stderr, "")
+
+
+
+    # --- bento-0tyd.4: all-remotes count, primary report-only, land.py marker ---
+
+    def _marker_dir(self, repo: Path) -> Path:
+        common = subprocess.run(
+            ["git", "rev-parse", "--path-format=absolute", "--git-common-dir"],
+            cwd=repo, check=True, capture_output=True, text=True,
+        ).stdout.strip()
+        path = Path(common) / "bento" / "landing-in-progress"
+        path.mkdir(parents=True, exist_ok=True)
+        return path
+
+    @staticmethod
+    def _proc_start_time(pid: int) -> str:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return stat[stat.rindex(")") + 2 :].split()[19]
+
+    def _write_marker(
+        self, repo: Path, slug: str, branch: str, worktree: Path, *,
+        pid: int | None = None, start_time: str | None = None, host: str | None = None,
+    ) -> Path:
+        pid = pid if pid is not None else os.getpid()
+        record = {
+            "branch": branch,
+            "worktree": str(worktree),
+            "pid": pid,
+            "pid_start_time": start_time if start_time is not None else self._proc_start_time(pid),
+            "host": host if host is not None else socket.gethostname(),
+            "started_at": "2026-10-18T00:00:00Z",
+        }
+        path = self._marker_dir(repo) / f"{slug}.json"
+        path.write_text(json.dumps(record), encoding="utf-8")
+        return path
+
+    def _live_pid(self) -> subprocess.Popen:
+        proc = subprocess.Popen(["sleep", "60"])
+        self.addCleanup(proc.wait)
+        self.addCleanup(proc.kill)
+        return proc
+
+    def _dead_pid(self) -> int:
+        proc = subprocess.Popen(["true"])
+        proc.wait()
+        return proc.pid
+
+    def _unpushed_feature(self, repo: Path, branch: str = "feature") -> Path:
+        """A linked worktree on ``branch`` with one unpushed commit."""
+        if not (self.root / (repo.name + "-remote.git")).exists():
+            self._add_remote(repo)
+        worktree = self.root / f"wt-{branch.replace('/', '-')}"
+        self._git(repo, "worktree", "add", "-q", "-b", branch, str(worktree), "main")
+        self._git(worktree, "push", "-q", "-u", "origin", branch)
+        (worktree / "f.txt").write_text(branch, encoding="utf-8")
+        self._git(worktree, "add", "f.txt")
+        self._git(worktree, "commit", "-qm", f"{branch} commit")
+        return worktree
+
+    # --- count against all remotes ---
+
+    def test_count_ignores_commits_pulled_in_by_rebase(self) -> None:
+        repo = self._init_repo(branch="main")
+        self._add_remote(repo, branch="main")
+        self._git(repo, "checkout", "-q", "-b", "feature")
+        self._git(repo, "push", "-q", "-u", "origin", "feature")
+        for i in range(2):
+            (repo / f"own{i}.txt").write_text("x", encoding="utf-8")
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", f"own {i}")
+        # origin/main gains 50 commits, then feature is rebased onto it; the
+        # stale @{u} (origin/feature) lacks all 50.
+        self._git(repo, "checkout", "-q", "main")
+        for i in range(50):
+            (repo / f"m{i}.txt").write_text("x", encoding="utf-8")
+            self._git(repo, "add", ".")
+            self._git(repo, "commit", "-qm", f"main {i}")
+        self._git(repo, "push", "-q", "origin", "main")
+        self._git(repo, "checkout", "-q", "feature")
+        self._git(repo, "rebase", "-q", "main")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("2 unpushed commits", result.stderr)
+        self.assertNotIn("52", result.stderr)
+
+    # --- primary branch in the primary checkout: report, never block ---
+
+    def test_primary_branch_in_primary_checkout_reports_without_blocking(self) -> None:
+        repo = self._init_repo(branch="main")
+        self._add_remote(repo, branch="main")
+        (repo / "README.md").write_text("v2\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "second")
+        (repo / "README.md").write_text("v3\n", encoding="utf-8")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertIn("1 unpushed commit", result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+        self.assertIn("bento-i76i", result.stderr)
+
+    def test_feature_branch_in_primary_checkout_still_blocks(self) -> None:
+        repo = self._init_repo()
+        self._add_remote(repo)
+        (repo / "README.md").write_text("v2\n", encoding="utf-8")
+        self._git(repo, "commit", "-aqm", "second")
+
+        result = self._run(payload_cwd=repo)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+
+    # --- live land.py marker ---
+
+    def test_live_marker_for_current_branch_does_not_block(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        self._write_marker(repo, "feature", "feature", worktree)
+
+        result = self._run(payload_cwd=worktree)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+
+    def test_live_marker_still_blocks_uncommitted_changes(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        self._write_marker(repo, "feature", "feature", worktree)
+        (worktree / "f.txt").write_text("dirty", encoding="utf-8")
+
+        result = self._run(payload_cwd=worktree)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("uncommitted changes", result.stderr)
+        self.assertNotIn("unpushed commit", result.stderr)
+
+    def test_live_marker_for_other_branch_still_blocks(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        self._write_marker(repo, "other", "other", self.root / "elsewhere")
+
+        result = self._run(payload_cwd=worktree)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("1 unpushed commit", result.stderr)
+        self.assertIn("land.py", result.stderr)
+
+    def test_marker_with_dead_pid_blocks_and_is_removed(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        for script in HOOK_SCRIPTS:  # each peer consumes the marker, so re-seed
+            path = self._write_marker(
+                repo, "feature", "feature", worktree, pid=self._dead_pid(), start_time="1"
+            )
+
+            result = self._run(payload_cwd=worktree, scripts=(script,))
+
+            self.assertEqual(result.returncode, 2, msg=result.stderr)
+            self.assertFalse(path.exists())
+            self.assertIn("stale", result.stderr)
+
+    def test_marker_with_reused_pid_start_time_mismatch_blocks_and_is_removed(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        proc = self._live_pid()
+        real = int(self._proc_start_time(proc.pid))
+        for script in HOOK_SCRIPTS:
+            path = self._write_marker(
+                repo, "feature", "feature", worktree, pid=proc.pid, start_time=str(real + 12345)
+            )
+
+            result = self._run(payload_cwd=worktree, scripts=(script,))
+
+            self.assertEqual(result.returncode, 2, msg=result.stderr)
+            self.assertFalse(path.exists())
+
+    def test_marker_from_another_host_is_ignored(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        path = self._write_marker(repo, "feature", "feature", worktree, host="not-this-host.invalid")
+
+        result = self._run(payload_cwd=worktree)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertTrue(path.exists(), "another host's marker must not be removed")
+
+    def test_concurrent_landers_only_unblock_their_own_branch(self) -> None:
+        repo = self._init_repo()
+        wt_a = self._unpushed_feature(repo, "feature-a")
+        wt_b = self._unpushed_feature(repo, "feature-b")
+        self._write_marker(repo, "feature-a", "feature-a", wt_a)
+        self._write_marker(repo, "feature-b", "feature-b", wt_b, pid=self._live_pid().pid)
+
+        self.assertEqual(self._run(payload_cwd=wt_a).returncode, 0)
+        self.assertEqual(self._run(payload_cwd=wt_b).returncode, 0)
+        wt_c = self._unpushed_feature(repo, "feature-c")
+        self.assertEqual(self._run(payload_cwd=wt_c).returncode, 2)
+
+    def test_block_message_says_bare_push_is_not_covered(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+
+        result = self._run(payload_cwd=worktree)
+
+        self.assertEqual(result.returncode, 2, msg=result.stderr)
+        self.assertIn("land.py", result.stderr)
+        self.assertIn("git push", result.stderr)
 
 
 if __name__ == "__main__":
