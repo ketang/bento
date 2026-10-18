@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 
-from tests.script_test_utils import git, run
+from tests.script_test_utils import git, load_land_module, run
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -731,11 +731,7 @@ class LandingMarkerTest(LandDriverTestBase):
 
     @staticmethod
     def _load_land():
-        import importlib.util
-        spec = importlib.util.spec_from_file_location("land_under_test", LAND_SCRIPT)
-        module = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(module)
-        return module
+        return load_land_module()
 
     def _stale_record(self, branch: str) -> dict:
         dead = subprocess.Popen(["true"])

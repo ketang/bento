@@ -1402,11 +1402,9 @@ class CheckUnpushedHookTest(unittest.TestCase):
         self.assertEqual(self._run(payload_cwd=wt_c).returncode, 2)
 
     def test_hook_reads_marker_written_by_land_py(self) -> None:
-        import importlib.util
-        land_path = REPO_ROOT / "catalog/skills/land-work/scripts/land.py"
-        spec = importlib.util.spec_from_file_location("land_for_format_test", land_path)
-        land = importlib.util.module_from_spec(spec)
-        spec.loader.exec_module(land)
+        from tests.script_test_utils import load_land_module
+
+        land = load_land_module("land_for_format_test")
         repo = self._init_repo()
         worktree = self._unpushed_feature(repo)
         common = repo / ".git"
