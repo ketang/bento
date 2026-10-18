@@ -221,5 +221,44 @@ class SwarmWorktreeVerifyTest(unittest.TestCase):
         self.assertTrue(payload["is_bare_repository"])
 
 
+    # -- bento-c96u.21: --worktree-dir + actionable errors ----------------- #
+
+    def test_worktree_dir_from_primary_checkout_ok(self) -> None:
+        result = self.run_verify(
+            self.repo, "--worktree-dir", str(self.worktree), "--expected-branch", "feature/swarm",
+            "--expected-worktree", str(self.worktree), "--require-linked-worktree",
+        )
+        self.assertTrue(json.loads(result.stdout)["ok"])
+
+    def test_without_worktree_dir_errors_name_flag(self) -> None:
+        result = self.run_verify(
+            self.repo, "--expected-worktree", str(self.worktree), "--require-linked-worktree", check=False
+        )
+        payload = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--worktree-dir", payload["errors"][0])
+        self.assertIn(str(self.worktree), payload["errors"][0])
+
+    def test_worktree_dir_not_a_repo_is_usage_error(self) -> None:
+        result = self.run_verify(
+            self.repo, "--worktree-dir", str(Path(self.temp_dir.name) / "nope"), check=False
+        )
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--worktree-dir", result.stderr)
+
+    def test_branch_mismatch_names_both_branches(self) -> None:
+        result = self.run_verify(
+            self.repo, "--worktree-dir", str(self.worktree), "--expected-branch", "feature/other-task", check=False
+        )
+        error = json.loads(result.stdout)["errors"][0]
+        self.assertIn("feature/swarm", error)
+        self.assertIn("feature/other-task", error)
+
+    def test_skill_docs_show_worktree_dir(self) -> None:
+        for rel in ("launch-work", "swarm"):
+            text = (REPO_ROOT / f"catalog/skills/{rel}/SKILL.md").read_text(encoding="utf-8")
+            self.assertRegex(text, r"-verify\.py[^\n]*--worktree-dir|--worktree-dir[^\n]*-verify\.py", rel)
+
+
 if __name__ == "__main__":
     unittest.main()

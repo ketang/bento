@@ -246,6 +246,43 @@ class LaunchWorkScriptsTest(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertFalse(payload["linked_worktree"])
 
+    # -- bento-c96u.21: --worktree-dir + actionable errors ----------------- #
+
+    def _linked(self) -> Path:
+        wt = Path(self.temp_dir.name) / "linked"
+        git(self.repo, "worktree", "add", "-b", "feature/x", str(wt), "main")
+        return wt
+
+    def test_verify_worktree_dir_from_primary_checkout_ok(self) -> None:
+        wt = self._linked()
+        result = self.run_verify(
+            "--worktree-dir", str(wt), "--expected-branch", "feature/x",
+            "--expected-worktree", str(wt), "--require-linked-worktree", cwd=self.repo,
+        )
+        self.assertTrue(json.loads(result.stdout)["ok"])
+
+    def test_verify_without_worktree_dir_errors_name_flag(self) -> None:
+        wt = self._linked()
+        result = self.run_verify(
+            "--expected-worktree", str(wt), "--require-linked-worktree", cwd=self.repo, check=False
+        )
+        payload = json.loads(result.stdout)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("--worktree-dir", payload["errors"][0])
+        self.assertIn(str(wt), payload["errors"][0])
+
+    def test_verify_worktree_dir_not_a_repo_is_usage_error(self) -> None:
+        result = self.run_verify("--worktree-dir", str(Path(self.temp_dir.name) / "nope"), cwd=self.repo, check=False)
+        self.assertEqual(result.returncode, 2)
+        self.assertIn("--worktree-dir", result.stderr)
+
+    def test_verify_branch_mismatch_names_both_branches(self) -> None:
+        wt = self._linked()
+        result = self.run_verify("--worktree-dir", str(wt), "--expected-branch", "feature/y", cwd=self.repo, check=False)
+        error = json.loads(result.stdout)["errors"][0]
+        self.assertIn("feature/x", error)
+        self.assertIn("feature/y", error)
+
     # -- bento-rdtn.13: bare checkout reports a diagnostic, never a traceback #
 
     def test_bootstrap_bare_checkout_reports_diagnostic_not_traceback(self) -> None:

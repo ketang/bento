@@ -216,7 +216,7 @@ worktree, not the one assigned to this task, and will pass even from a
 different task's worktree:
 
 ```bash
-swarm/scripts/swarm-worktree-verify.py --require-linked-worktree --expected-branch <assigned-branch>
+swarm/scripts/swarm-worktree-verify.py --worktree-dir <assigned-worktree> --require-linked-worktree --expected-branch <assigned-branch>
 ```
 
 Reject any teammate setup that cannot show they are inside the intended
@@ -227,8 +227,8 @@ or close to it, with `<assigned-branch>` filled in with this task's actual
 branch name:
 
 > **Do not edit any file, run any write command, or make any commit until
-> `swarm-worktree-verify.py --require-linked-worktree --expected-branch
-> <assigned-branch>` exits 0. If it exits non-zero, create or fix the
+> `swarm-worktree-verify.py --worktree-dir <assigned-worktree>
+> --require-linked-worktree --expected-branch <assigned-branch>` exits 0. If it exits non-zero, create or fix the
 > worktree first, then re-run the script. Any edit before a passing verify is
 > a protocol violation — `--require-linked-worktree` alone is not sufficient
 > because it does not check that this is the worktree assigned to YOU.**
@@ -285,8 +285,8 @@ coverage, no unresolved overlap). Serial-mode repos (Phase 0) are unaffected:
 a serial-mode plan must still run the repo's full fixed gate list.
 
 Reject any teammate plan that does not include an explicit
-`swarm-worktree-verify.py --require-linked-worktree --expected-branch
-<assigned-branch>` step (or the equivalent worktree-verify gate with the
+`swarm-worktree-verify.py --worktree-dir <assigned-worktree>
+--require-linked-worktree --expected-branch <assigned-branch>` step (or the equivalent worktree-verify gate with the
 assigned branch passed) before any file edit. A plan that jumps straight to
 edits without a passing verify is not acceptable, even if the teammate
 claims to already be in the right worktree. A plan that verifies with
