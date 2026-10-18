@@ -78,6 +78,10 @@ EXPECTED_SKIPS = {
         "BashTelemetryHookE2ETest.test_hook_records_bash_event"
     ): {"zolem and claude must both be on PATH", _NESTED_AGENT_SESSION_REASON},
     (
+        "tests.telemetry.test_bash_telemetry_hook_e2e."
+        "BashTelemetryFailureHookE2ETest.test_hook_records_failed_bash_event"
+    ): {"zolem and claude must both be on PATH", _NESTED_AGENT_SESSION_REASON},
+    (
         "tests.test_doc_claims.BeadsCodexBlockStaysMinimal.test_block_under_word_budget"
     ): {_BeadsCodexBlockStaysMinimal.SKIP_REASON},
     (
