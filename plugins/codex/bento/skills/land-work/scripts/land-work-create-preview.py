@@ -68,6 +68,11 @@ def parse_args() -> argparse.Namespace:
         "recorded as owner_kind=driver so a later run can tell whether the preview is still live. "
         "Omit for standalone use (owner_kind=manual, judged by preview mtime instead of pid).",
     )
+    parser.add_argument(
+        "--keep-conflicts",
+        action="store_true",
+        help="leave a conflicting preview available for the caller to resolve",
+    )
     return parser.parse_args()
 
 
@@ -568,7 +573,7 @@ def main() -> int:
                     else:
                         stderr = merge_result.stderr.strip()
                         errors.append(stderr or "unable to create merge preview")
-                    if persistent_worktree:
+                    if persistent_worktree and not args.keep_conflicts:
                         # Leave the shared worktree clean for the next landing
                         # attempt instead of removing it (bento-96ua.1) or leaving
                         # a half-merged state behind.
@@ -588,7 +593,7 @@ def main() -> int:
         # removing a successful preview. A persistent landing.integration_
         # worktree is never removed here — it survives failures so the next
         # landing can still reuse its build caches.
-        if worktree_added and errors and not persistent_worktree:
+        if worktree_added and errors and not persistent_worktree and not args.keep_conflicts:
             preview_cleaned_up, cleanup_errors = cleanup_preview(preview_dir, checkout_root)
             errors.extend(cleanup_errors)
 

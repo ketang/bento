@@ -46,6 +46,7 @@ sits in a deleted directory and must `cd` to the reported `cd` path.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -77,6 +78,7 @@ CREATE_PREVIEW = SCRIPT_DIR / "land-work-create-preview.py"
 RUN_VERIFIER = SCRIPT_DIR / "land-work-run-verifier.py"
 VERIFY_LEASE = SCRIPT_DIR / "land-work-verify-lease.py"
 VERIFY_LANDING = SCRIPT_DIR / "land-work-verify-landing.py"
+REGENERATE_TIMEOUT_SECONDS = 1800
 
 # Routes for the merge+push step, from land-work-prepare.py's
 # primary_local_vs_remote diagnostic. `None` (no remote-tracking ref to
@@ -290,6 +292,10 @@ class Driver:
         self.steps: list[dict] = []
         self.preview_dir: Path | None = None
         self.primary_root: Path | None = None
+        self.force_preview_push = False
+        self.persistent_preview = False
+        self.generated_untracked_before: set[str] = set()
+        self.generated_untracked_to_clean: list[str] = []
 
     # -- bookkeeping ------------------------------------------------------- #
 
@@ -316,7 +322,17 @@ class Driver:
             payload = json.loads(result.stdout) if result.stdout.strip() else {}
         except ValueError:
             payload = {}
+        # A failed preview may report a directory it already cleaned up or never created.
+        if step == "create_preview" and payload.get("preview_dir") and Path(payload["preview_dir"]).is_dir():
+            self.preview_dir = Path(payload["preview_dir"])
+            self.persistent_preview = bool(payload.get("persistent_worktree"))
         ok = result.returncode == 0 and bool(payload.get("ok", result.returncode == 0))
+
+        if step == "create_preview" and not ok and self._resolve_generated_conflicts(payload):
+            self._record(step, "passed", start, {"generated_conflicts_resolved": True})
+            return payload
+        if step == "create_preview" and not ok and self.persistent_preview and payload.get("conflicting_paths"):
+            self._reset_persistent_preview()
 
         extra: dict = {}
         if step == "verify":
@@ -343,11 +359,206 @@ class Driver:
             raise StepFailure(step, message, output_path=payload.get("verifier_log"))
         return payload
 
+    def _git(self, *args: str, cwd: Path | None = None) -> subprocess.CompletedProcess:
+        return subprocess.run(
+            ["git", *args], cwd=cwd or self.preview_dir, capture_output=True, text=True, check=False,
+        )
+
+    def _names(self, *args: str) -> list[str] | None:
+        result = self._git(*args, "-z")
+        return result.stdout.split("\0")[:-1] if result.returncode == 0 else None
+
+    def _blob_at(self, ref: str, path: str) -> str | None:
+        result = self._git("rev-parse", "--verify", f"{ref}:{path}")
+        return result.stdout.strip() if result.returncode == 0 else None
+
+    def _run_regenerate(self, command: str) -> tuple[int, str]:
+        proc = subprocess.Popen(
+            ["bash", "-c", command], cwd=self.preview_dir, text=True,
+            stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True,
+        )
+        try:
+            output, _ = proc.communicate(timeout=REGENERATE_TIMEOUT_SECONDS)
+        except subprocess.TimeoutExpired:
+            os.killpg(proc.pid, signal.SIGKILL)
+            proc.communicate()
+            return -1, f"timed out after {REGENERATE_TIMEOUT_SECONDS}s"
+        return proc.returncode, output.strip()
+
+    def _resolve_generated_conflicts(self, payload: dict) -> bool:
+        """Resolve a preview whose only conflicts are repo-declared generated files.
+
+        Restores each conflicting path from the leased base, runs the repo's
+        regenerate command, and stages the declared outputs. Any surprise
+        (undeclared conflict, stale output, stray change) leaves ``payload``
+        carrying the error and the normal 'rebase required' failure path.
+        """
+        conflicts = payload.get("conflicting_paths") or []
+        base_sha = payload.get("base_sha")
+        if not conflicts or self.preview_dir is None or not isinstance(base_sha, str) or not base_sha:
+            return False
+        landing = self._landing_config_at_ref(base_sha) or {}
+        generated_paths = landing.get("generated_paths")
+        command = landing.get("regenerate_command")
+        if (
+            not isinstance(generated_paths, list)
+            or not generated_paths
+            or not all(self._valid_generated_path(pattern) for pattern in generated_paths)
+            or not isinstance(command, str)
+            or not command.strip()
+        ):
+            return False
+
+        def is_generated(path: str) -> bool:
+            return any(fnmatch.fnmatchcase(path, pattern) for pattern in generated_paths)
+
+        if not all(is_generated(path) for path in conflicts):
+            return False
+
+        def fail(message: str) -> bool:
+            self._capture_regeneration_untracked()
+            payload["errors"] = [message]
+            return False
+
+        self.generated_untracked_before = self._untracked_paths(self.preview_dir)
+        for path in conflicts:
+            if self._blob_at(base_sha, path):
+                restored = self._git("checkout", base_sha, "--", path)
+            else:
+                restored = self._git("rm", "-f", "--", path)
+            if restored.returncode != 0:
+                return fail(f"could not restore generated conflict {path!r} from the leased base: {restored.stderr.strip()}")
+        before = self._git("write-tree")
+        if before.returncode != 0:
+            return fail(f"could not write merge tree before regeneration: {before.stderr.strip()}")
+
+        returncode, detail = self._run_regenerate(command)
+        if returncode != 0:
+            return fail(f"generated-file regeneration failed ({returncode}): {detail}")
+
+        # An output that still equals the leased primary's means the generator did not
+        # reflect the feature's change. A path absent on both sides is a valid deletion.
+        stale = []
+        for path in conflicts:
+            base_blob = self._blob_at(base_sha, path)
+            output = self._git("hash-object", "--", path) if (self.preview_dir / path).exists() else None
+            output_blob = output.stdout.strip() if output is not None and output.returncode == 0 else None
+            if base_blob is not None and base_blob == output_blob:
+                stale.append(path)
+        if stale:
+            return fail("regeneration left conflicting outputs identical to the leased primary: " + ", ".join(stale))
+
+        unresolved = self._names("diff", "--name-only", "--diff-filter=U")
+        if unresolved is None or unresolved:
+            return fail(f"unresolved conflicts remain after regeneration: {', '.join(unresolved or [])}")
+
+        # Stage matched paths one by one: git pathspec semantics differ from fnmatch, and an
+        # unmatched declared pattern would make `git add` abort.
+        pending = set(self._names("diff", "--name-only") or []) | (
+            self._untracked_paths(self.preview_dir) - self.generated_untracked_before
+        )
+        to_stage = sorted(path for path in pending if is_generated(path))
+        if to_stage:
+            staged = self._git("add", "-A", "--", *to_stage)
+            if staged.returncode != 0:
+                return fail(f"could not stage regenerated paths: {staged.stderr.strip()}")
+
+        changed = self._names("diff", "--cached", "--name-only", before.stdout.strip())
+        unstaged = self._names("diff", "--name-only")
+        untracked = self._untracked_paths(self.preview_dir) - self.generated_untracked_before
+        if changed is None or unstaged is None:
+            return fail("regeneration did not produce a fully staged generated-only tree: could not inspect worktree status")
+        outside = [path for path in changed if not is_generated(path)]
+        if unstaged or untracked or outside:
+            details = []
+            if outside:
+                details.append("staged changes outside generated_paths: " + ", ".join(outside))
+            if unstaged:
+                details.append("unstaged changes: " + ", ".join(unstaged))
+            if untracked:
+                details.append("untracked files: " + ", ".join(sorted(untracked)))
+            return fail("regeneration did not produce a fully staged generated-only tree: " + "; ".join(details))
+
+        tree = self._git("write-tree")
+        if tree.returncode != 0:
+            return fail(f"could not write regenerated merge tree: {tree.stderr.strip()}")
+        payload.update(ok=True, merge_clean=False, preview_tree=tree.stdout.strip(), errors=[])
+        self.force_preview_push = True
+        print(
+            f"create_preview: regenerated declared generated paths after resolving {len(conflicts)} conflict(s)",
+            file=sys.stderr,
+        )
+        return True
+
+    def _landing_config_at_ref(self, ref: str) -> dict | None:
+        # Same precedence as swarm-discover.load_config, read from the leased ref.
+        runtime_paths = {"claude": ".claude/swarm-config.json", "codex": ".codex/swarm-config.json"}
+        if self.runtime in runtime_paths:
+            candidates = [runtime_paths[self.runtime], "swarm-config.json"]
+        else:
+            candidates = ["swarm-config.json"]
+            present = [p for p in runtime_paths.values() if self._blob_at(ref, p)]
+            if len(present) == 1:
+                candidates += present
+        for path in candidates:
+            result = self._git("show", f"{ref}:{path}", cwd=self.cwd)
+            if result.returncode != 0:
+                continue
+            try:
+                config = json.loads(result.stdout)
+            except ValueError:
+                return None
+            landing = config.get("landing") if isinstance(config, dict) else None
+            return landing if isinstance(landing, dict) else None
+        return None
+
+    @staticmethod
+    def _valid_generated_path(pattern: object) -> bool:
+        if not isinstance(pattern, str) or not pattern.strip() or "\\" in pattern:
+            return False
+        if pattern.startswith(("/", "!", ":(")):
+            return False
+        return ".." not in Path(pattern).parts and "//" not in pattern
+
+    @staticmethod
+    def _untracked_paths(worktree: Path) -> set[str]:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=worktree, capture_output=True, check=False,
+        )
+        if result.returncode != 0:
+            return {"<status-unavailable>"}
+        return {path.decode("utf-8", errors="surrogateescape") for path in result.stdout.split(b"\0") if path}
+
+    def _capture_regeneration_untracked(self) -> None:
+        if self.preview_dir is not None:
+            self.generated_untracked_to_clean = sorted(
+                self._untracked_paths(self.preview_dir) - self.generated_untracked_before
+            )
+
+    def _reset_persistent_preview(self) -> None:
+        """Return the persistent integration worktree to its clean pre-merge state."""
+        if self.preview_dir is None:
+            return
+        self._git("merge", "--abort")
+        self._git("reset", "--hard", "HEAD")
+        if self.generated_untracked_to_clean:
+            self._git("clean", "-f", "-d", "--", *self.generated_untracked_to_clean)
+
     def cleanup_preview(self) -> bool:
         if self.preview_dir is None:
             return True
         start = time.monotonic()
         try:
+            merge_head = subprocess.run(
+                ["git", "rev-parse", "--quiet", "--verify", "MERGE_HEAD"],
+                capture_output=True, text=True, cwd=self.preview_dir, check=False,
+            )
+            if self.persistent_preview and merge_head.returncode == 0:
+                self._reset_persistent_preview()
+                if self._untracked_paths(self.preview_dir) - self.generated_untracked_before:
+                    self._record("cleanup", "failed", start)
+                    return False
             result = subprocess.run(
                 [str(CREATE_PREVIEW), "--cleanup", "--preview-dir", str(self.preview_dir)],
                 capture_output=True, text=True, cwd=self.cwd, check=False,
@@ -378,7 +589,7 @@ class Driver:
         self, primary_root: Path, primary_branch: str, feature_branch: str,
         primary_local_vs_remote: str | None, preview_tree: str, leased_sha: str,
     ) -> tuple[str, str, str | None, str | None]:
-        if primary_local_vs_remote in _PUSH_FROM_PREVIEW_STATUSES:
+        if self.force_preview_push or primary_local_vs_remote in _PUSH_FROM_PREVIEW_STATUSES:
             return self._push_from_preview(primary_root, primary_branch, feature_branch)
         return self._merge_in_primary(primary_root, primary_branch, feature_branch, preview_tree, leased_sha)
 
@@ -513,7 +724,8 @@ class Driver:
         self._record("fetch", "passed", start)
 
         preview = self._run_script(
-            "create_preview", CREATE_PREVIEW, ["--base-ref", leased_sha, "--owner-pid", str(os.getpid())]
+            "create_preview", CREATE_PREVIEW,
+            ["--base-ref", leased_sha, "--owner-pid", str(os.getpid()), "--keep-conflicts"],
         )
         self.preview_dir = Path(preview["preview_dir"])
         head_sha = preview["feature_sha"]

@@ -23,7 +23,9 @@ already discovers (repo root, or `.claude/swarm-config.json` /
     "batch_boundary_paths": ["api/migrations/**", "api/Cargo.toml"],
     "max_batch_size": 5,
     "linger_minutes": 5,
-    "integration_worktree": "~/.local/share/worktrees/<repo>/integration"
+    "integration_worktree": "~/.local/share/worktrees/<repo>/integration",
+    "generated_paths": ["build/generated/**", "docs/generated.json"],
+    "regenerate_command": "make generate"
   }
 }
 ```
@@ -37,6 +39,8 @@ already discovers (repo root, or `.claude/swarm-config.json` /
 | `max_batch_size`       | positive integer | `5`     | Upper bound on branches per batch.                                    |
 | `linger_minutes`       | non-negative number | `5` | Linger window before assembling a batch.                              |
 | `integration_worktree` | string (path) | `null`     | Tilde-expanded on read. Usable independently of `mode` — a serial-mode repo can still declare a persistent integration worktree. |
+| `generated_paths` | list of strings (globs) | `[]` | Relative paths or patterns for tracked files that can be regenerated after merge conflicts. |
+| `regenerate_command` | string | `null` | Shell command run in the merge preview after restoring conflicting generated paths from the leased primary. The regenerated outputs are staged and the resulting tree is verified as the landing candidate. |
 
 Every field is optional; an absent `landing` key (or one that is not a JSON
 object) reports `landing: null` with a warning for the latter case.
@@ -54,8 +58,9 @@ of validation failure:
    not silently run as an under-gated batch.
 2. **Tuning-field failures** — a malformed `batch_boundary_paths` (not a list
    of strings), `max_batch_size` (not a positive integer), `linger_minutes`
-   (not a non-negative number), or `integration_worktree` (not a non-empty
-   string). Each of these falls back independently to its documented default
+   (not a non-negative number), `integration_worktree` (not a non-empty
+   string), `generated_paths` (not a list of safe relative paths), or
+   `regenerate_command` (not a non-empty string). Each of these falls back independently to its documented default
    with its own warning; they do not force `mode` down to `serial`, since
    they do not affect how strong the gate is.
 
