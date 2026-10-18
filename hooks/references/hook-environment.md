@@ -84,9 +84,27 @@ Hooks receive a JSON payload on stdin. The shape varies by event:
 |---|---|
 | `PreToolUse` | `tool_name`, `tool_input`, `session_id`, `cwd` |
 | `PostToolUse` | `tool_name`, `tool_input`, `tool_response`, `session_id`, `cwd` |
+| `PostToolUseFailure` | `tool_name`, `tool_input`, `error`, `is_interrupt`, `duration_ms`, `tool_use_id`, `session_id`, `cwd` |
 | `SessionStart` | `session_id`, `transcript_path` |
 | `Stop` | `session_id`, `transcript_path`, `stop_hook_active` |
 | `UserPromptSubmit` | `session_id`, `transcript_path`, `prompt` |
+
+**Failed tool calls do not fire `PostToolUse`.** A Bash call that exits
+non-zero fires `PostToolUseFailure` instead, and a successful `PostToolUse`
+Bash `tool_response` carries no exit-code field. Captured from Claude Code
+(`sh -c 'echo oops >&2; exit 7'`, 2026-10-18; session and path fields
+omitted):
+
+```json
+{"hook_event_name":"PostToolUseFailure","tool_name":"Bash",
+ "tool_input":{"command":"sh -c 'echo oops >&2; exit 7'"},
+ "tool_use_id":"toolu_…","error":"Exit code 7\noops",
+ "is_interrupt":false,"duration_ms":120}
+```
+
+There is no numeric exit field: the status is the leading `Exit code N` line
+of `error`, and the rest is stderr. A hook that must see failures has to be
+registered on `PostToolUseFailure` as well (bento's `record-bash.py` is).
 
 stdin is **never a TTY**. Do not use `read` with a TTY assumption, and do not
 use `tput` or terminal escape sequences in hook stdout.

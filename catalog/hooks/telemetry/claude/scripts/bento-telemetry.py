@@ -25,6 +25,7 @@ ZERO_SUMMARY = {
     "by_plugin": {},
     "by_skill": {},
     "by_day": {},
+    "failures_by_helper": {},
 }
 
 
@@ -80,6 +81,8 @@ def cmd_summarize(args: argparse.Namespace) -> int:
         print(f"total {summary['total']}")
         for key, value in summary["by_class"].items():
             print(f"class {key} {value}")
+        for key, counts in summary["failures_by_helper"].items():
+            print(f"failures {key} {counts['failed']}/{counts['total']}")
     return 0
 
 
@@ -124,7 +127,13 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
     by_plugin: Counter[str] = Counter()
     by_skill: Counter[str] = Counter()
     by_day: Counter[str] = Counter()
+    helper_total: Counter[str] = Counter()
+    helper_failed: Counter[str] = Counter()
     for record in records:
+        helper = f"{record.get('skill', '')}/{record.get('script', '')}"
+        helper_total[helper] += 1
+        if record.get("class") != "ok":
+            helper_failed[helper] += 1
         by_class[str(record.get("class", ""))] += 1
         by_plugin[str(record.get("plugin", ""))] += 1
         by_skill[str(record.get("skill", ""))] += 1
@@ -137,6 +146,10 @@ def summarize(records: list[dict[str, Any]]) -> dict[str, Any]:
         "by_plugin": ordered_counter(by_plugin),
         "by_skill": ordered_counter(by_skill),
         "by_day": ordered_counter(by_day),
+        "failures_by_helper": {
+            helper: {"failed": helper_failed[helper], "total": helper_total[helper]}
+            for helper in sorted(helper_failed, key=lambda h: (-helper_failed[h], h))
+        },
     }
 
 
