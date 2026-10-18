@@ -20,15 +20,10 @@ from tests.e2e_utils import E2ETestCase, _have
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
-@unittest.skipUnless(
-    _have("zolem") and _have("claude"),
-    "zolem and claude must both be on PATH",
-)
-class BashTelemetryHookE2ETest(E2ETestCase):
-    """Verify that the record-bash PostToolUse hook writes telemetry JSONL."""
+class _TelemetryE2EBase(E2ETestCase):
+    """Shared repo/hook wiring; defines no tests of its own."""
 
     BACKEND = "fixture"
-    FIXTURE_NS = "e2e-telemetry"
 
     def setUp(self) -> None:
         super().setUp()
@@ -125,6 +120,15 @@ class BashTelemetryHookE2ETest(E2ETestCase):
 
         return repo
 
+@unittest.skipUnless(
+    _have("zolem") and _have("claude"),
+    "zolem and claude must both be on PATH",
+)
+class BashTelemetryHookE2ETest(_TelemetryE2EBase):
+    """Verify that the record-bash PostToolUse hook writes telemetry JSONL."""
+
+    FIXTURE_NS = "e2e-telemetry"
+
     def test_hook_records_bash_event(self) -> None:
         repo = self._init_repo_with_hook()
         self._run_claude(
@@ -158,13 +162,10 @@ class BashTelemetryHookE2ETest(E2ETestCase):
     _have("zolem") and _have("claude"),
     "zolem and claude must both be on PATH",
 )
-class BashTelemetryFailureHookE2ETest(BashTelemetryHookE2ETest):
+class BashTelemetryFailureHookE2ETest(_TelemetryE2EBase):
     """A failing helper reaches record-bash via PostToolUseFailure."""
 
     FIXTURE_NS = "e2e-telemetry-fail"
-
-    def test_hook_records_bash_event(self) -> None:
-        pass  # inherited success-path test uses the other fixture
 
     def test_hook_records_failed_bash_event(self) -> None:
         repo = self._init_repo_with_hook()
