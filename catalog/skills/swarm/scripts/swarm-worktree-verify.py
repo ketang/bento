@@ -5,11 +5,41 @@ import json
 import sys
 from pathlib import Path
 
-from git_state import NotAWorkTreeError, detect_checkout_root, git_stdout, is_linked_worktree, primary_checkout_root
+from git_state import (
+    NotAWorkTreeError,
+    detect_checkout_root,
+    git_stdout,
+    is_linked_worktree,
+    primary_checkout_root,
+    try_git_stdout,
+)
+
+
+def build_errors(checks: dict, args, expected_worktree, require_linked: bool, used_worktree_dir: bool) -> list[str]:
+    errors: list[str] = []
+    root = checks["checkout_root"]
+    target = str(expected_worktree) if expected_worktree else "<expected-worktree>"
+    if not checks["expected_worktree_match"] or (require_linked and not checks["linked_worktree"]):
+        where = "primary checkout" if checks["current_checkout_is_primary"] else "checkout"
+        msg = f"current {where} is {root}"
+        if expected_worktree:
+            msg += f", expected {expected_worktree}"
+        if used_worktree_dir:
+            msg += f"; --worktree-dir does not point at the intended worktree: pass --worktree-dir {target}"
+        else:
+            msg += f"; re-run with --worktree-dir {target} or cd {target} && <same command>"
+        errors.append(msg)
+    if not checks["expected_branch_match"]:
+        errors.append(f"branch {checks['branch']!r} != expected {args.expected_branch!r}")
+    return errors
 
 
 def main() -> int:
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--worktree-dir",
+        help="evaluate this checkout instead of the process cwd (cwd-safe invocation)",
+    )
     parser.add_argument("--expected-branch")
     parser.add_argument("--expected-worktree")
     parser.add_argument("--require-worktree", action="store_true")
@@ -22,6 +52,10 @@ def main() -> int:
         parser.error("--expected-worktree requires a non-empty value")
 
     cwd = Path.cwd().resolve()
+    if args.worktree_dir:
+        cwd = Path(args.worktree_dir).resolve()
+        if not cwd.is_dir() or try_git_stdout("rev-parse", "--git-dir", cwd=cwd) is None:
+            parser.error(f"--worktree-dir {args.worktree_dir} is not inside a git checkout")
     checkout_root = detect_checkout_root(cwd)
     branch = git_stdout("branch", "--show-current", cwd=checkout_root)
     linked_worktree = is_linked_worktree(checkout_root)
@@ -49,6 +83,10 @@ def main() -> int:
             checks["require_linked_worktree_satisfied"],
         ]
     )
+
+    errors = build_errors(checks, args, expected_worktree, require_linked_worktree, bool(args.worktree_dir))
+    if errors:
+        checks["errors"] = errors
 
     if (
         require_linked_worktree

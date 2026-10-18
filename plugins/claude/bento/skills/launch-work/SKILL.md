@@ -69,7 +69,7 @@ of launching work that benefit from repeatable checks:
   to preview or apply branch and linked-worktree creation; add
   `--claim <id|auto>` on the `--apply` run to claim the tracker issue right
   after the worktree exists (beads or GitHub Issues, auto-detected)
-- `launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
+- `launch-work/scripts/launch-work-verify.py --worktree-dir <path> --expected-branch <name> --expected-worktree <path> --require-linked-worktree`
   to verify the current checkout is the intended linked worktree on the intended
   branch
 
@@ -137,10 +137,11 @@ launch-work/scripts/launch-work-bootstrap.py --branch <name> --worktree <path> -
 
    Omit `--claim` entirely for work that is not tracker-backed.
 
-8. Enter the linked worktree and verify both location and branch:
+8. Verify both location and branch. `--worktree-dir` makes this independent of the shell's cwd,
+   which may still be the primary checkout:
 
 ```bash
-launch-work/scripts/launch-work-verify.py --expected-branch <name> --expected-worktree <path> --require-linked-worktree
+launch-work/scripts/launch-work-verify.py --worktree-dir <path> --expected-branch <name> --expected-worktree <path> --require-linked-worktree
 ```
 
 9. Confirm implementation will happen in that linked worktree, not in the
