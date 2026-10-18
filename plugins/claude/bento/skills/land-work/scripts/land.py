@@ -52,6 +52,7 @@ sits in a deleted directory and must `cd` to the reported `cd` path.
 from __future__ import annotations
 
 import argparse
+import fcntl
 import fnmatch
 import hashlib
 import json
@@ -62,6 +63,7 @@ import signal
 import socket
 import subprocess
 import sys
+import threading
 import time
 from pathlib import Path
 
@@ -314,19 +316,24 @@ def _marker_is_live(record: dict) -> bool:
         return False
     except OSError:
         pass
+    recorded = record.get("pid_start_time")
+    if recorded is None:
+        return True  # writer could not read a start time: an existing pid counts as live
     start = _proc_start_time(pid)
-    return start is not None and start == str(record.get("pid_start_time"))
+    return start is not None and start == str(recorded)
 
 
 def _marker_slug(branch: str) -> str:
     return re.sub(r"[^A-Za-z0-9._-]", "_", branch) + "-" + hashlib.sha1(branch.encode()).hexdigest()[:8]
 
 
-def acquire_landing_marker(common_dir: Path, branch: str, worktree: Path) -> Path:
-    """Atomically publish the landing marker for `branch`. The record is written
-    to an exclusively created temp file, then hard-linked into place: link fails
-    if a marker already exists, so two starters cannot both win. A live marker
-    raises StepFailure; a stale one is removed and replaced."""
+def acquire_landing_marker(common_dir: Path, branch: str, worktree: Path) -> tuple[Path, dict]:
+    """Publish the landing marker for `branch` and return (path, record). The
+    check / stale-removal / link sequence runs under an flock on a sibling lock
+    file, so two starters racing on one stale marker cannot each delete the
+    other's fresh one; the record is written to an exclusive temp file and
+    hard-linked into place. A live marker raises StepFailure; a stale one is
+    removed and replaced."""
     directory = common_dir / "bento" / "landing-in-progress"
     directory.mkdir(parents=True, exist_ok=True)
     final = directory / f"{_marker_slug(branch)}.json"
@@ -339,30 +346,28 @@ def acquire_landing_marker(common_dir: Path, branch: str, worktree: Path) -> Pat
         "host": socket.gethostname(),
         "started_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    tmp = directory / f".{final.name}.{pid}.tmp"
-    fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(record, handle)
-        for _attempt in range(2):
+    tmp = directory / f".{final.name}.{pid}.{threading.get_ident()}.tmp"
+    with open(directory / ".lock", "a", encoding="utf-8") as lock:
+        fcntl.flock(lock, fcntl.LOCK_EX)
+        fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o644)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as handle:
+                json.dump(record, handle)
             try:
-                os.link(tmp, final)
-                return final
-            except FileExistsError:
-                try:
-                    existing = json.loads(final.read_text(encoding="utf-8"))
-                except (OSError, ValueError):
-                    existing = {}
-                if isinstance(existing, dict) and _marker_is_live(existing):
-                    raise StepFailure(
-                        "landing_marker",
-                        f"another land.py (pid {existing.get('pid')}) is already landing branch "
-                        f"'{branch}'; wait for it to finish",
-                    )
-                final.unlink(missing_ok=True)
-        raise StepFailure("landing_marker", f"could not publish the landing marker for '{branch}'")
-    finally:
-        tmp.unlink(missing_ok=True)
+                existing = json.loads(final.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                existing = {}
+            if isinstance(existing, dict) and _marker_is_live(existing):
+                raise StepFailure(
+                    "landing_marker",
+                    f"another land.py (pid {existing.get('pid')}) is already landing branch "
+                    f"'{branch}'; wait for it to finish",
+                )
+            final.unlink(missing_ok=True)
+            os.link(tmp, final)
+        finally:
+            tmp.unlink(missing_ok=True)
+    return final, record
 
 
 class Driver:
@@ -379,11 +384,25 @@ class Driver:
         self.generated_untracked_before: set[str] = set()
         self.generated_untracked_to_clean: list[str] = []
         self.landing_marker: Path | None = None
+        self.landing_record: dict | None = None
 
     def release_landing_marker(self) -> None:
-        if self.landing_marker is not None:
-            self.landing_marker.unlink(missing_ok=True)
-            self.landing_marker = None
+        marker, record = self.landing_marker, self.landing_record
+        self.landing_marker = self.landing_record = None
+        if marker is None or record is None:
+            return
+        # Only remove our own marker: if it was removed and another lander has
+        # since published theirs, leave theirs alone.
+        try:
+            current = json.loads(marker.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return
+        if (
+            isinstance(current, dict)
+            and current.get("pid") == record["pid"]
+            and current.get("started_at") == record["started_at"]
+        ):
+            marker.unlink(missing_ok=True)
 
     # -- bookkeeping ------------------------------------------------------- #
 
@@ -803,7 +822,7 @@ class Driver:
 
         if not self.no_merge:
             common_dir = Path(git_stdout("rev-parse", "--path-format=absolute", "--git-common-dir", cwd=self.cwd))
-            self.landing_marker = acquire_landing_marker(common_dir, feature_branch, self.cwd)
+            self.landing_marker, self.landing_record = acquire_landing_marker(common_dir, feature_branch, self.cwd)
 
         start = time.monotonic()
         git("fetch", "origin", primary_branch, cwd=self.cwd, check=False)

@@ -1401,6 +1401,36 @@ class CheckUnpushedHookTest(unittest.TestCase):
         wt_c = self._unpushed_feature(repo, "feature-c")
         self.assertEqual(self._run(payload_cwd=wt_c).returncode, 2)
 
+    def test_hook_reads_marker_written_by_land_py(self) -> None:
+        import importlib.util
+        land_path = REPO_ROOT / "catalog/skills/land-work/scripts/land.py"
+        spec = importlib.util.spec_from_file_location("land_for_format_test", land_path)
+        land = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(land)
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        common = repo / ".git"
+
+        path, _record = land.acquire_landing_marker(common, "feature", worktree)
+        try:
+            # This test process is the "lander", so its pid is live.
+            self.assertEqual(self._run(payload_cwd=worktree).returncode, 0)
+        finally:
+            path.unlink(missing_ok=True)
+
+    def test_marker_with_null_start_time_and_live_pid_is_live(self) -> None:
+        repo = self._init_repo()
+        worktree = self._unpushed_feature(repo)
+        path = self._write_marker(repo, "feature", "feature", worktree)
+        record = json.loads(path.read_text(encoding="utf-8"))
+        record["pid_start_time"] = None
+        path.write_text(json.dumps(record), encoding="utf-8")
+
+        result = self._run(payload_cwd=worktree)
+
+        self.assertEqual(result.returncode, 0, msg=result.stderr)
+        self.assertTrue(path.exists())
+
     def test_block_message_says_bare_push_is_not_covered(self) -> None:
         repo = self._init_repo()
         worktree = self._unpushed_feature(repo)

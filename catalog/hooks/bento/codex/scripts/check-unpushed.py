@@ -625,8 +625,11 @@ def _marker_is_live(record: dict) -> bool:
         return False
     except OSError:
         pass  # exists, owned by someone else
+    recorded = record.get("pid_start_time")
+    if recorded is None:
+        return True  # writer could not read a start time: an existing pid counts as live
     start = _proc_start_time(pid)
-    return start is not None and start == str(record.get("pid_start_time"))
+    return start is not None and start == str(recorded)
 
 
 def landing_markers(root: str) -> tuple[list[dict], int]:
@@ -975,6 +978,7 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
             problems = [p for p in problems if p[0] != "unpushed"]
 
     if problems and is_primary_branch_in_primary_checkout(root, branch) and not is_suppressed(root):
+        clear_block_kinds(session_id, root, branch)
         joined = " and ".join(text for _, text in problems)
         return None, (
             f"Primary branch '{branch}' has {joined} (not blocking: peer sessions "
