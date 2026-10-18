@@ -56,3 +56,24 @@ def load_script_module_with_git_state(module_name: str, script_path: Path):
         else:
             sys.modules.pop("git_state", None)
     return module
+
+
+def load_land_module(name: str = "land_under_test"):
+    """Import land-work's land.py hermetically: its sibling `git_state` must be
+    land-work's own copy, not another skill's already-cached one."""
+    import importlib.util
+    import sys
+    from pathlib import Path
+
+    scripts = Path(__file__).resolve().parents[1] / "catalog/skills/land-work/scripts"
+    saved_modules = {k: sys.modules.pop(k) for k in ("git_state",) if k in sys.modules}
+    sys.path.insert(0, str(scripts))
+    try:
+        spec = importlib.util.spec_from_file_location(name, scripts / "land.py")
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+    finally:
+        sys.path.remove(str(scripts))
+        sys.modules.pop("git_state", None)
+        sys.modules.update(saved_modules)

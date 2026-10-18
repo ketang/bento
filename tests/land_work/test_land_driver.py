@@ -9,7 +9,7 @@ import time
 import unittest
 from pathlib import Path
 
-from tests.script_test_utils import git, run
+from tests.script_test_utils import git, load_land_module, run
 
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
@@ -642,6 +642,163 @@ class VerifierFailureTest(LandDriverTestBase):
         self.assertEqual(git(self.repo, "rev-parse", "HEAD").stdout.strip(), original_main)
         self.assertFalse((self.repo / "feature.txt").exists())
         self.assertEqual(self.registered_preview_worktrees(), [])
+
+
+class LandingMarkerTest(LandDriverTestBase):
+    """bento-0tyd.4: land.py publishes <git-common-dir>/bento/landing-in-progress/
+    <slug>.json for the branch it is landing, so the check-unpushed Stop hook
+    can tell a live landing from abandoned work."""
+
+    def marker_files(self) -> list[Path]:
+        return sorted((self.repo / ".git/bento/landing-in-progress").glob("*.json"))
+
+    def install_sleeping_verifier(self, started: Path, seconds: int = 4) -> None:
+        body = PASS_VERIFIER.split("\n", 1)[1]
+        self.install_verifier(f"#!/usr/bin/env bash\ntouch {started}\nsleep {seconds}\n{body}")
+
+    def start_driver(self) -> subprocess.Popen:
+        return subprocess.Popen(
+            [str(LAND_SCRIPT)], cwd=self.worktree, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+
+    def wait_for(self, path: Path) -> None:
+        deadline = time.monotonic() + 15
+        while not path.exists() and time.monotonic() < deadline:
+            time.sleep(0.05)
+        self.assertTrue(path.exists())
+
+    def test_marker_exists_while_verifier_runs_and_is_gone_after_success(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started)
+        proc = self.start_driver()
+        self.wait_for(started)
+
+        markers = self.marker_files()
+        self.assertEqual(len(markers), 1)
+        record = json.loads(markers[0].read_text(encoding="utf-8"))
+        self.assertEqual(record["branch"], "feature/test")
+        self.assertEqual(Path(record["worktree"]).resolve(), self.worktree.resolve())
+        self.assertEqual(record["pid"], proc.pid)
+        self.assertTrue(record["pid_start_time"])
+        self.assertTrue(record["host"])
+        self.assertTrue(record["started_at"])
+
+        stdout, stderr = proc.communicate(timeout=60)
+        self.assertEqual(proc.returncode, 0, stdout + stderr)
+        self.assertEqual(self.marker_files(), [])
+
+    def test_marker_is_gone_after_failure(self) -> None:
+        self.install_verifier(FAILED_VERIFIER)
+
+        result = self.run_driver()
+
+        self.assertEqual(result.returncode, 1, result.stdout + result.stderr)
+        self.assertEqual(self.marker_files(), [])
+
+    def test_second_land_for_same_live_branch_fails_fast(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started)
+        first = self.start_driver()
+        self.wait_for(started)
+
+        second = self.run_driver()
+        payload = json.loads(second.stdout)
+
+        self.assertEqual(second.returncode, 1, second.stdout + second.stderr)
+        self.assertEqual(payload["failed_step"], "landing_marker")
+        self.assertIn("already landing", payload["error"])
+        self.assertIn(str(first.pid), payload["error"])
+        # The first lander's marker survives the second's failure.
+        self.assertEqual(len(self.marker_files()), 1)
+        stdout, stderr = first.communicate(timeout=60)
+        self.assertEqual(first.returncode, 0, stdout + stderr)
+
+    def test_stale_marker_is_replaced(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started, seconds=30)
+        crashed = self.start_driver()
+        self.wait_for(started)
+        crashed.kill()  # SIGKILL: no finally, so the marker is left behind
+        crashed.communicate(timeout=30)
+        self.assertEqual(len(self.marker_files()), 1)
+        self.install_verifier(PASS_VERIFIER)
+
+        result = self.run_driver()
+
+        self.assertEqual(result.returncode, 0, result.stdout + result.stderr)
+        self.assertEqual(self.marker_files(), [])
+
+    @staticmethod
+    def _load_land():
+        return load_land_module()
+
+    def _stale_record(self, branch: str) -> dict:
+        dead = subprocess.Popen(["true"])
+        dead.wait()
+        return {
+            "branch": branch, "worktree": "/nowhere", "pid": dead.pid,
+            "pid_start_time": "1", "host": os.uname().nodename, "started_at": "old",
+        }
+
+    def test_concurrent_starters_on_a_stale_marker_have_exactly_one_winner(self) -> None:
+        land = self._load_land()
+        common = self.repo / ".git"
+        for round_number in range(20):
+            branch = f"feature/race-{round_number}"
+            directory = common / "bento/landing-in-progress"
+            directory.mkdir(parents=True, exist_ok=True)
+            (directory / f"{land._marker_slug(branch)}.json").write_text(
+                json.dumps(self._stale_record(branch)), encoding="utf-8"
+            )
+            barrier = threading.Barrier(6)
+            outcomes: list[str] = []
+
+            def start() -> None:
+                barrier.wait()
+                try:
+                    land.acquire_landing_marker(common, branch, self.worktree)
+                    outcomes.append("won")
+                except land.StepFailure:
+                    outcomes.append("lost")
+
+            threads = [threading.Thread(target=start) for _ in range(6)]
+            for thread in threads:
+                thread.start()
+            for thread in threads:
+                thread.join()
+            self.assertEqual(outcomes.count("won"), 1, outcomes)
+
+    def test_release_leaves_another_landers_marker_alone(self) -> None:
+        land = self._load_land()
+        common = self.repo / ".git"
+        driver = land.Driver(self.worktree, "claude", None)
+        driver.landing_marker, driver.landing_record = land.acquire_landing_marker(
+            common, "feature/test", self.worktree
+        )
+        # Our marker vanished (e.g. removed as stale) and someone else published theirs.
+        driver.landing_marker.unlink()
+        other = {
+            "branch": "feature/test", "worktree": "/elsewhere", "pid": os.getpid() + 1,
+            "pid_start_time": "5", "host": "h", "started_at": "theirs",
+        }
+        driver.landing_marker.write_text(json.dumps(other), encoding="utf-8")
+        path = driver.landing_marker
+
+        driver.release_landing_marker()
+
+        self.assertEqual(json.loads(path.read_text(encoding="utf-8")), other)
+
+    def test_no_merge_canary_writes_no_marker(self) -> None:
+        started = Path(self.temp_dir.name) / "verifier-started"
+        self.install_sleeping_verifier(started, seconds=2)
+        proc = subprocess.Popen(
+            [str(LAND_SCRIPT), "--no-merge"], cwd=self.worktree, stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True,
+        )
+        self.wait_for(started)
+        self.assertEqual(self.marker_files(), [])
+        proc.communicate(timeout=60)
 
 
 class VerifierTreeReuseDriverTest(LandDriverTestBase):

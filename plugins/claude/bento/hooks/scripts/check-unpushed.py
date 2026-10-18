@@ -3,7 +3,9 @@
 
 Blocks (exit 2) when the session cwd's git repo has a dirty working tree
 (``git status --porcelain`` non-empty) or has local commits ahead of its
-upstream (``git rev-list @{u}..HEAD --count`` > 0). The exception is any path
+any remote (``git rev-list HEAD --not --remotes --count`` > 0 -- counted
+against all remotes rather than ``@{u}``, so a rebase onto a newer
+``origin/main`` does not count the pulled-in main commits as unpushed). The exception is any path
 matching a glob pattern listed in the ``check-unpushed/dirty-state-exempt-
 paths.txt`` customization file, resolved via the agent-plugins convention
 (marketplace ``bento``, plugin ``bento``): repo scope
@@ -18,6 +20,18 @@ shipping or overriding that customization file instead. Paths matching none
 of the resolved patterns still block; with no file resolved, nothing is
 exempt. The blocking reason on stderr names the branch and the counts so it
 is actionable.
+
+On the primary branch in the primary checkout the hook only reports (stderr,
+exit 0, never 2): peer sessions leave commits on the shared primary, and
+commits there are blocked at commit time by the git guard (bento-i76i).
+
+A live ``land.py`` landing marker
+(``<git-common-dir>/bento/landing-in-progress/<slug>.json``, written by
+land-work's land.py) for the current branch suppresses only the unpushed-commit
+block while that land.py runs; uncommitted changes still block. A marker is
+live only if its host matches, its pid exists and its start time matches
+(``/proc/<pid>/stat`` field 22); a stale marker is removed and mentioned in
+the block message. A bare background ``git push`` is not covered.
 
 A branch with no upstream is treated as a warning, not a block: worktree flows
 that have not pushed a first commit yet must not be trapped, so a clean
@@ -78,6 +92,7 @@ import fcntl
 import fnmatch
 import json
 import os
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -537,7 +552,7 @@ def has_upstream(root: str) -> bool:
 
 
 def ahead_count(root: str) -> int:
-    result = _git(root, "rev-list", "@{u}..HEAD", "--count")
+    result = _git(root, "rev-list", "HEAD", "--not", "--remotes", "--count")
     if result.returncode != 0:
         return 0
     try:
@@ -556,7 +571,7 @@ def has_only_exempt_ahead_commits(root: str, patterns: tuple[str, ...]) -> bool:
     if not patterns:
         return False
 
-    commits = _git(root, "rev-list", "@{u}..HEAD")
+    commits = _git(root, "rev-list", "HEAD", "--not", "--remotes")
     if commits.returncode != 0:
         return False
     commit_ids = [commit for commit in commits.stdout.splitlines() if commit]
@@ -580,6 +595,101 @@ def has_only_exempt_ahead_commits(root: str, patterns: tuple[str, ...]) -> bool:
         if not paths or any(not _path_is_exempt(path, patterns) for path in paths):
             return False
     return True
+
+
+# --- land.py landing markers (bento-0tyd.4) ----------------------------------
+
+
+def _proc_start_time(pid: int) -> str | None:
+    """Field 22 of /proc/<pid>/stat, or ``ps -o lstart=`` where /proc is
+    absent. Mirrors land.py's writer."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text(encoding="utf-8")
+        return stat[stat.rindex(")") + 2 :].split()[19]
+    except (OSError, ValueError, IndexError):
+        pass
+    result = subprocess.run(
+        ["ps", "-o", "lstart=", "-p", str(pid)], capture_output=True, text=True, check=False
+    )
+    out = result.stdout.strip()
+    return out if result.returncode == 0 and out else None
+
+
+def _marker_is_live(record: dict) -> bool:
+    pid = record.get("pid")
+    if not isinstance(pid, int) or pid <= 0:
+        return False
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except OSError:
+        pass  # exists, owned by someone else
+    recorded = record.get("pid_start_time")
+    if recorded is None:
+        return True  # writer could not read a start time: an existing pid counts as live
+    start = _proc_start_time(pid)
+    return start is not None and start == str(recorded)
+
+
+def landing_markers(root: str) -> tuple[list[dict], int]:
+    """Return (live markers for this host, count of stale markers removed).
+
+    Another host's markers are ignored and left alone; unreadable ones are
+    skipped. A stale marker (dead pid, or a reused pid whose start time
+    differs) is deleted.
+    """
+    result = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir")
+    common = result.stdout.strip()
+    if result.returncode != 0 or not common:
+        return [], 0
+    directory = Path(common) / "bento" / "landing-in-progress"
+    live: list[dict] = []
+    stale = 0
+    try:
+        entries = sorted(directory.glob("*.json"))
+    except OSError:
+        return [], 0
+    host = socket.gethostname()
+    for entry in entries:
+        try:
+            record = json.loads(entry.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if not isinstance(record, dict) or record.get("host") != host:
+            continue
+        if _marker_is_live(record):
+            live.append(record)
+            continue
+        try:
+            entry.unlink()
+        except OSError:
+            continue
+        stale += 1
+    return live, stale
+
+
+def is_primary_branch_in_primary_checkout(root: str, branch: str) -> bool:
+    """True for the conventional primary branch checked out in the primary
+    (non-linked) worktree. Fails toward blocking when the primary branch
+    cannot be identified conventionally."""
+    if not branch:
+        return False
+    git_dir = _git(root, "rev-parse", "--path-format=absolute", "--git-dir").stdout.strip()
+    common = _git(root, "rev-parse", "--path-format=absolute", "--git-common-dir").stdout.strip()
+    if not git_dir or git_dir != common:
+        return False
+    head = _git(root, "symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+    if head.returncode == 0 and head.stdout.strip():
+        return branch == head.stdout.strip().removeprefix("origin/")
+    return branch in ("main", "master")
+
+
+def _marker_covers(record: dict, root: str, branch: str) -> bool:
+    if branch and record.get("branch") == branch:
+        return True
+    worktree = record.get("worktree")
+    return isinstance(worktree, str) and os.path.realpath(worktree) == os.path.realpath(root)
 
 
 def _classify_problems(root: str, dirty: bool) -> list[tuple[str, str]]:
@@ -614,7 +724,7 @@ def _classify_problems(root: str, dirty: bool) -> list[tuple[str, str]]:
 
 
 def _render_full_block_message(
-    root: str, problems: list[tuple[str, str]], session_id: str
+    root: str, problems: list[tuple[str, str]], session_id: str, stale_markers: int = 0
 ) -> str:
     branch = current_branch(root) or "(detached HEAD)"
     joined = " and ".join(text for _, text in problems)
@@ -626,6 +736,16 @@ def _render_full_block_message(
         "To suppress this check for this repo, add 'require_pushed=false' to "
         ".agent-mode.local.\n"
     )
+    if any(kind == "unpushed" for kind, _ in problems):
+        message += (
+            "The unpushed-commit block is lifted only while a live land.py is "
+            "landing this branch; a bare background `git push` is not covered.\n"
+        )
+    if stale_markers:
+        message += (
+            f"Removed {stale_markers} stale land.py landing marker"
+            f"{'' if stale_markers == 1 else 's'} (its process is gone).\n"
+        )
     if _turn_hold_path(session_id) is not None:
         marker_name = f"{TURN_HOLD_PREFIX}{session_id}"
         message += (
@@ -851,6 +971,22 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
     branch = current_branch(root)
     problems = _classify_problems(root, dirty)
 
+    stale_markers = 0
+    if any(kind == "unpushed" for kind, _ in problems):
+        live, stale_markers = landing_markers(root)
+        if any(_marker_covers(record, root, branch) for record in live):
+            problems = [p for p in problems if p[0] != "unpushed"]
+
+    if problems and is_primary_branch_in_primary_checkout(root, branch) and not is_suppressed(root):
+        clear_block_kinds(session_id, root, branch)
+        joined = " and ".join(text for _, text in problems)
+        return None, (
+            f"Primary branch '{branch}' has {joined} (not blocking: peer sessions "
+            "share the primary checkout, and commits on the primary branch are "
+            "blocked at commit time by the git guard (bento-i76i), so the Stop "
+            "hook no longer duplicates that).\n"
+        )
+
     if not is_suppressed(root) and problems:
         if consume_turn_hold(session_id):
             return None, None
@@ -859,7 +995,7 @@ def evaluate(hook_input: dict) -> tuple[str | None, str | None]:
         if previous_kinds == kinds:
             return _render_condensed_block_message(root, problems), None
         record_block_kinds(session_id, root, branch, kinds)
-        return _render_full_block_message(root, problems, session_id), None
+        return _render_full_block_message(root, problems, session_id, stale_markers), None
 
     # No active block this turn: forget any prior recorded state so a later,
     # unrelated recurrence of the same problem kind is treated as fresh
