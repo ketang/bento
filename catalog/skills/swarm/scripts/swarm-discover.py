@@ -61,6 +61,8 @@ LANDING_DEFAULTS: dict = {
     "max_batch_size": 5,
     "linger_minutes": 5,
     "integration_worktree": None,
+    "generated_paths": [],
+    "regenerate_command": None,
 }
 
 
@@ -90,8 +92,7 @@ def validate_landing_config(raw: object, repo_root: Path) -> tuple[dict | None, 
     Fails safe: any problem that would let landing.mode: batch run without a
     real full-gate/gate-scope command degrades the whole block to serial
     full-gate behavior rather than silently weakening gating. Malformed
-    values for the batching-tuning fields (batch_boundary_paths,
-    max_batch_size, linger_minutes, integration_worktree) fall back to their
+    values for the optional tuning and regeneration fields fall back to their
     documented defaults independently, since they do not affect gate
     strength.
     """
@@ -195,6 +196,31 @@ def validate_landing_config(raw: object, repo_root: Path) -> tuple[dict | None, 
         else:
             integration_worktree = str(Path(integration_worktree).expanduser())
     result["integration_worktree"] = integration_worktree
+
+    generated_paths = raw.get("generated_paths", [])
+    if not (
+        isinstance(generated_paths, list)
+        and all(
+            isinstance(item, str)
+            and item.strip()
+            and not Path(item).is_absolute()
+            and ".." not in Path(item).parts
+            for item in generated_paths
+        )
+    ):
+        warnings.append(
+            "swarm-discover: landing.generated_paths must be a list of relative paths without '..'; using []"
+        )
+        generated_paths = []
+    result["generated_paths"] = generated_paths
+
+    regenerate_command = raw.get("regenerate_command")
+    if regenerate_command is not None and not _is_non_empty_string(regenerate_command):
+        warnings.append(
+            "swarm-discover: landing.regenerate_command must be a non-empty string; ignoring"
+        )
+        regenerate_command = None
+    result["regenerate_command"] = regenerate_command
 
     return result, warnings
 

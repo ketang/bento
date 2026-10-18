@@ -1,0 +1,10 @@
+{
+  "landing": {
+    "generated_paths": [
+      "plugins/**",
+      ".claude-plugin/marketplace.json",
+      "catalog/plugin-versions.json"
+    ],
+    "regenerate_command": "catalog/skills/launch-work/scripts/run-heavy scripts/build-plugins"
+  }
+}

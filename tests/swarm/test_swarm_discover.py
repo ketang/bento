@@ -270,6 +270,8 @@ class SwarmDiscoverTest(unittest.TestCase):
                 "max_batch_size": 5,
                 "linger_minutes": 5,
                 "integration_worktree": None,
+                "generated_paths": [],
+                "regenerate_command": None,
             },
         )
         self.assertFalse(any("landing" in warning for warning in payload["warnings"]))

@@ -46,6 +46,7 @@ sits in a deleted directory and must `cd` to the reported `cd` path.
 from __future__ import annotations
 
 import argparse
+import fnmatch
 import json
 import os
 import re
@@ -77,6 +78,7 @@ CREATE_PREVIEW = SCRIPT_DIR / "land-work-create-preview.py"
 RUN_VERIFIER = SCRIPT_DIR / "land-work-run-verifier.py"
 VERIFY_LEASE = SCRIPT_DIR / "land-work-verify-lease.py"
 VERIFY_LANDING = SCRIPT_DIR / "land-work-verify-landing.py"
+SWARM_DISCOVER = SCRIPT_DIR.parents[1] / "swarm" / "scripts" / "swarm-discover.py"
 
 # Routes for the merge+push step, from land-work-prepare.py's
 # primary_local_vs_remote diagnostic. `None` (no remote-tracking ref to
@@ -290,6 +292,10 @@ class Driver:
         self.steps: list[dict] = []
         self.preview_dir: Path | None = None
         self.primary_root: Path | None = None
+        self.force_preview_push = False
+        self.persistent_preview = False
+        self.generated_untracked_before: set[str] = set()
+        self.generated_untracked_to_clean: list[str] = []
 
     # -- bookkeeping ------------------------------------------------------- #
 
@@ -316,7 +322,16 @@ class Driver:
             payload = json.loads(result.stdout) if result.stdout.strip() else {}
         except ValueError:
             payload = {}
+        if step == "create_preview" and payload.get("preview_dir"):
+            self.preview_dir = Path(payload["preview_dir"])
+            self.persistent_preview = bool(payload.get("persistent_worktree"))
         ok = result.returncode == 0 and bool(payload.get("ok", result.returncode == 0))
+
+        if step == "create_preview" and not ok and self._resolve_generated_conflicts(payload):
+            self._record(step, "passed", start, {"generated_conflicts_resolved": True})
+            return payload
+        if step == "create_preview" and not ok and self.persistent_preview and payload.get("conflicting_paths"):
+            subprocess.run(["git", "merge", "--abort"], capture_output=True, text=True, cwd=self.preview_dir, check=False)
 
         extra: dict = {}
         if step == "verify":
@@ -343,11 +358,233 @@ class Driver:
             raise StepFailure(step, message, output_path=payload.get("verifier_log"))
         return payload
 
+    def _resolve_generated_conflicts(self, payload: dict) -> bool:
+        conflicts = payload.get("conflicting_paths") or []
+        if not conflicts or self.preview_dir is None:
+            return False
+        base_sha = payload.get("base_sha")
+        if not isinstance(base_sha, str) or not base_sha:
+            return False
+        landing = self._landing_config_at_ref(base_sha)
+        if not isinstance(landing, dict):
+            return False
+        generated_paths = landing.get("generated_paths")
+        command = landing.get("regenerate_command")
+        if (
+            not isinstance(generated_paths, list)
+            or not generated_paths
+            or not all(self._valid_generated_path(pattern) for pattern in generated_paths)
+            or not isinstance(command, str)
+            or not command.strip()
+            or any(
+                not any(fnmatch.fnmatchcase(path, pattern) for pattern in generated_paths)
+                for path in conflicts
+            )
+        ):
+            return False
+
+        for path in conflicts:
+            base_blob = subprocess.run(
+                ["git", "rev-parse", "--verify", f"{base_sha}:{path}"],
+                cwd=self.preview_dir, capture_output=True, text=True, check=False,
+            )
+            if base_blob.returncode == 0:
+                restored = subprocess.run(
+                    ["git", "checkout", base_sha, "--", path],
+                    cwd=self.preview_dir, capture_output=True, text=True, check=False,
+                )
+            else:
+                restored = subprocess.run(
+                    ["git", "rm", "-f", "--", path],
+                    cwd=self.preview_dir, capture_output=True, text=True, check=False,
+                )
+            if restored.returncode != 0:
+                payload["errors"] = [f"could not restore generated conflict {path!r} from the leased base: {restored.stderr.strip()}"]
+                return False
+
+        merge_tree = subprocess.run(
+            ["git", "write-tree"], cwd=self.preview_dir,
+            capture_output=True, text=True, check=False,
+        )
+        if merge_tree.returncode != 0:
+            payload["errors"] = [f"could not write merge tree before regeneration: {merge_tree.stderr.strip()}"]
+            return False
+        before_tree = merge_tree.stdout.strip()
+        self.generated_untracked_before = self._untracked_paths(self.preview_dir)
+
+        regenerated = subprocess.run(
+            ["bash", "-lc", command], cwd=self.preview_dir,
+            capture_output=True, text=True, check=False,
+        )
+        if regenerated.returncode != 0:
+            detail = (regenerated.stderr or regenerated.stdout).strip()
+            self._capture_regeneration_untracked()
+            payload["errors"] = [f"generated-file regeneration failed ({regenerated.returncode}): {detail}"]
+            return False
+
+        stale_paths = []
+        for path in conflicts:
+            base_blob = subprocess.run(
+                ["git", "rev-parse", "--verify", f"{base_sha}:{path}"],
+                cwd=self.preview_dir, capture_output=True, text=True, check=False,
+            )
+            regenerated_blob = subprocess.run(
+                ["git", "hash-object", "--", path],
+                cwd=self.preview_dir, capture_output=True, text=True, check=False,
+            ) if (self.preview_dir / path).exists() else None
+            base_hash = base_blob.stdout.strip() if base_blob.returncode == 0 else None
+            output_hash = regenerated_blob.stdout.strip() if regenerated_blob and regenerated_blob.returncode == 0 else None
+            if base_hash == output_hash:
+                stale_paths.append(path)
+        if stale_paths:
+            self._capture_regeneration_untracked()
+            payload["errors"] = [
+                "regeneration left conflicting outputs identical to the leased primary: "
+                + ", ".join(stale_paths)
+            ]
+            return False
+
+        unresolved = subprocess.run(
+            ["git", "diff", "--name-only", "--diff-filter=U"],
+            cwd=self.preview_dir, capture_output=True, text=True, check=False,
+        )
+        if unresolved.returncode != 0 or unresolved.stdout.strip():
+            paths = unresolved.stdout.strip() or unresolved.stderr.strip()
+            payload["errors"] = [f"unresolved conflicts remain after regeneration: {paths}"]
+            return False
+        staged = subprocess.run(
+            ["git", "add", "-A", "--", *generated_paths],
+            cwd=self.preview_dir, capture_output=True, text=True, check=False,
+        )
+        if staged.returncode != 0:
+            self._capture_regeneration_untracked()
+            payload["errors"] = [f"could not stage regenerated paths: {staged.stderr.strip()}"]
+            return False
+        changed = subprocess.run(
+            ["git", "diff", "--cached", "--name-only", before_tree],
+            cwd=self.preview_dir, capture_output=True, text=True, check=False,
+        )
+        unstaged = subprocess.run(
+            ["git", "diff", "--name-only"], cwd=self.preview_dir,
+            capture_output=True, text=True, check=False,
+        )
+        untracked = self._untracked_paths(self.preview_dir)
+        outside_paths = [
+            path for path in changed.stdout.splitlines()
+            if not any(fnmatch.fnmatchcase(path, pattern) for pattern in generated_paths)
+        ]
+        if (
+            changed.returncode != 0 or unstaged.returncode != 0 or unstaged.stdout.strip()
+            or untracked
+            or outside_paths
+        ):
+            self._capture_regeneration_untracked()
+            details = []
+            if outside_paths:
+                details.append("staged changes outside generated_paths: " + ", ".join(outside_paths))
+            if unstaged.stdout.strip():
+                details.append("unstaged changes: " + ", ".join(unstaged.stdout.splitlines()))
+            if untracked:
+                details.append("untracked files: " + ", ".join(sorted(untracked)))
+            if changed.returncode != 0 or unstaged.returncode != 0:
+                details.append("could not inspect regenerated worktree status")
+            payload["errors"] = ["regeneration did not produce a fully staged generated-only tree: " + "; ".join(details)]
+            return False
+        tree = subprocess.run(
+            ["git", "write-tree"], cwd=self.preview_dir,
+            capture_output=True, text=True, check=False,
+        )
+        if tree.returncode != 0:
+            payload["errors"] = [f"could not write regenerated merge tree: {tree.stderr.strip()}"]
+            return False
+        payload.update(ok=True, merge_clean=False, preview_tree=tree.stdout.strip(), errors=[])
+        self.force_preview_push = True
+        print(
+            f"create_preview: regenerated declared generated paths after resolving {len(conflicts)} conflict(s)",
+            file=sys.stderr,
+        )
+        return True
+
+    def _landing_config_at_ref(self, ref: str) -> dict | None:
+        candidates = []
+        if self.runtime in {"claude", "codex"}:
+            candidates.append(f".{self.runtime}/swarm-config.json")
+        candidates.append("swarm-config.json")
+        if self.runtime not in {"claude", "codex"}:
+            available = []
+            for runtime in ("claude", "codex"):
+                path = f".{runtime}/swarm-config.json"
+                probe = subprocess.run(
+                    ["git", "cat-file", "-e", f"{ref}:{path}"], cwd=self.cwd,
+                    capture_output=True, text=True, check=False,
+                )
+                if probe.returncode == 0:
+                    available.append(path)
+            if not candidates[-1] or len(available) != 1:
+                candidates = ["swarm-config.json"] if not available else []
+            else:
+                candidates = available
+        for path in candidates:
+            result = subprocess.run(
+                ["git", "show", f"{ref}:{path}"], cwd=self.cwd,
+                capture_output=True, text=True, check=False,
+            )
+            if result.returncode != 0:
+                continue
+            try:
+                config = json.loads(result.stdout)
+            except ValueError:
+                return None
+            landing = config.get("landing") if isinstance(config, dict) else None
+            return landing if isinstance(landing, dict) else None
+        return None
+
+    @staticmethod
+    def _valid_generated_path(pattern: object) -> bool:
+        if not isinstance(pattern, str) or not pattern.strip() or "\\" in pattern:
+            return False
+        if pattern.startswith(("/", "!", ":(")):
+            return False
+        return ".." not in Path(pattern).parts and "//" not in pattern
+
+    @staticmethod
+    def _untracked_paths(worktree: Path) -> set[str]:
+        result = subprocess.run(
+            ["git", "ls-files", "--others", "--exclude-standard", "-z"],
+            cwd=worktree, capture_output=True, check=False,
+        )
+        if result.returncode != 0:
+            return {"<status-unavailable>"}
+        return {path.decode("utf-8", errors="surrogateescape") for path in result.stdout.split(b"\0") if path}
+
+    def _capture_regeneration_untracked(self) -> None:
+        if self.preview_dir is not None:
+            self.generated_untracked_to_clean = sorted(
+                self._untracked_paths(self.preview_dir) - self.generated_untracked_before
+            )
+
     def cleanup_preview(self) -> bool:
         if self.preview_dir is None:
             return True
         start = time.monotonic()
         try:
+            merge_head = subprocess.run(
+                ["git", "rev-parse", "--quiet", "--verify", "MERGE_HEAD"],
+                capture_output=True, text=True, cwd=self.preview_dir, check=False,
+            )
+            if self.persistent_preview and merge_head.returncode == 0:
+                subprocess.run(
+                    ["git", "merge", "--abort"],
+                    capture_output=True, text=True, cwd=self.preview_dir, check=False,
+                )
+                if self.generated_untracked_to_clean:
+                    subprocess.run(
+                        ["git", "clean", "-f", "-d", "--", *self.generated_untracked_to_clean],
+                        capture_output=True, text=True, cwd=self.preview_dir, check=False,
+                    )
+                if self._untracked_paths(self.preview_dir) - self.generated_untracked_before:
+                    self._record("cleanup", "failed", start)
+                    return False
             result = subprocess.run(
                 [str(CREATE_PREVIEW), "--cleanup", "--preview-dir", str(self.preview_dir)],
                 capture_output=True, text=True, cwd=self.cwd, check=False,
@@ -378,7 +615,7 @@ class Driver:
         self, primary_root: Path, primary_branch: str, feature_branch: str,
         primary_local_vs_remote: str | None, preview_tree: str, leased_sha: str,
     ) -> tuple[str, str, str | None, str | None]:
-        if primary_local_vs_remote in _PUSH_FROM_PREVIEW_STATUSES:
+        if self.force_preview_push or primary_local_vs_remote in _PUSH_FROM_PREVIEW_STATUSES:
             return self._push_from_preview(primary_root, primary_branch, feature_branch)
         return self._merge_in_primary(primary_root, primary_branch, feature_branch, preview_tree, leased_sha)
 
@@ -513,7 +750,8 @@ class Driver:
         self._record("fetch", "passed", start)
 
         preview = self._run_script(
-            "create_preview", CREATE_PREVIEW, ["--base-ref", leased_sha, "--owner-pid", str(os.getpid())]
+            "create_preview", CREATE_PREVIEW,
+            ["--base-ref", leased_sha, "--owner-pid", str(os.getpid()), "--keep-conflicts"],
         )
         self.preview_dir = Path(preview["preview_dir"])
         head_sha = preview["feature_sha"]
