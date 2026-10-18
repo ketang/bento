@@ -11,17 +11,24 @@ Two independent rules, both advisory-free hard blocks (exit 2):
    <primary-branch>`, `git branch -D <primary-branch>`, and `git push
    --force*` are denied. Opt out for a repo with `require_worktree=false` in
    `.agent-mode.local` (the same switch `require-worktree.sh` uses -- both
-   enforce the same doctrine). A command containing the literal marker
-   `BENTO_LAND_WORK=1` is treated as invoked by an authorized land-work/
-   launch-work flow and skipped entirely: land.py (bento-rdtn.14) and the
-   individual land-work-*.py scripts run their own git mutations as internal
-   subprocess calls that never surface as a separate Bash tool call in the
-   first place, so the marker exists only for the rare case of a raw git
-   command that genuinely needs to run outside those scripts.
-   Each git segment is judged against its *effective* repo: the payload cwd
-   advanced by preceding literal `cd <path>` segments, then each `-C <path>`
-   in order (non-literal paths, and paths that are not a repo, fall back to
-   the running directory).
+   enforce the same doctrine). A git segment carrying the leading env
+   assignment `BENTO_LAND_WORK=1` (`BENTO_LAND_WORK=1 git ...`) is treated as
+   invoked by an authorized land-work/launch-work flow and skipped; the
+   marker text elsewhere in the command (an `echo`, a comment, another
+   segment) does not count. land.py (bento-rdtn.14) and the individual
+   land-work-*.py scripts run their own git mutations as internal subprocess
+   calls that never surface as a separate Bash tool call in the first place,
+   so the marker exists only for the rare case of a raw git command that
+   genuinely needs to run outside those scripts.
+   Each git segment is judged against its *effective* repo(s): the payload
+   cwd advanced by preceding literal `cd <path>` segments, then each `-C
+   <path>` in order, then `--work-tree`/`--git-dir` (or GIT_WORK_TREE/GIT_DIR
+   env assignments); the segment is denied if any resolved target is the
+   primary checkout. A non-literal path (variable, substitution, glob) cannot
+   be resolved and fails closed for mutating subcommands; a literal path that
+   does not exist yet or is not a repo is judged non-primary (the hook runs
+   before the chain executes, so e.g. `git worktree add ../wt && git -C ../wt
+   rebase` targets a path that does not exist at judge time).
    In ANY checkout, a `git push` whose destination is the primary branch
    (`<src>:main`, `refs/heads/main`, or a bare push while on it) is denied.
 2. In any checkout -- `--no-verify` and a `-c core.hooksPath=...` (or
@@ -49,9 +56,9 @@ import sys
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from shell_segments import SegmentError, command_segments  # noqa: E402
+from shell_segments import SegmentError, command_segments_with_env  # noqa: E402
 
-LAND_WORK_MARKER = "BENTO_LAND_WORK=1"
+LAND_WORK_MARKER = ("BENTO_LAND_WORK", "1")
 
 _MUTATING_SUBCOMMANDS = frozenset({"merge", "rebase", "reset", "clean"})
 
@@ -111,13 +118,19 @@ def _read_agent_mode_keys(repo_root: str) -> dict[str, str]:
     return values
 
 
+_GLOBAL_VALUE_OPTS = frozenset({"--git-dir", "--work-tree", "--namespace", "--super-prefix"})
+
+
 def _parse_git_invocation(
     tokens: list[str],
-) -> tuple[str | None, list[str], list[str], list[str]]:
+) -> tuple[str | None, list[str], list[str], list[str], dict[str, str]]:
     """From tokens after 'git', return (subcommand, remaining_args,
-    config_values, dash_c_paths).
+    config_values, dash_c_paths, global_opts).
 
     dash_c_paths collects every `-C <path>` in order (git composes them).
+    global_opts maps each of --git-dir/--work-tree/--namespace/--super-prefix
+    seen before the subcommand to its value (`--opt=v` or `--opt v`; last
+    wins), so a separate value is never misread as the subcommand.
 
     config_values collects every `-c key=value` / `--config key=value`
     override seen before the subcommand, so a caller can check for
@@ -126,8 +139,18 @@ def _parse_git_invocation(
     i = 0
     configs: list[str] = []
     dash_c: list[str] = []
+    opts: dict[str, str] = {}
     while i < len(tokens):
         tok = tokens[i]
+        if tok in _GLOBAL_VALUE_OPTS and i + 1 < len(tokens):
+            opts[tok] = tokens[i + 1]
+            i += 2
+            continue
+        name, eq, value = tok.partition("=")
+        if eq and name in _GLOBAL_VALUE_OPTS:
+            opts[name] = value
+            i += 1
+            continue
         if tok in ("-c", "--config") and i + 1 < len(tokens):
             configs.append(tokens[i + 1])
             i += 2
@@ -145,8 +168,8 @@ def _parse_git_invocation(
             continue
         break
     if i >= len(tokens):
-        return None, [], configs, dash_c
-    return tokens[i], tokens[i + 1:], configs, dash_c
+        return None, [], configs, dash_c, opts
+    return tokens[i], tokens[i + 1:], configs, dash_c, opts
 
 
 def _is_literal_path(path: str) -> bool:
@@ -183,11 +206,14 @@ def _cd_target(args: list[str]) -> str | None:
     return rest[0] if len(rest) == 1 else None
 
 
-def _find_git_segments(command: str, cwd: str) -> list[tuple[str | None, list[str]]]:
+def _find_git_segments(
+    command: str, cwd: str,
+) -> list[tuple[str | None, dict[str, str], list[str]]]:
     """Each simple command in `command` that invokes git (directly, or via
     a stripped `rtk`/`exec`/`command`/`env` wrapper prefix -- see
-    shell_segments.strip_wrapper_prefix), as (running_dir, tokens) with the
-    'git' token itself removed. running_dir is the payload cwd advanced by
+    shell_segments.strip_wrapper_prefix), as (running_dir, env, tokens) with
+    the 'git' token itself removed and env the segment's leading VAR=value
+    assignments. running_dir is the payload cwd advanced by
     every preceding `cd`/`pushd` segment, or None once a preceding target
     could not be resolved statically (`cd "$X"`, `cd -`, `popd`) until a
     later literal absolute `cd`. Raises no exception: a SegmentError from the
@@ -198,12 +224,12 @@ def _find_git_segments(command: str, cwd: str) -> list[tuple[str | None, list[st
     over-applies the cd.
     """
     try:
-        segments = command_segments(command)
+        segments = command_segments_with_env(command)
     except SegmentError:
         return []
     running: str | None = cwd or None
-    found: list[tuple[str | None, list[str]]] = []
-    for segment in segments:
+    found: list[tuple[str | None, dict[str, str], list[str]]] = []
+    for env, segment in segments:
         if not segment:
             continue
         if segment[0] in ("cd", "pushd"):
@@ -212,12 +238,12 @@ def _find_git_segments(command: str, cwd: str) -> list[tuple[str | None, list[st
         elif segment[0] == "popd":
             running = None
         elif segment[0] == "git":
-            found.append((running, segment[1:]))
+            found.append((running, env, segment[1:]))
     return found
 
 
 def _hook_bypass_reason(git_tokens: list[str]) -> str | None:
-    subcommand, rest, configs, _dash_c = _parse_git_invocation(git_tokens)
+    subcommand, rest, configs, _dash_c, _opts = _parse_git_invocation(git_tokens)
     if "--no-verify" in git_tokens:
         return "'--no-verify' skips git hooks"
     # '-n' is the documented short alias for --no-verify, but only for
@@ -263,7 +289,7 @@ def _push_to_primary_reason(
     current_branch: str | None,
     upstream_dest: str | None,
 ) -> str | None:
-    subcommand, rest, _configs, _dash_c = _parse_git_invocation(git_tokens)
+    subcommand, rest, _configs, _dash_c, _opts = _parse_git_invocation(git_tokens)
     if subcommand != "push" or not primary_branch:
         return None
     if "--all" in rest or "--mirror" in rest:
@@ -279,7 +305,7 @@ def _push_to_primary_reason(
 
 
 def _mutation_reason(git_tokens: list[str], primary_branch: str | None) -> str | None:
-    subcommand, rest, _configs, _dash_c = _parse_git_invocation(git_tokens)
+    subcommand, rest, _configs, _dash_c, _opts = _parse_git_invocation(git_tokens)
     if subcommand is None:
         return None
     if subcommand in _MUTATING_SUBCOMMANDS:
@@ -339,6 +365,51 @@ def _effective_dir(running: str | None, dash_c: list[str]) -> str | None:
     return directory
 
 
+def _checkout_of_git_dir(git_dir: str) -> str | None:
+    """The checkout a literal git dir belongs to, or None when it is not (yet)
+    a recognisable repo: `<root>/.git`, or a linked worktree's
+    `.git/worktrees/<name>` (whose `gitdir` file names `<worktree>/.git`)."""
+    if os.path.basename(git_dir) == ".git":
+        return os.path.dirname(git_dir)
+    try:
+        pointer = Path(git_dir, "gitdir").read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+    return os.path.dirname(pointer) if os.path.basename(pointer) == ".git" else None
+
+
+_UNRESOLVED = None
+
+
+def _git_targets(
+    running: str | None, env: dict[str, str], dash_c: list[str], opts: dict[str, str],
+) -> list[str | None]:
+    """Directories one git segment operates on. git applies `-C` first, then
+    `--work-tree`/`--git-dir` (GIT_WORK_TREE/GIT_DIR when the options are
+    absent), so each is resolved against the directory left by `-C`. A None
+    entry is a target that cannot be resolved statically; a git dir that
+    resolves but is not a recognisable repo contributes no target."""
+    base = _effective_dir(running, dash_c)
+    work_tree = opts.get("--work-tree", env.get("GIT_WORK_TREE"))
+    git_dir = opts.get("--git-dir", env.get("GIT_DIR"))
+    if work_tree is None and git_dir is None:
+        return [base]
+    targets: list[str | None] = []
+    if work_tree is not None:
+        targets.append(_resolve_dir(base, work_tree))
+    if git_dir is not None:
+        resolved = _resolve_dir(base, git_dir)
+        if resolved is None:
+            targets.append(_UNRESOLVED)
+        elif (checkout := _checkout_of_git_dir(resolved)) is not None:
+            targets.append(checkout)
+    return targets
+
+
+def _has_land_work_marker(env: dict[str, str]) -> bool:
+    return env.get(LAND_WORK_MARKER[0]) == LAND_WORK_MARKER[1]
+
+
 def main() -> int:
     try:
         payload = json.load(sys.stdin)
@@ -355,9 +426,6 @@ def main() -> int:
     cwd = payload.get("cwd") or ""
 
     try:
-        if LAND_WORK_MARKER in command:
-            return 0
-
         # Cheap, git-free check first: most Bash calls in a repo aren't git
         # invocations at all, and every git call below costs a subprocess --
         # skip all of them (repo-root resolution included) unless this
@@ -376,78 +444,88 @@ def main() -> int:
                 infos[directory] = _RepoInfo(root) if root else None
             return infos[directory]
 
-        for running, git_tokens in git_segments:
-            _sub, _rest, _cfg, dash_c = _parse_git_invocation(git_tokens)
-            target = _effective_dir(running, dash_c)
-            unresolved = target is None
-            if unresolved:
-                # The target repo cannot be determined statically: judge the
-                # base directory's settings, but treat mutating commands as if
-                # they hit the primary checkout (fail closed).
-                info = info_for(running) or info_for(cwd)
-            else:
-                # A literal target that is missing or not a repo falls back to
-                # the running directory, then the payload cwd.
-                info = info_for(target) or info_for(running) or info_for(cwd)
+        for running, env, git_tokens in git_segments:
+            if _has_land_work_marker(env):
+                continue
+            _sub, _rest, _cfg, dash_c, opts = _parse_git_invocation(git_tokens)
+            targets = _git_targets(running, env, dash_c, opts)
+            # The hook-bypass rule is about the invocation, not its target, so
+            # it runs once per segment (even when no target is a repo), with
+            # the settings of the first judgeable target, else the base dir's.
+            bypass_reason = _hook_bypass_reason(git_tokens)
+            if bypass_reason:
+                bypass_info = next(
+                    (i for i in (info_for(t) for t in targets if t) if i), None,
+                ) or info_for(running) or info_for(cwd)
+                if (bypass_info.agent_mode if bypass_info else {}).get("hook_bypass") != "allow":
+                    print(
+                        f"Blocked: {bypass_reason}.\n"
+                        "Hook timeouts should be fixed at the source, not bypassed -- see "
+                        "the launch-work skill's dependency-bootstrap guidance for slow-hook "
+                        "fixes. To disable this check for this repo, add 'hook_bypass=allow' "
+                        "to .agent-mode.local.",
+                        file=sys.stderr,
+                    )
+                    return 2
+            for target in targets or [running]:
+                unresolved = target is None
+                if unresolved:
+                    # The target repo cannot be determined statically: judge the
+                    # base directory's settings, but treat mutating commands as
+                    # if they hit the primary checkout (fail closed).
+                    info = info_for(running) or info_for(cwd)
+                else:
+                    # A literal target that is missing or not a repo is a
+                    # non-primary target: it may be created earlier in the same
+                    # chain, which has not run yet.
+                    info = info_for(target)
+                    if info is None:
+                        continue
+                agent_mode = info.agent_mode if info else {}
+                note = (
+                    " (the target repository could not be determined from the command, "
+                    "so it is treated as the primary checkout)"
+                    if unresolved else ""
+                )
+
+                if agent_mode.get("require_worktree") == "false":
+                    continue
+
+                if unresolved:
+                    mutation_branch = info.strict_primary if info else None
+                else:
+                    mutation_branch = info.primary_branch
+                mutation_reason = (
+                    _mutation_reason(git_tokens, mutation_branch)
+                    if unresolved or info.is_primary else None
+                )
+                if mutation_reason:
+                    print(
+                        f"Blocked: {mutation_reason} in the primary checkout{note}, which is not "
+                        "allowed outside the land-work/launch-work flow.\n"
+                        "Land and merge from a linked worktree via the land-work skill "
+                        "(land-work/scripts/land.py) instead of mutating the primary "
+                        "checkout directly. To disable this check for this repo, add "
+                        "'require_worktree=false' to .agent-mode.local.",
+                        file=sys.stderr,
+                    )
+                    return 2
+
                 if info is None:
                     continue
-            agent_mode = info.agent_mode if info else {}
-            note = (
-                " (the target repository could not be determined from the command, "
-                "so it is treated as the primary checkout)"
-                if unresolved else ""
-            )
-
-            bypass_reason = _hook_bypass_reason(git_tokens)
-            if bypass_reason and agent_mode.get("hook_bypass") != "allow":
-                print(
-                    f"Blocked: {bypass_reason}.\n"
-                    "Hook timeouts should be fixed at the source, not bypassed -- see "
-                    "the launch-work skill's dependency-bootstrap guidance for slow-hook "
-                    "fixes. To disable this check for this repo, add 'hook_bypass=allow' "
-                    "to .agent-mode.local.",
-                    file=sys.stderr,
+                push_reason = _push_to_primary_reason(
+                    git_tokens, info.strict_primary, info.current_branch, info.upstream_dest,
                 )
-                return 2
-
-            if agent_mode.get("require_worktree") == "false":
-                continue
-
-            if unresolved:
-                mutation_branch = info.strict_primary if info else None
-            else:
-                mutation_branch = info.primary_branch
-            mutation_reason = (
-                _mutation_reason(git_tokens, mutation_branch)
-                if unresolved or info.is_primary else None
-            )
-            if mutation_reason:
-                print(
-                    f"Blocked: {mutation_reason} in the primary checkout{note}, which is not "
-                    "allowed outside the land-work/launch-work flow.\n"
-                    "Land and merge from a linked worktree via the land-work skill "
-                    "(land-work/scripts/land.py) instead of mutating the primary "
-                    "checkout directly. To disable this check for this repo, add "
-                    "'require_worktree=false' to .agent-mode.local.",
-                    file=sys.stderr,
-                )
-                return 2
-
-            if info is None:
-                continue
-            push_reason = _push_to_primary_reason(
-                git_tokens, info.strict_primary, info.current_branch, info.upstream_dest,
-            )
-            if push_reason:
-                print(
-                    f"Blocked: {push_reason}{note}, which is not allowed outside the "
-                    "land-work flow.\n"
-                    "Push your feature branch and land via the land-work skill "
-                    "(land-work/scripts/land.py). To disable this check for this "
-                    "repo, add 'require_worktree=false' to .agent-mode.local.",
-                    file=sys.stderr,
-                )
-                return 2
+                if push_reason:
+                    print(
+                        f"Blocked: {push_reason}{note}, which is not allowed outside the "
+                        "land-work flow.\n"
+                        "Push your feature branch and land via the land-work skill "
+                        "(land-work/scripts/land.py). To disable this check for this "
+                        "repo, add 'require_worktree=false' to .agent-mode.local.",
+                        file=sys.stderr,
+                    )
+                    return 2
     except Exception:
         # Never block the session on an unexpected error in this guard.
         return 0

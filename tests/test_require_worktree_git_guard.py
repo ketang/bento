@@ -208,14 +208,148 @@ class RequireWorktreeGitGuardTest(unittest.TestCase):
         self.assertEqual(self.run_hook(f"git -C {wt} rebase main", outside).returncode, 0)
         self.assertEqual(self.run_hook("git merge x", outside).returncode, 0)
 
-    def test_dash_c_nonexistent_falls_back_to_cwd(self) -> None:
+    def test_dash_c_nonexistent_or_non_repo_literal_is_non_primary(self) -> None:
+        # bento-7b7l C: the hook runs before the chain executes, so a literal
+        # target created earlier in the chain does not exist yet.
         repo, wt = self._pair()
         missing = self.root / "nope"
-        self.assertEqual(self.run_hook(f"git -C {missing} merge x", repo).returncode, 2)
-        self.assertEqual(self.run_hook(f"git -C {missing} merge x", wt).returncode, 0)
+        plain = self.root / "plain"
+        plain.mkdir()
+        for cwd in (repo, wt):
+            for cmd in (
+                f"git -C {missing} merge x",
+                f"git -C {missing} rebase main",
+                f"git -C {plain} merge x",
+                f"git worktree add {missing} -b feat && git -C {missing} rebase main",
+                f"cd {missing} && git rebase main",
+            ):
+                with self.subTest(cmd=cmd, cwd=cwd.name):
+                    self.assertEqual(self.run_hook(cmd, cwd).returncode, 0)
+
+    def test_unresolved_target_still_fails_closed_after_nonexistent_fix(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(self.run_hook('git -C "$X/wt" rebase main', repo).returncode, 2)
+        self.assertEqual(self.run_hook("git -C ~other/wt rebase main", repo).returncode, 2)
+
+    # -- --git-dir / --work-tree / GIT_DIR / GIT_WORK_TREE (bento-7b7l A) ----
+
+    def test_git_dir_work_tree_primary_from_worktree_is_denied(self) -> None:
+        repo, wt = self._pair()
+        rel_repo = os.path.relpath(repo, wt)
+        for cmd in (
+            f"git --git-dir={repo}/.git --work-tree={repo} merge x",
+            f"git --git-dir {repo}/.git --work-tree {repo} merge x",
+            f"git --work-tree={repo} merge x",
+            f"git --work-tree {repo} reset --hard",
+            f"git --git-dir={repo}/.git merge x",
+            f"git --git-dir {repo}/.git rebase main",
+            f"git --git-dir={rel_repo}/.git --work-tree={rel_repo} merge x",
+            f"git -C {wt.parent} --git-dir={repo.name}/.git --work-tree={repo.name} merge x",
+            f"GIT_DIR={repo}/.git GIT_WORK_TREE={repo} git merge x",
+            f"GIT_DIR={repo}/.git git merge x",
+            f"GIT_WORK_TREE={repo} git merge x",
+            f"env GIT_DIR={repo}/.git GIT_WORK_TREE={repo} git merge x",
+            f"git --git-dir={repo}/.git --work-tree={repo} push origin HEAD:main",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 2)
+
+    def test_git_dir_work_tree_primary_from_primary_stays_denied(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            f"git --git-dir={repo}/.git --work-tree={repo} merge x",
+            f"GIT_DIR={repo}/.git GIT_WORK_TREE={repo} git merge x",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, repo).returncode, 2)
+
+    def test_git_dir_work_tree_worktree_from_primary_is_allowed(self) -> None:
+        repo, wt = self._pair()
+        wt_gitdir = repo / ".git" / "worktrees" / wt.name
+        for cmd in (
+            f"git --git-dir={wt_gitdir} --work-tree={wt} rebase main",
+            f"git --work-tree={wt} rebase main",
+            f"git --git-dir={wt_gitdir} rebase main",
+            f"GIT_DIR={wt_gitdir} GIT_WORK_TREE={wt} git rebase main",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, repo).returncode, 0)
+
+    def test_git_dir_unresolvable_fails_closed(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            'git --git-dir="$X" merge y',
+            'git --work-tree $X merge y',
+            'GIT_DIR="$X" git merge y',
+        ):
+            for cwd in (repo, wt):
+                with self.subTest(cmd=cmd, cwd=cwd.name):
+                    self.assertEqual(self.run_hook(cmd, cwd).returncode, 2)
+        self.assertEqual(self.run_hook('git --git-dir="$X" status', wt).returncode, 0)
+
+    def test_namespace_option_value_is_not_the_subcommand(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(self.run_hook("git --namespace ns merge x", repo).returncode, 2)
+        self.assertEqual(self.run_hook("git --namespace=ns merge x", repo).returncode, 2)
+        self.assertEqual(self.run_hook("git --namespace merge status", repo).returncode, 0)
+        self.assertEqual(self.run_hook("git --namespace ns merge x", wt).returncode, 0)
+
+    # -- land-work marker must be a leading env assignment (bento-7b7l B) ----
+
+    def test_marker_text_elsewhere_does_not_bypass(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            f"echo BENTO_LAND_WORK=1; git -C {repo} merge x",
+            f"git -C {repo} merge x # BENTO_LAND_WORK=1",
+            f"git -C {repo} merge x BENTO_LAND_WORK=1",
+            f"echo 'BENTO_LAND_WORK=1' && git -C {repo} merge x",
+            f"BENTO_LAND_WORK=1; git -C {repo} merge x",
+            f"BENTO_LAND_WORK=0 git -C {repo} merge x",
+            f"BENTO_LAND_WORK=1 git status && git -C {repo} merge x",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 2)
+
+    def test_marker_as_leading_env_assignment_still_bypasses(self) -> None:
+        repo, wt = self._pair()
+        for cmd in (
+            f"BENTO_LAND_WORK=1 git -C {repo} merge x",
+            f"BENTO_LAND_WORK=1 rtk git -C {repo} merge x",
+            f"env BENTO_LAND_WORK=1 git -C {repo} merge x",
+            f"FOO=1 BENTO_LAND_WORK=1 git -C {repo} merge x",
+        ):
+            with self.subTest(cmd=cmd):
+                self.assertEqual(self.run_hook(cmd, wt).returncode, 0)
+
+    def test_marker_exempts_only_its_own_segment(self) -> None:
+        repo, wt = self._pair()
+        self.assertEqual(
+            self.run_hook(
+                f"BENTO_LAND_WORK=1 git status && git -C {repo} merge x", wt,
+            ).returncode, 2,
+        )
+
+    def test_every_documented_land_work_marker_form(self) -> None:
+        # catalog/skills/land-work: SKILL.md (push-from-preview, batch),
+        # references/direct-primary-branch.md, batch-landing.md, and
+        # closure/references/primary-branch-sync.md.
+        repo, wt = self._pair()
+        for cmd in (
+            "BENTO_LAND_WORK=1 git push origin HEAD:refs/heads/main",
+            f"BENTO_LAND_WORK=1 git -C {wt} push origin HEAD:refs/heads/main",
+            "BENTO_LAND_WORK=1 git push origin main",
+            "BENTO_LAND_WORK=1 git push origin HEAD:main",
+        ):
+            for cwd in (repo, wt):
+                with self.subTest(cmd=cmd, cwd=cwd.name):
+                    self.assertEqual(self.run_hook(cmd, cwd).returncode, 0)
 
     def test_bypass_rule_still_applies_with_dash_c(self) -> None:
         repo, wt = self._pair()
+        missing = self.root / "nope"
+        self.assertEqual(
+            self.run_hook(f"git -C {missing} commit --no-verify -m x", repo).returncode, 2,
+        )
         self.assertEqual(
             self.run_hook(f"git -C {wt} commit --no-verify -m x", repo).returncode, 2,
         )
