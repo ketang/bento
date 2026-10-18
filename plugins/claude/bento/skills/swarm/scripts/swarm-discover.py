@@ -205,11 +205,15 @@ def validate_landing_config(raw: object, repo_root: Path) -> tuple[dict | None, 
             and item.strip()
             and not Path(item).is_absolute()
             and ".." not in Path(item).parts
+            and not item.startswith(("!", ":("))
+            and "//" not in item
+            and "\\" not in item
             for item in generated_paths
         )
     ):
         warnings.append(
-            "swarm-discover: landing.generated_paths must be a list of relative paths without '..'; using []"
+            "swarm-discover: landing.generated_paths must be a list of plain relative glob "
+            "patterns (no '..', '//', '\\', or leading '!' / ':('); using []"
         )
         generated_paths = []
     result["generated_paths"] = generated_paths

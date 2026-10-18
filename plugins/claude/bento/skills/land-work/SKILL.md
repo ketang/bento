@@ -249,7 +249,12 @@ land-work/scripts/land-work-prepare.py
 5. Do not rebase just because the branch is behind the primary branch; the
    preview merge (`land.py` step create_preview) verifies the tree that lands.
    Rebase only when the preview merge conflicts (`land.py` reports
-   `failed_step: create_preview` with a rebase hint) or the operator asks. Rebase
+   `failed_step: create_preview` with a rebase hint) or the operator asks.
+   Exception: when every conflicting path matches the repo's
+   `landing.generated_paths` and it declares `landing.regenerate_command`
+   (`swarm/references/landing-config.md`), `land.py` restores those paths from
+   the leased primary, regenerates, stages the result, and lands from the
+   preview; any other conflict still needs the rebase. Rebase
    onto the preferred primary-branch base reported by the helper, usually
    `origin/<primary-branch>` when available (local `main` if merging into it).
    If the rebase or preview merge requires manual conflict resolution, require
