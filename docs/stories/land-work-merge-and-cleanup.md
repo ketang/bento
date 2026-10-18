@@ -26,6 +26,7 @@ An agent finishes implementation on a feature branch, all required checks have p
 - The project verifier must exit 0 against the exact merge preview; a verifier selecting zero checks against a real diff is a landing failure, not evidence.
 - The gate suite is discovered and baselined before the merge work begins, and landing halts if the primary base was already red.
 - The gate suite is re-run against the exact merge candidate; the merge proceeds only on green or on a waiver recorded in the tracker issue before the merge.
+- When every conflicting path in the preview merge is a repo-declared generated file (`landing.generated_paths`) and the repo declares `landing.regenerate_command`, `land.py` restores those paths from the leased primary, regenerates them, and lands from the preview with no rebase. Any other conflict, a failing or stale regeneration, or stray changes outside the declared paths still fails with "rebase required".
 - The merge uses an explicit merge commit; squash is never used, and fast-forward only if the repo explicitly requires it.
 - The tracker issue is closed only after verified landing, not when implementation merely completes, and the closure note carries the gate commands and their exit statuses.
 - A scratch preview worktree is cleaned up on every exit path, and no untracked files are left behind before the worktree is removed. A repo-configured `landing.integration_worktree` (see `land-work/references/integration-worktree.md`) is the documented exception: it deliberately persists across landings to keep build caches warm, so cleanup against it is an intentional no-op rather than a removal.
@@ -48,6 +49,7 @@ An agent finishes implementation on a feature branch, all required checks have p
 
 ## Evidence
 ### Tests
+- `tests/land_work/test_land_driver.py`
 - `tests/land_work/test_land_work_scripts.py`
 - `tests/land_work/test_land_work_verifier.py`
 - `tests/land_work/test_land_work_root_hygiene.py`
