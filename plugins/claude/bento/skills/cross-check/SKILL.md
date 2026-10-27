@@ -94,20 +94,25 @@ authorized scope.
    ```
 
 5. **Assess findings and continue.** Present the review inline and record its
-   path and the disposition of findings in the task summary or landing note.
+   path and the disposition of findings in the task summary or tracker note.
    The implementing agent evaluates findings rather than accepting them
    automatically: fix valid problems within the authorized scope, run relevant
    checks, and explain any finding dismissed with technical reasoning. The
    reviewer remains read-only; this does not prevent the implementing agent
    from editing to address findings.
 
-   Continue past the trigger point after a clean review or once blocking
-   findings are resolved. Cross-check adds no blanket operator-acknowledgment
-   requirement. Pause for unresolved decisions that need operator input,
+   BLOCKER and MAJOR findings must be fixed or dismissed with technical
+   reasoning before continuing; handle MINOR findings under the surrounding
+   workflow's existing rules. Continue past the trigger point after a clean
+   review or once those findings are resolved. Cross-check adds no blanket
+   operator-acknowledgment requirement. Pause for unresolved decisions that need operator input,
    changes beyond the authorized scope, or approvals independently required by
    the surrounding workflow (including an explicit request to review findings
    before proceeding). Do not proceed with unresolved blocking findings or
    treat a favorable review as permission to bypass an existing approval.
+   For issue drafts, continue to filing only when filing is already authorized.
+   For plans, continue to presenting the plan; a favorable review does not
+   constitute operator approval of the plan.
 
 Invoke the helpers by script path so approvals stay scoped to the script.
 
@@ -128,8 +133,7 @@ per file):
 ## Non-Negotiable Rules
 
 - Reviewers never edit code or write patches; only this session writes the
-  `/tmp` review file. The implementing agent may address findings within the
-  authorized scope without requesting permission again.
+  `/tmp` review file.
 - The counterpart always runs read-only: Codex `--sandbox read-only`, Claude
   `--tools "Read,Grep,Glob" --permission-mode dontAsk`. Never grant write/exec.
 - Always set `CROSS_CHECK_ACTIVE=1` for the reviewer (the runner does this) and
