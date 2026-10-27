@@ -1,6 +1,6 @@
 ---
 name: cross-check
-description: Hard trigger — invoke when an issue draft is ready to file, when a plan is ready to present to the operator, or when work on a branch is complete. Hands the artifact to the opposite agent runtime (Claude↔Codex) for an independent, read-only critical review; falls back to an independent same-runtime reviewer when the counterpart is unavailable. Review-only; soft gate.
+description: Hard trigger — invoke when an issue draft is ready to file, when a plan is ready to present to the operator, or when work on a branch is complete. Hands the artifact to the opposite agent runtime (Claude↔Codex) for an independent, read-only critical review; falls back to an independent same-runtime reviewer when the counterpart is unavailable. Read-only reviewer; the implementing agent assesses findings and continues within the authorized scope.
 ---
 
 # Cross-check
@@ -18,7 +18,9 @@ Invoke at any of these three moments:
 - **work on a branch** is considered complete.
 
 Direction is automatic: the reviewer is always the runtime you are *not*. This
-is **review-only** — it never edits code or applies fixes.
+is **review-only for the reviewer** — it never edits code or applies fixes.
+The implementing agent assesses the review and handles findings within the
+authorized scope.
 
 ## When NOT to use
 
@@ -91,10 +93,26 @@ is **review-only** — it never edits code or applies fixes.
      --slug <slug> --render-only --mode degraded
    ```
 
-5. **Soft gate.** Present the review inline. Then pause and require the operator
-   to explicitly acknowledge or decide before proceeding past the trigger point.
-   Do not auto-apply findings; do not edit. The gate is enforced by this
-   session's workflow, not the OS.
+5. **Assess findings and continue.** Present the review inline and record its
+   path and the disposition of findings in the task summary or tracker note.
+   The implementing agent evaluates findings rather than accepting them
+   automatically: fix valid problems within the authorized scope, run relevant
+   checks, and explain any finding dismissed with technical reasoning. The
+   reviewer remains read-only; this does not prevent the implementing agent
+   from editing to address findings.
+
+   BLOCKER and MAJOR findings must be fixed or dismissed with technical
+   reasoning before continuing; handle MINOR findings under the surrounding
+   workflow's existing rules. Continue past the trigger point after a clean
+   review or once those findings are resolved. Cross-check adds no blanket
+   operator-acknowledgment requirement. Pause for unresolved decisions that need operator input,
+   changes beyond the authorized scope, or approvals independently required by
+   the surrounding workflow (including an explicit request to review findings
+   before proceeding). Do not proceed with unresolved blocking findings or
+   treat a favorable review as permission to bypass an existing approval.
+   For issue drafts, continue to filing only when filing is already authorized.
+   For plans, continue to presenting the plan; a favorable review does not
+   constitute operator approval of the plan.
 
 Invoke the helpers by script path so approvals stay scoped to the script.
 
@@ -114,8 +132,8 @@ per file):
 
 ## Non-Negotiable Rules
 
-- Review-only. The reviewer never edits code or writes patches; only this
-  session writes the `/tmp` review file.
+- Reviewers never edit code or write patches; only this session writes the
+  `/tmp` review file.
 - The counterpart always runs read-only: Codex `--sandbox read-only`, Claude
   `--tools "Read,Grep,Glob" --permission-mode dontAsk`. Never grant write/exec.
 - Always set `CROSS_CHECK_ACTIVE=1` for the reviewer (the runner does this) and

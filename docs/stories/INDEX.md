@@ -1,6 +1,6 @@
 # Intent Story Index
 
-20 stories — generated 2026-08-21T14:28:00Z
+20 stories — generated 2026-10-27T02:28:22Z
 
 - [audit-report-first-quality-review](audit-report-first-quality-review.md) — Audit Produces a Report-First Quality Review *(active, observed, low)*
 - [beads-issue-lifecycle](beads-issue-lifecycle.md) — Beads Issue Lifecycle Management *(active, observed, low)*
@@ -21,4 +21,4 @@
 - [maintain-web-demo-sync-after-change](maintain-web-demo-sync-after-change.md) — Maintain Web Demo Syncs Demo After Product Changes *(active, observed, medium)*
 - [project-memory-durable-knowledge](project-memory-durable-knowledge.md) — Project Memory Captures and Maintains Durable Repo Knowledge *(active, observed, low)*
 - [swarm-parallel-task-batching](swarm-parallel-task-batching.md) — Swarm Batches and Executes Parallel Tasks *(active, observed, medium)*
-- [wire-land-verifier-scaffold](wire-land-verifier-scaffold.md) — Wire Land Verifier Scaffolds A Real Landing Gate *(active, observed, high)*
+- [wire-land-verifier-scaffold](wire-land-verifier-scaffold.md) — Wire Land Verifier Scaffolds A Real Landing Gate *(active, observed, medium)*
