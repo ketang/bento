@@ -127,7 +127,8 @@ install mechanics, or packaging.
 Key positions:
 
 - Home-scope base directory honors XDG: `$XDG_CONFIG_HOME/agent-plugins/`,
-  falling back to `~/.config/agent-plugins/` when unset.
+  falling back to `~/.config/agent-plugins/` on Linux and
+  `~/Library/Application Support/agent-plugins/` on macOS when unset.
 - Repo-scope base directory is `<repo-root>/.agent-plugins/`.
 - Path layout below each base is two-level: `<marketplace>/<plugin>/...`.
   Each plugin chooses its own internal substructure.
