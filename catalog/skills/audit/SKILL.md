@@ -15,6 +15,9 @@ audit report with structured findings and a prioritized action list. Do not
 generate a project-specific audit skill by default, and do not create tracker
 issues unless the user approves that follow-up after reading the report.
 
+When generating a repo-local audit skill on request, give it a repo-specific
+name such as `project-audit`; `audit` would shadow `bento:audit`.
+
 ## Deterministic Helper
 
 `audit/scripts/audit-discover.py` collects a deterministic base layer of repo

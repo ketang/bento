@@ -28,7 +28,8 @@ A maintainer asks an agent to audit their repository for quality and correctness
 - Tracker issues are drafted from accepted findings only if the user asks for that follow-up, and only after the repo's issue-readiness workflow runs.
 
 ## Boundaries
-- Does not generate a project-specific audit skill or checklist by default — that is the deprecated `generate-audit` entrypoint's job, invoked only when the user explicitly wants generated material.
+
+- Does not generate a project-specific audit skill or checklist by default; generated material requires an explicit request.
 - Does not create tracker issues unless the user approves that follow-up after reading the report.
 - Does not run destructive, environment-mutating, deploy, release, payment, email, migration, or production-data commands, even when repo docs describe them.
 - Does not invent audit modules for surfaces the repo does not have (e.g. a migration section for a repo with no database).

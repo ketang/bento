@@ -1,6 +1,6 @@
 # Design: generate-audit Enhancement
 **Date:** 2026-04-03
-**Status:** Approved
+**Status:** Superseded (generate-audit retired)
 
 ## Goal
 

@@ -83,16 +83,20 @@ Rules:
 - Do not execute destructive or environment-mutating commands just because
   they appear in docs; prefer safe local verification first.
 - Do not generate a repo-local audit skill unless the user explicitly asks
-  for legacy generation output.
+  for it.
 
-## Optional Legacy Draft Skill Structure
+## Optional Draft Skill Structure
 
 When the user explicitly asks for a repo-local audit skill (name it something
 repo-specific such as `project-audit`, never `audit`, so it does not shadow
 `bento:audit`), structure that
-legacy draft as:
+draft as:
 
 1. Purpose and scope
 2. Audit phases
 3. Output format
 4. Optional post-audit actions
+
+A generated repo-local skill is a tracked project artifact. Commit it through
+the normal issue-backed workflow and record a one-line rationale in the repo
+agent doc describing when to regenerate it. A one-off audit plan needs neither.
