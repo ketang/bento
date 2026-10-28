@@ -1,6 +1,6 @@
 # compress-docs — Design
 
-Status: draft
+Status: implemented
 Author: Ketan Gangatirkar (with Claude)
 Date: 2026-04-11
 
@@ -32,7 +32,7 @@ enough that users trust it to edit their agent instructions.
 ## Non-goals
 
 - Command-drift detection (does `npm test` actually work as documented?).
-  Out of scope; `generate-audit` already covers this.
+  Out of scope; direct reviews use `audit`.
 - Git-age heuristics for "old therefore stale." Too many false positives.
 - Rewriting code comments or source files. Markdown only.
 - Committing or pushing changes. The skill leaves a dirty working tree; the

@@ -1,17 +1,18 @@
 # Intent Story Index
 
-20 stories — generated 2026-10-27T02:28:22Z
+21 stories — generated 2026-10-28T14:18:51Z
 
 - [audit-report-first-quality-review](audit-report-first-quality-review.md) — Audit Produces a Report-First Quality Review *(active, observed, low)*
 - [beads-issue-lifecycle](beads-issue-lifecycle.md) — Beads Issue Lifecycle Management *(active, observed, low)*
 - [bentobug-capture-report](bentobug-capture-report.md) — Bentobug Captures a Structured Bug Report *(active, observed, low)*
 - [build-vs-buy-decision](build-vs-buy-decision.md) — Build vs Buy Evaluates Before Building New Functionality *(active, observed, medium)*
 - [closure-gc-abandoned-state](closure-gc-abandoned-state.md) — Closure GCs Abandoned Agent Git State *(active, observed, medium)*
+- [code-bloat-sniffer-removal-candidates](code-bloat-sniffer-removal-candidates.md) — Code Bloat Sniffer Reports Removal Candidates *(draft, observed, low)*
 - [compress-docs-token-reduction](compress-docs-token-reduction.md) — Compress Docs Reduces Session-Start Token Footprint *(active, observed, low)*
 - [cross-check-independent-runtime-review](cross-check-independent-runtime-review.md) — Cross-Check Gets an Independent Cross-Runtime Review *(active, observed, low)*
 - [dev-skill-load-unpublished](dev-skill-load-unpublished.md) — Dev Skill Loads and Executes an Unpublished Skill *(active, observed, low)*
 - [expedition-long-running-work](expedition-long-running-work.md) — Expedition Coordinates Long-Running Interdependent Work *(active, observed, medium)*
-- [generate-audit-repo-playbook](generate-audit-repo-playbook.md) — Generate Audit Produces a Repo-Specific Audit Playbook *(active, observed, low)*
+- [generate-audit-repo-playbook](generate-audit-repo-playbook.md) — Generate Audit Produces a Repo-Specific Audit Playbook *(deprecated, observed, low)*
 - [generate-web-demo-observable-walkthrough](generate-web-demo-observable-walkthrough.md) — Generate Web Demo Creates an Observable Browser Walkthrough *(active, observed, medium)*
 - [github-issue-lifecycle](github-issue-lifecycle.md) — GitHub Issue Lifecycle Management *(active, observed, low)*
 - [handoff-session-reboot-prompt](handoff-session-reboot-prompt.md) — Handoff Writes a Session Reboot Prompt *(active, observed, low)*

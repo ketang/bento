@@ -13,7 +13,7 @@ locked_sections:
 # Compress Docs Reduces Session-Start Token Footprint
 
 ## Intent
-When agent instruction files have grown bloated with duplication and verbose prose, compress-docs produces a reviewable compression plan that removes load-bearing content only after the user explicitly approves each tier.
+When agent instruction files have grown bloated with duplication and verbose prose, compress-docs produces a reviewable compression plan that preserves load-bearing content; the user explicitly approves each tier before edits are applied.
 
 ## Story
 A CLAUDE.md file has grown to 800 lines over months. Several sections duplicate content from referenced files, some `@include` paths no longer exist, and three subsections restate the same rule. The user invokes compress-docs. The skill runs the discover helper to build a scope inventory — every in-scope file with byte count and estimated token load, dead references, duplicate passages. It then drafts a compression plan to `docs/specs/YYYY-MM-DD-compress-docs-plan.md` organized by tier. The user reviews the plan, checks the tiers they approve, and the skill applies the reductions tier by tier with a pre-flight drift check, backing up only files that are not tracked by git so untracked docs keep a restore path. A single post-apply report records what changed. No load-bearing rule is silently removed.

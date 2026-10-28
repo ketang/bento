@@ -131,7 +131,7 @@ That guide covers:
 - the home-scoped and project-scoped Codex installers
 - generated Codex packaging artifacts
 - update and removal guidance
-- the separate hook wiring path
+- bundled hook installation
 
 ## Canonical skill sources
 

@@ -1,7 +1,7 @@
 # Design: Automatic Version Bump Skill
 
 **Date:** 2026-04-04
-**Status:** Approved
+**Status:** Superseded (content-hash versioning in `scripts/build-plugins`)
 
 ## Goal
 

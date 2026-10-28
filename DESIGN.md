@@ -29,7 +29,7 @@ their own `hooks.json` and scripts where their hook contracts differ.
 
 | Decision | Choice | Rationale |
 |---|---|---|
-| Repo type | Private marketplace | Allows multiple independent plugins; each can be installed/updated separately |
+| Repo type | Plugin marketplace | Allows multiple independent plugins; each can be installed/updated separately |
 | Hook management | Platform-peer hook sources under `catalog/hooks/<hook-name>/<platform>/` | Keeps Claude and Codex protocols explicit without making either runtime the default |
 | Hook organization | One peer source per runtime, each with its own `hooks.json` and scripts | Supports shared intent while allowing event names, output shapes, and command wiring to differ |
 | Hosting | GitHub public repo | Required for Claude Code's native `source: github` marketplace format |
@@ -189,20 +189,7 @@ Longer rationale should stay in source-side repo documentation rather than in
 skill directories when that rationale should not be copied into generated
 plugins.
 
-Current rationale summary:
-
-| Skill | Recommended model | Rationale summary |
-|---|---|---|
-| `beads-issue-flow` | low | Narrow procedural tracker workflow with explicit commands |
-| `build-vs-buy` | high | Constraint discovery, external comparison, and tradeoff judgment |
-| `closure` | high | Cleanup can discard useful git state despite helper support |
-| `audit` | high | Broad repo inference, critical review, and cross-surface report synthesis |
-| `generate-audit` | high | Legacy compatibility for tailored audit-plan generation |
-| `github-issue-flow` | low | Narrow procedural issue workflow with explicit commands |
-| `land-work` | high | High-cost landing and lease validation workflow |
-| `launch-work` | mid | Tracker, branch, and worktree setup with moderate coordination risk |
-| `project-memory` | low | Mostly bounded classification and maintenance work |
-| `swarm` | high | Parallel triage, overlap prediction, and coordinated landing |
+The current skill inventory is defined by `catalog/plugins.json`.
 
 ## Hook format
 
