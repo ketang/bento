@@ -240,7 +240,7 @@ class BuildPluginsTest(unittest.TestCase):
 
         declared = self.module.skills_for("bento", "codex")
         self.assertIn("audit", declared)
-        self.assertIn("generate-audit", declared)
+        self.assertNotIn("generate-audit", declared)
         self.assertIn("handoff", declared)
 
         for skill in declared:
