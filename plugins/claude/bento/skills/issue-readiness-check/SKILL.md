@@ -5,14 +5,6 @@ description: Hard trigger before creating, filing, drafting, or submitting any n
 
 # Issue Readiness Check
 
-## Model Guidance
-
-Recommended model: low.
-
-Use a higher-capability model only when the issue describes broad product
-behavior, subtle reproduction evidence, security-sensitive work, or a change
-whose boundaries are unclear.
-
 ## Core Rule
 
 Before an issue enters any tracker, verify that the title and body are

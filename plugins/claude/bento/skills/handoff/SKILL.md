@@ -5,15 +5,6 @@ description: Use when the current session needs a structured reboot prompt — c
 
 # Handoff
 
-## Model Guidance
-
-Recommended model: high.
-
-This skill's load-bearing task is distilling in-flight conversation state into a
-crisp next-action paragraph. That distillation benefits from a higher-capability
-model. Lower-capability models will produce vague summaries that defeat the
-purpose of the prompt.
-
 ## When to use
 
 - Context-window pressure: the current session is approaching compaction.

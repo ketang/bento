@@ -5,11 +5,6 @@ description: Use when multiple ready tasks can be worked in parallel — triage,
 
 # Swarm
 
-## Model Guidance
-
-Recommended model: high — triage, overlap prediction, and multi-teammate
-coordination degrade sharply on smaller models.
-
 Use this skill when a project has multiple ready tasks that can be worked in
 parallel with good isolation.
 
