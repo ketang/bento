@@ -5,11 +5,6 @@ description: Use when a project needs a direct software quality audit - run disc
 
 # Audit
 
-## Model Guidance
-
-Recommended model: high - this skill requires broad repo inference, critical
-judgment, and careful synthesis across code, tests, docs, and workflow.
-
 Use this skill to audit a project directly. The default output is a durable
 audit report with structured findings and a prioritized action list. Do not
 generate a project-specific audit skill by default, and do not create tracker

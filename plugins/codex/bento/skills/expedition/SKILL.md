@@ -5,14 +5,6 @@ description: Use when a large body of mostly interdependent work should run as a
 
 # Expedition
 
-## Model Guidance
-
-Recommended model: high.
-
-Use a high-capability model because this skill coordinates long-lived git
-state, branch-local durable notes, and repeated handoffs across fresh agent
-sessions.
-
 Use this skill when the user wants an "expedition" rather than a one-off task:
 
 - one named base branch created from the primary branch

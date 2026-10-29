@@ -5,13 +5,6 @@ description: Use when the repo uses Beads as its tracker — read, claim, update
 
 # Beads Issue Flow
 
-## Model Guidance
-
-Recommended model: low.
-
-Use a higher-capability model only when the repo's tracker policy is unclear or
-this skill is being combined with higher-risk landing work.
-
 Use this skill only when the project documents Beads as the issue tracker.
 
 ## Interface Rule

@@ -24,13 +24,6 @@ The helper detects self-invocation (your own agent's process tree has a cwd
 inside one of the scanned worktrees) and surfaces a `self_invocation: true`
 flag plus a pointed apply-mode skip reason directing you to `land-work`.
 
-## Model Guidance
-
-Recommended model: high — cleanup decisions can discard useful state, and
-liveness inference across worktrees requires careful evidence weighing. A
-mid-tier model is acceptable only for dry-run scanning or tightly supervised
-safe cleanup.
-
 Use this skill when a repo needs a closeout pass over leftover git state. The
 most important case is **dead-agent worktrees** — created by agents that died,
 completed, or crashed — which may hold landed work, work-in-progress, or

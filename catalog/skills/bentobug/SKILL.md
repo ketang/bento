@@ -5,14 +5,6 @@ description: Use when the user explicitly reports a bug or unwanted behavior in 
 
 # Bentobug
 
-## Model Guidance
-
-Recommended model: low.
-
-The skill's load-bearing tasks are validating the user's note, picking the
-target skill, and emitting a structured report block. Reach for a higher
-model only if the conversation contains many ambiguous candidate skills.
-
 ## When To Use
 
 Trigger only when all hold:

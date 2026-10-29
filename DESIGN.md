@@ -173,22 +173,6 @@ Keep prose in `SKILL.md` when the work is:
 This split keeps canonical capabilities portable while improving runtime
 reliability for the parts that benefit from determinism.
 
-## Model Guidance Convention
-
-Each canonical `SKILL.md` may include a short `recommended_model` scalar in
-frontmatter with one of `low`, `mid`, or `high`.
-
-This is a Bento-local convention for skill discovery and runtime guidance. It
-is not intended as an external standard and should be treated as advisory model
-selection metadata.
-
-Each skill should also include a brief `## Model Guidance` section near the top
-of the body so the recommendation is visible when the skill content is opened.
-
-Longer rationale should stay in source-side repo documentation rather than in
-skill directories when that rationale should not be copied into generated
-plugins.
-
 The current skill inventory is defined by `catalog/plugins.json`.
 
 ## Hook format
