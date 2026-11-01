@@ -308,6 +308,9 @@ def main(argv=None, stdin=None, stdout=None, stderr=None) -> int:
     print(f"auto-allow[{plugin_name}]: {reason}", file=stderr)
 
     if decision is not None:
+        # Codex accepts allow at PreToolUse only with replacement tool input.
+        # Preserve every field so the tool call remains unchanged.
+        decision["hookSpecificOutput"]["updatedInput"] = payload["tool_input"]
         json.dump(decision, stdout)
         stdout.write("\n")
     return 0
