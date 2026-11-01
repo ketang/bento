@@ -270,41 +270,19 @@ def active_seconds_elapsed(
     if now_ts is None:
         now_ts = time.time()
 
-    last = datetime.fromtimestamp(last_ts).astimezone()
-    now  = datetime.fromtimestamp(now_ts).astimezone()
-
-    if last >= now:
+    if last_ts >= now_ts:
         return 0.0
 
+    # Construct each boundary in local civil time independently. Carrying a
+    # fixed UTC offset into the next day misplaces it across DST transitions.
+    day = datetime.fromtimestamp(last_ts).date()
+    last_day = datetime.fromtimestamp(now_ts).date()
     total = 0.0
-    cursor = last
-
-    while cursor < now:
-        h = cursor.hour + cursor.minute / 60.0 + cursor.second / 3600.0
-
-        if h < inactive_end_hour:
-            # Before active window — jump to start of active window today
-            cursor = cursor.replace(
-                hour=inactive_end_hour, minute=0, second=0, microsecond=0
-            )
-            continue
-
-        if h >= inactive_start_hour:
-            # Past active window — jump to start of active window tomorrow
-            tomorrow = (cursor + timedelta(days=1)).date()
-            cursor = datetime(
-                tomorrow.year, tomorrow.month, tomorrow.day,
-                inactive_end_hour, 0, 0, tzinfo=cursor.tzinfo,
-            )
-            continue
-
-        # Within active window — accumulate to min(now, end of active window today)
-        end_of_active = cursor.replace(
-            hour=inactive_start_hour, minute=0, second=0, microsecond=0
-        )
-        segment_end = min(now, end_of_active)
-        total += (segment_end - cursor).total_seconds()
-        cursor = segment_end
+    while day <= last_day:
+        active_start = datetime(day.year, day.month, day.day, inactive_end_hour).timestamp()
+        active_end = datetime(day.year, day.month, day.day, inactive_start_hour).timestamp()
+        total += max(0.0, min(now_ts, active_end) - max(last_ts, active_start))
+        day += timedelta(days=1)
 
     return total
 
