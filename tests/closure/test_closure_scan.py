@@ -150,6 +150,10 @@ class ActiveSecondsElapsedTest(unittest.TestCase):
         try:
             os.environ["TZ"] = "America/Chicago"
             time.tzset()
+            winter = time.localtime(datetime(2026, 1, 15, 12).timestamp()).tm_isdst
+            summer = time.localtime(datetime(2026, 7, 15, 12).timestamp()).tm_isdst
+            if (winter, summer) != (0, 1):
+                self.skipTest("America/Chicago timezone data unavailable")
             cases = [
                 (datetime(2026, 10, 31, 22, 45), datetime(2026, 11, 1, 8, 15), 1800),
                 (datetime(2026, 10, 31, 23, 30), datetime(2026, 11, 1, 9), 3600),
