@@ -373,6 +373,20 @@ class RunMainTest(unittest.TestCase):
         out = json.loads(stdout.getvalue())
         self.assertEqual(out["hookSpecificOutput"]["permissionDecision"], "allow")
 
+    def test_allow_preserves_complete_tool_input(self) -> None:
+        import io, json
+        tool_input = {"command": str(self.script), "description": "helper", "timeout": 1234}
+        stdout = io.StringIO()
+        self.module.main(
+            argv=["auto-allow.py", PLUGIN_NAME, str(self.root)],
+            stdin=io.StringIO(json.dumps({"tool_input": tool_input})),
+            stdout=stdout,
+            stderr=io.StringIO(),
+        )
+        output = json.loads(stdout.getvalue())["hookSpecificOutput"]
+        self.assertEqual(output["permissionDecision"], "allow")
+        self.assertEqual(output["updatedInput"], tool_input)
+
     def test_main_noop_outside_root(self) -> None:
         import io, json
         outside = Path(self.temp.name) / "outside.py"
