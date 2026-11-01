@@ -134,7 +134,7 @@ class ActiveSecondsElapsedTest(unittest.TestCase):
         self.mod = _load_module()
 
     def _ts(self, hour: int, minute: int = 0, day_offset: int = 0) -> float:
-        base = datetime.now().replace(hour=hour, minute=minute, second=0, microsecond=0)
+        base = datetime(2026, 2, 10, hour, minute)
         return (base + timedelta(days=day_offset)).timestamp()
 
     def test_overnight_gap_excluded(self):
@@ -143,6 +143,31 @@ class ActiveSecondsElapsedTest(unittest.TestCase):
         now  = self._ts(8, 15, day_offset=0)
         result = self.mod.active_seconds_elapsed(last, now)
         self.assertAlmostEqual(result, 1800, delta=60)
+
+    @unittest.skipUnless(hasattr(time, "tzset"), "requires local timezone switching")
+    def test_overnight_daylight_saving_transitions(self):
+        previous_tz = os.environ.get("TZ")
+        try:
+            os.environ["TZ"] = "America/Chicago"
+            time.tzset()
+            cases = [
+                (datetime(2026, 10, 31, 22, 45), datetime(2026, 11, 1, 8, 15), 1800),
+                (datetime(2026, 10, 31, 23, 30), datetime(2026, 11, 1, 9), 3600),
+                (datetime(2026, 3, 7, 22, 45), datetime(2026, 3, 8, 8, 15), 1800),
+                (datetime(2026, 2, 10, 22, 45), datetime(2026, 2, 11, 8, 15), 1800),
+            ]
+            for start, end, expected in cases:
+                with self.subTest(start=start, end=end):
+                    self.assertEqual(
+                        self.mod.active_seconds_elapsed(start.timestamp(), end.timestamp()),
+                        expected,
+                    )
+        finally:
+            if previous_tz is None:
+                os.environ.pop("TZ", None)
+            else:
+                os.environ["TZ"] = previous_tz
+            time.tzset()
 
     def test_same_day_active_window(self):
         # 1pm → 3pm: fully within active window, 2 hours
